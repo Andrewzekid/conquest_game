@@ -48,6 +48,13 @@ export function loadGame() {
         const raw = localStorage.getItem(SAVE_KEY);
         if (!raw) return null;
         const data = JSON.parse(raw);
+        // Refuse incompatible save formats rather than loading a half-corrupt
+        // state. Bumping SAVE_VERSION (e.g. for a breaking state-shape change)
+        // automatically invalidates older saves.
+        if (!data || data.version !== SAVE_VERSION) {
+            console.warn(`Save version mismatch (have ${data && data.version}, need ${SAVE_VERSION}) — ignoring old save.`);
+            return null;
+        }
         const tiles = new Map();
         for (const t of data.tiles) {
             // Verify tile fields: cityLevel, growth, wonder, fortification, bridge
@@ -76,7 +83,7 @@ export function loadGame() {
             if (rel.tradesMade === undefined) rel.tradesMade = 0;
         }
 
-        return {
+        const state = {
             turn: data.turn,
             factionAssignments: data.factionAssignments,
             tiles,
@@ -100,6 +107,17 @@ export function loadGame() {
             gameOver: data.gameOver || false,
             winner: data.winner || null
         };
+
+        // Sanity-check the restored state. If critical fields are missing,
+        // refuse to load rather than booting into a broken game.
+        const issues = verifySave(state);
+        if (issues && issues.length) {
+            console.warn('Save verification issues:', issues);
+            // "No tiles" / "No units map" / "No buildings map" / "No lords array" /
+            // "No resources" / "No diplomacy" are critical — abort.
+            if (issues.some(i => i.startsWith('No '))) return null;
+        }
+        return state;
     } catch (e) {
         console.warn('load failed', e);
         return null;
