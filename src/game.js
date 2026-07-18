@@ -1734,67 +1734,92 @@ export class Game {
     }
 
     /** At the start of the player's turn, auto-step every player unit that has a
-     *  goal one move toward it. */
+     *  goal toward it, using the unit's FULL move range (cavalry 3, infantry 2,
+     *  etc.) rather than a single tile. Stops early if it reaches the goal,
+     *  can't path further, or hits a fortified enemy city (besiege first). */
     _processAutoGoals() {
         for (const unit of this.gameState.units.values()) {
             if (unit.owner !== PLAYER_FACTION || !unit.goal) continue;
             if (unit.hasMovedThisTurn) continue;
             if (!goalValid(this.tiles, unit, unit.goal)) { unit.goal = null; continue; }
             if (unit.x === unit.goal.x && unit.z === unit.goal.z) { unit.goal = null; continue; }
-            const step = nextStepToward(this.tiles, this.gameState.units, unit, unit.goal);
-            if (!step) { unit.goal = null; this.log(`🎯 ${UNIT_TYPE[unit.type].name} #${unit.id} can't reach its goal — cancelled.`); continue; }
-            // Perform a plain move (no capture cost for friendly tiles; capture if possible).
-            unit.x = step.x; unit.z = step.z; unit.hasMovedThisTurn = true;
-            sfx.move();
-            const dest = this.tiles.get(`${step.x},${step.z}`);
-            const pool = this.gameState.resources[PLAYER_FACTION];
-            if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION &&
-                (canCaptureTile(PLAYER_FACTION, dest, pool) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
-                pool.gold -= CAPTURE_COST;
-                captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
-                sfx.capture();
+            const range = getMoveRange(unit) || 1;
+            let moved = false;
+            for (let s = 0; s < range; s++) {
+                if (!unit.goal) break;
+                if (unit.x === unit.goal.x && unit.z === unit.goal.z) break;
+                if (!goalValid(this.tiles, unit, unit.goal)) { unit.goal = null; break; }
+                const step = nextStepToward(this.tiles, this.gameState.units, unit, unit.goal);
+                if (!step) { unit.goal = null; this.log(`🎯 ${UNIT_TYPE[unit.type].name} #${unit.id} can't reach its goal — cancelled.`); break; }
+                // Don't auto-walk onto a fortified enemy city (must besiege first).
+                const dest = this.tiles.get(`${step.x},${step.z}`);
+                if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
+                    break; // stop adjacent; player can besiege/capture manually
+                }
+                // Perform a plain move (no capture cost for friendly tiles; capture if possible).
+                unit.x = step.x; unit.z = step.z; unit.hasMovedThisTurn = true; moved = true;
+                const pool = this.gameState.resources[PLAYER_FACTION];
+                if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION &&
+                    (canCaptureTile(PLAYER_FACTION, dest, pool) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
+                    pool.gold -= CAPTURE_COST;
+                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
+                    sfx.capture();
+                    unit.goal = null; // captured the target city — done
+                    break;
+                }
+                if (unit.goal && unit.x === unit.goal.x && unit.z === unit.goal.z) {
+                    unit.goal = null;
+                    this.log(`🎯 ${UNIT_TYPE[unit.type].name} #${unit.id} reached its goal.`);
+                    break;
+                }
             }
-            if (unit.goal && unit.x === unit.goal.x && unit.z === unit.goal.z) {
-                unit.goal = null;
-                this.log(`🎯 ${UNIT_TYPE[unit.type].name} #${unit.id} reached its goal.`);
-            }
+            if (moved) sfx.move();
         }
         this.checkVictory();
     }
 
     /** At the start of the player's turn, auto-step every player LORD/KING that
-     *  has a goal one tile toward it. Lords share tiles with their own army, so
-     *  own-faction units don't block their pathing. */
+     *  has a goal toward it. Lords move 2 tiles per turn and share tiles with
+     *  their own army, so own-faction units don't block their pathing. */
     _processLordGoals() {
         for (const lord of this.gameState.lords) {
             if (lord.owner !== PLAYER_FACTION || !lord.goal) continue;
             if (lord.hasMovedThisTurn) continue;
             if (lord.x === lord.goal.x && lord.z === lord.goal.z) { lord.goal = null; continue; }
-            const step = nextStepToward(this.tiles, this.gameState.units, lord, lord.goal, 200, PLAYER_FACTION);
-            if (!step) {
-                lord.goal = null;
-                this.log(`🎯 Lord ${lord.name} can't reach its goal — cancelled.`);
-                continue;
+            const range = 2; // lords move 2 tiles per turn
+            let moved = false;
+            for (let s = 0; s < range; s++) {
+                if (!lord.goal) break;
+                if (lord.x === lord.goal.x && lord.z === lord.goal.z) break;
+                const step = nextStepToward(this.tiles, this.gameState.units, lord, lord.goal, 200, PLAYER_FACTION);
+                if (!step) {
+                    lord.goal = null;
+                    this.log(`🎯 Lord ${lord.name} can't reach its goal — cancelled.`);
+                    break;
+                }
+                // Don't step onto a fortified enemy city (must besiege first).
+                const dest = this.tiles.get(`${step.x},${step.z}`);
+                if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
+                    lord.goal = null;
+                    this.log(`🎯 Lord ${lord.name}'s goal is a fortified city — cancelled (besiege it first).`);
+                    break;
+                }
+                lord.x = step.x; lord.z = step.z; lord.hasMovedThisTurn = true; moved = true;
+                // Capture a breached enemy city on arrival (like units do).
+                if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION])) {
+                    this.gameState.resources[PLAYER_FACTION].gold -= CAPTURE_COST;
+                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
+                    sfx.capture();
+                    lord.goal = null;
+                    break;
+                }
+                if (lord.goal && lord.x === lord.goal.x && lord.z === lord.goal.z) {
+                    lord.goal = null;
+                    this.log(`🎯 Lord ${lord.name} reached its goal.`);
+                    break;
+                }
             }
-            // Don't step onto a fortified enemy city (must besiege first).
-            const dest = this.tiles.get(`${step.x},${step.z}`);
-            if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
-                lord.goal = null;
-                this.log(`🎯 Lord ${lord.name}'s goal is a fortified city — cancelled (besiege it first).`);
-                continue;
-            }
-            lord.x = step.x; lord.z = step.z; lord.hasMovedThisTurn = true;
-            sfx.move();
-            // Capture a breached enemy city on arrival (like units do).
-            if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION])) {
-                this.gameState.resources[PLAYER_FACTION].gold -= CAPTURE_COST;
-                captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
-                sfx.capture();
-            }
-            if (lord.goal && lord.x === lord.goal.x && lord.z === lord.goal.z) {
-                lord.goal = null;
-                this.log(`🎯 Lord ${lord.name} reached its goal.`);
-            }
+            if (moved) sfx.move();
         }
         this.checkVictory();
     }
