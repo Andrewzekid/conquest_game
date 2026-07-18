@@ -127,10 +127,15 @@ export const CITY_LEVEL_UP_COST = { gold: 80, food: 40, production: 20 }; // bas
 // Natural city growth (Civ6-style): each city accumulates growth each turn and
 // levels up on its own when it crosses the threshold. You can also pay to
 // level up instantly via the Level Up City button.
+// Growth per turn = CITY_GROWTH_BASE + clamp(foodSurplus, 0, CITY_GROWTH_SURPLUS_CAP)
+//                   * CITY_GROWTH_PER_SURPLUS_FOOD
+// The surplus is clamped so a huge food stockpile can't instant-level a city;
+// only a modest, well-fed bonus accelerates growth.
 export const CITY_GROWTH_BASE = 1;            // flat growth per turn
-export const CITY_GROWTH_PER_SURPLUS_FOOD = 0.1; // +growth per surplus food the faction holds
+export const CITY_GROWTH_PER_SURPLUS_FOOD = 0.05; // +growth per surplus food (clamped)
+export const CITY_GROWTH_SURPLUS_CAP = 30;    // max surplus food counted toward growth
 export const CITY_MAX_LEVEL = 5;
-export function cityGrowthThreshold(level) { return 8 + level * 4; } // growth needed to reach level+1
+export function cityGrowthThreshold(level) { return 10 + level * 5; } // growth needed to reach level+1
 
 export const INITIAL_RESOURCES = { gold: 100, food: 100, wood: 0, iron: 0, production: 10 };
 

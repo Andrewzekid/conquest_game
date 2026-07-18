@@ -1,7 +1,7 @@
 /** UI: resource bar, tile/unit info, build menu, diplomacy panel, lord panel, combat log. */
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
-         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES } from './config.js';
+         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings } from './building.js';
 import { getDiplomacySummary } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
@@ -149,6 +149,19 @@ export function bindUI(gameState, callbacks) {
         if (buildings.length > 0 && els.ownership) {
             const buildingNames = buildings.map(b => BUILDING_TYPE[b]?.name || b).join(', ');
             els.ownership.textContent += ` | Buildings: ${buildingNames}`;
+        }
+
+        // Owned city: show natural-growth progress toward the next level.
+        if (tile.terrain === 'CITY' && tile.owner === PLAYER_FACTION && els.ownership) {
+            const lvl = tile.cityLevel || 1;
+            if (lvl >= CITY_MAX_LEVEL) {
+                els.ownership.textContent += ` | Growth: MAX (Lv.${CITY_MAX_LEVEL})`;
+            } else {
+                const need = cityGrowthThreshold(lvl);
+                const have = Math.floor(tile.growth || 0);
+                const est = Math.max(1, Math.ceil((need - have) / 2)); // ~2 growth/turn rough estimate
+                els.ownership.textContent += ` | Growth: ${have}/${need} (~${est}t to Lv.${lvl + 1})`;
+            }
         }
 
         // Natural Wonder: show its per-turn bonus (and who reaps it).
@@ -434,6 +447,22 @@ export function bindUI(gameState, callbacks) {
                 const used = [...gameState.units.values()].filter(u => u.owner === PLAYER_FACTION).length;
                 cityHeader.textContent = `City Lv.${cityLevel} (influence ${3 + (cityLevel - 1)}) • Fort ${tile.fortification||0}/${tile.fortMax||0}${hasBarracks ? ' • Barracks' : ''} • Unit cap ${used}/${cap} (+${unitCapForCity(cityLevel + 1) - unitCapForCity(cityLevel)} on level up)`;
                 els.buildMenu.appendChild(cityHeader);
+
+                // Natural-growth progress bar toward the next level.
+                const growthDiv = document.createElement('div');
+                if (cityLevel >= CITY_MAX_LEVEL) {
+                    growthDiv.innerHTML = `<span style="color:#7cf;">Growth: MAX (Lv.${CITY_MAX_LEVEL})</span>`;
+                } else {
+                    const need = cityGrowthThreshold(cityLevel);
+                    const have = Math.floor(tile.growth || 0);
+                    const pct = Math.max(0, Math.min(100, (have / need) * 100));
+                    growthDiv.innerHTML =
+                        `<span style="color:#7cf;">Growth ${have}/${need} → Lv.${cityLevel + 1}</span>` +
+                        ` <span style="display:inline-block; width:80px; height:7px; background:#222; border:1px solid #555; vertical-align:middle; margin:0 2px;">` +
+                        `<span style="display:block; width:${pct}%; height:100%; background:#4caf50;"></span></span>`;
+                }
+                growthDiv.style.cssText = 'font-size:11px; margin:2px 0 6px;';
+                els.buildMenu.appendChild(growthDiv);
 
                 // Multi-turn production status: if this city is already producing
                 // a unit (e.g. a Settler), show progress and block new training.

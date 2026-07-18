@@ -1,6 +1,7 @@
 /** Economy system: resource production, upkeep, trade, market, taxation. */
 import { TERRAIN, MARKET_RATES, TRADE_ROUTE_GOLD, STARVATION_ATTRITION, BUILDING_TYPE,
-         CITY_GROWTH_BASE, CITY_GROWTH_PER_SURPLUS_FOOD, CITY_MAX_LEVEL, cityGrowthThreshold } from './config.js';
+         CITY_GROWTH_BASE, CITY_GROWTH_PER_SURPLUS_FOOD, CITY_GROWTH_SURPLUS_CAP,
+         CITY_MAX_LEVEL, cityGrowthThreshold } from './config.js';
 import { getLordGovernanceMultiplier } from './lords.js';
 import { cityRadius, expandCityTerritory } from './map.js';
 
@@ -220,7 +221,10 @@ export function getTradeRouteIncome(tiles, owner, tradeRoutes) {
 export function processCityGrowth(tiles, owner, resources, log) {
     const messages = [];
     const surplus = (resources && resources.food) || 0;
-    const gain = CITY_GROWTH_BASE + Math.max(0, surplus) * CITY_GROWTH_PER_SURPLUS_FOOD;
+    // Clamp the surplus so a large food stockpile can't instant-level a city;
+    // only a modest well-fed bonus accelerates growth.
+    const gain = CITY_GROWTH_BASE +
+        Math.max(0, Math.min(surplus, CITY_GROWTH_SURPLUS_CAP)) * CITY_GROWTH_PER_SURPLUS_FOOD;
     for (const tile of tiles.values()) {
         if (tile.owner !== owner || tile.terrain !== 'CITY') continue;
         if ((tile.cityLevel || 1) >= CITY_MAX_LEVEL) continue;
