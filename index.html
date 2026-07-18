@@ -227,6 +227,13 @@
             <div class="resource" style="color: #ffaa00;">Phase: <span id="phase-indicator">PLAYER</span></div>
         </div>
         <button id="btn-end-turn">End Turn</button>
+        <div id="spectate-controls" style="display:none; gap:8px; align-items:center;">
+            <button id="btn-ff-1" class="sec" style="padding:4px 8px; font-size:12px;">FF 1</button>
+            <button id="btn-ff-5" class="sec" style="padding:4px 8px; font-size:12px;">FF 5</button>
+            <button id="btn-ff-10" class="sec" style="padding:4px 8px; font-size:12px;">FF 10</button>
+            <button id="btn-ff-auto" class="sec" style="padding:4px 8px; font-size:12px;">⏩ Auto</button>
+            <span id="ff-status" style="font-size:11px; color:#aaa;"></span>
+        </div>
         <button id="btn-mute" title="Toggle sound">🔊</button>
     </div>
 
@@ -238,10 +245,23 @@
         <div class="row">
             <label style="font-size:14px; color:#9ab;">Map size:</label>
             <select id="start-size">
-                <option value="small">Small (28×28)</option>
-                <option value="medium" selected>Medium (40×40)</option>
-                <option value="large">Large (52×52)</option>
+                <option value="tiny">Tiny (~400 tiles)</option>
+                <option value="small">Small (~800 tiles)</option>
+                <option value="medium" selected>Medium (~1600 tiles)</option>
+                <option value="large">Large (~2500 tiles)</option>
+                <option value="huge">Huge (~4000 tiles)</option>
+                <option value="epic">Epic (~6000 tiles)</option>
             </select>
+        </div>
+        <div class="row">
+            <label style="font-size:14px; color:#9ab;">Players: <span id="start-players-display">4</span></label>
+            <input type="range" id="start-players" min="2" max="10" value="4" style="width:150px;">
+        </div>
+        <div class="row">
+            <label style="font-size:14px; color:#9ab;">
+                <input type="checkbox" id="start-spectate" style="margin-right:6px;">
+                Spectate Mode (AI vs AI)
+            </label>
         </div>
         <div class="row">
             <button id="start-continue" class="sec" style="display:none;">Continue Last Save</button>
@@ -377,6 +397,20 @@
             if (e.key === 'Escape' && game && !game.gameState.gameOver) {
                 game.togglePause();
             }
+        });
+
+        // Spectate mode fast forward buttons
+        document.getElementById('btn-ff-1')?.addEventListener('click', () => {
+            if (game && game.spectateMode) game.fastForwardTurns(1);
+        });
+        document.getElementById('btn-ff-5')?.addEventListener('click', () => {
+            if (game && game.spectateMode) game.fastForwardTurns(5);
+        });
+        document.getElementById('btn-ff-10')?.addEventListener('click', () => {
+            if (game && game.spectateMode) game.fastForwardTurns(10);
+        });
+        document.getElementById('btn-ff-auto')?.addEventListener('click', () => {
+            if (game && game.spectateMode) game.toggleAutoFastForward();
         });
 
         showStartMenu(startGame);

@@ -2104,38 +2104,93 @@ export class Game {
      *  alliance with when it has a clear power advantage. War declarations are
      *  gated by personality (warChance) and the power ratio; breaking an
      *  alliance needs a bigger edge. At most one declaration per turn. */
+    /** Diplomatic strategy types based on personality.
+     *  Controls how each faction approaches war and alliances:
+     *  - AGGRESSIVE: Declares war on neighbors readily, doesn't seek distant alliances
+     *  - DEFENSIVE: Only wars if much stronger, seeks alliances against threats
+     *  - ECONOMIC: Prefers trade, avoids war, seeks distant alliances for security
+     *  - BALANCED: "Attack close, ally far" - wars on neighbors, allies with distant factions */
+    _getDiplomaticStrategy(personality) {
+        const strategies = {
+            AGGRESSIVE: { warThreshold: 1.1, allyThreshold: 0.6, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: 1.5 },
+            DEFENSIVE:  { warThreshold: 1.6, allyThreshold: 0.9, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.0 },
+            ECONOMIC:   { warThreshold: 2.0, allyThreshold: 0.7, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.5 },
+            BALANCED:   { warThreshold: 1.3, allyThreshold: 0.8, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: 1.8 }
+        };
+        return strategies[personality] || strategies.DEFENSIVE;
+    }
+
+    /** Calculate distance between two factions' nearest cities. */
+    _factionDistance(factionA, factionB) {
+        let minDist = Infinity;
+        for (const t of this.tiles.values()) {
+            if (t.terrain !== 'CITY' || t.owner !== factionA) continue;
+            for (const t2 of this.tiles.values()) {
+                if (t2.terrain !== 'CITY' || t2.owner !== factionB) continue;
+                const d = Math.abs(t.x - t2.x) + Math.abs(t.z - t2.z);
+                if (d < minDist) minDist = d;
+            }
+        }
+        return minDist === Infinity ? 50 : minDist;
+    }
+
+    /** Check if two factions share a common enemy (for alliance synergy). */
+    _hasSharedEnemy(factionA, factionB) {
+        const atWarWithA = new Set();
+        const atWarWithB = new Set();
+        for (const f of FACTIONS) {
+            if (f === factionA || f === factionB) continue;
+            if (getRelation(this.gameState.diplomacy, factionA, f).state === DIPLOMACY_STATES.WAR) atWarWithA.add(f);
+            if (getRelation(this.gameState.diplomacy, factionB, f).state === DIPLOMACY_STATES.WAR) atWarWithB.add(f);
+        }
+        for (const f of atWarWithA) { if (atWarWithB.has(f)) return true; }
+        return false;
+    }
+
+    /** AI may declare war based on personality, strategy, and distance ("attack close").
+     *  At most one declaration per turn. */
     _aiMaybeDeclareWar(faction, def, factionName) {
         if (!def) return;
         const personality = def.aiPersonality || 'DEFENSIVE';
+        const strategy = this._getDiplomaticStrategy(personality);
         const myPower = this._factionPower(faction);
         if (myPower <= 0) return;
         let declared = false;
-        // Evaluate the weakest non-war neighbor first (best victim), but also
-        // consider the player specifically so the AI pressures you when ahead.
         const candidates = FACTIONS.filter(o => o !== faction &&
             getRelation(this.gameState.diplomacy, faction, o).state !== DIPLOMACY_STATES.WAR);
-        // Sort by power ascending (prefer declaring on the weak), but give a
-        // small preference to the player so games stay tense.
-        candidates.sort((a, b) => this._factionPower(a) - this._factionPower(b));
-        for (const other of candidates) {
-            if (declared) break;
+        // Score candidates based on strategic priorities
+        const scored = candidates.map(other => {
             const rel = getRelation(this.gameState.diplomacy, faction, other);
-            // Honor a fresh peace/trade/alliance for a minimum cooling-off period
-            // before the AI will even consider breaking it. Without this, a
-            // stronger AI re-declares war the very turn after accepting peace,
-            // making treaties meaningless (the player sees "peace" but is
-            // attacked immediately). Breaking a long-standing deal is allowed.
-            const PEACE_COOLDOWN = 6;
-            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) continue;
             const theirPower = Math.max(1, this._factionPower(other));
             const ratio = myPower / theirPower;
-            // Threshold: clear advantage needed. Alliances need a bigger edge.
+            const distance = this._factionDistance(faction, other);
+            let score = 0;
+            // "Attack close" — prefer nearby targets
+            if (strategy.preferNeighbors) {
+                if (distance <= 5) score += 30;
+                else if (distance <= 10) score += 15;
+                else score -= 10;
+            } else {
+                score -= distance * 0.5;
+            }
+            if (ratio < strategy.warThreshold) return { other, score: -Infinity };
+            score += (ratio - 1) * 20;
             const isAlly = rel.state === DIPLOMACY_STATES.ALLIANCE;
-            const threshold = isAlly ? 1.8 : 1.3;
-            if (ratio < threshold) continue;
+            if (isAlly && ratio < strategy.breakAllianceThreshold) return { other, score: -Infinity };
+            if (isAlly) score -= 30;
+            const PEACE_COOLDOWN = 6;
+            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) return { other, score: -Infinity };
+            score += (100 - theirPower) * 0.1;
+            if (other === PLAYER_FACTION) score += 10;
+            return { other, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        for (const { other, score } of scored) {
+            if (declared || score === -Infinity) continue;
+            const rel = getRelation(this.gameState.diplomacy, faction, other);
+            const theirPower = Math.max(1, this._factionPower(other));
+            const ratio = myPower / theirPower;
             if (!aiDecideWar(personality, ratio)) continue;
-            // Breaking a non-war treaty to declare war costs the aggressor
-            // reputation (surprise attacks make the world distrust you).
             const wasAllied = rel.state === DIPLOMACY_STATES.ALLIANCE;
             const wasTreaty = rel.state !== DIPLOMACY_STATES.WAR;
             setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR);
@@ -2152,48 +2207,114 @@ export class Game {
     }
 
     /** AI may propose a treaty (peace / trade / alliance) to one other faction
-     *  per turn. AI->player offers are pushed to pendingOffers for the player to
-     *  accept/decline in the diplomacy panel; AI-AI offers resolve automatically
-     *  via aiDecideTreaty on both sides. Proposals are driven by personality,
-     *  relationship score, and how long the current state has held. */
+     *  per turn. Uses diplomatic strategy for "attack close, ally far":
+     *  - Weak factions ally with other weak factions against strong threats
+     *  - "Attack close, ally far": propose alliances with distant factions
+     *  - Shared enemies greatly increase alliance likelihood
+     *  AI->player offers are pushed to pendingOffers; AI-AI offers resolve
+     *  automatically via aiDecideTreaty on both sides. */
     _aiMaybeProposeTreaty(faction, def, factionName) {
         if (!def) return;
         const personality = def.aiPersonality || 'DEFENSIVE';
+        const strategy = this._getDiplomaticStrategy(personality);
         const myPower = Math.max(1, this._factionPower(faction));
         const diplo = this.gameState.diplomacy;
         const alive = (o) => !(this.gameState.eliminated && this.gameState.eliminated.has(o));
+
+        // Build a scored list of candidates for treaties
+        const candidates = [];
         for (const other of FACTIONS) {
             if (other === faction || !alive(other)) continue;
             const rel = getRelation(diplo, faction, other);
             const theirPower = Math.max(1, this._factionPower(other));
             const ratio = myPower / theirPower;
-            let type = null;
+            const distance = this._factionDistance(faction, other);
+            const sharedEnemy = this._hasSharedEnemy(faction, other);
+            const isNeighbor = distance <= 8;
+            const isDistant = distance > 12;
+
+            let allianceScore = 0, tradeScore = 0, peaceScore = 0;
+
+            // --- WAR -> PEACE ---
             if (rel.state === DIPLOMACY_STATES.WAR) {
-                // Losing, or a long grinding war → sue for peace.
-                if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) type = DIPLOMACY_STATES.PEACE;
-            } else if (rel.state === DIPLOMACY_STATES.PEACE) {
-                if ((rel.relationship || 0) > 40 && Math.random() < 0.25) type = DIPLOMACY_STATES.ALLIANCE;
-                else if ((rel.relationship || 0) > 0 && Math.random() < 0.35) type = DIPLOMACY_STATES.TRADE_PACT;
-            } else if (rel.state === DIPLOMACY_STATES.TRADE_PACT) {
-                if ((rel.relationship || 0) > 50 && (rel.turnsAtPeace || 0) > 6 && Math.random() < 0.2) {
-                    type = DIPLOMACY_STATES.ALLIANCE;
+                if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) peaceScore = 100;
+                else if (ratio < 1.0 && (rel.turnsAtWar || 0) > 4) peaceScore = 50;
+            }
+
+            // --- ALLIANCE scoring ---
+            if (rel.state !== DIPLOMACY_STATES.WAR) {
+                // "Ally far" strategy: prefer alliances with distant factions
+                if (strategy.seekDistantAllies && isDistant) allianceScore += 40;
+                // Weak factions seek alliances against strong threats
+                if (ratio < 0.9) allianceScore += 30;
+                // Shared enemy bonus
+                if (sharedEnemy) allianceScore += 50;
+                // "Attack close, ally far" (BALANCED): ally with distant factions
+                if (strategy.preferNeighbors && isDistant) allianceScore += 25;
+                // Don't ally with neighbors we're stronger than (likely war targets)
+                if (strategy.preferNeighbors && isNeighbor && ratio > 1.3) allianceScore -= 30;
+                // Relationship contribution
+                allianceScore += (rel.relationship || 0) * 0.3;
+                // Existing treaties help
+                if (rel.state === DIPLOMACY_STATES.TRADE_PACT) { allianceScore += 20; if ((rel.turnsAtPeace || 0) > 6) allianceScore += 15; }
+                if (rel.state === DIPLOMACY_STATES.PEACE) allianceScore += 10;
+                // No alliance if vastly stronger (no need)
+                if (ratio > strategy.allyThreshold * 2) allianceScore -= 40;
+            }
+
+            // --- TRADE scoring ---
+            if (rel.state === DIPLOMACY_STATES.PEACE || rel.state === DIPLOMACY_STATES.TRADE_PACT) {
+                if (personality === 'ECONOMIC') tradeScore += 30;
+                if (isDistant) tradeScore += 20;
+                if (sharedEnemy) tradeScore -= 10;
+                tradeScore += (rel.relationship || 0) * 0.2;
+                if (rel.state === DIPLOMACY_STATES.TRADE_PACT) tradeScore = -Infinity; // already have it
+            }
+
+            candidates.push({ other, ratio, distance, sharedEnemy, isNeighbor, isDistant, allianceScore, tradeScore, peaceScore, rel });
+        }
+
+        // Sort by best opportunity
+        candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore));
+
+        for (const c of candidates) {
+            const { other, ratio, rel, allianceScore, tradeScore, peaceScore, sharedEnemy, isDistant } = c;
+            let type = null;
+
+            // Pick best treaty type based on strategic scores
+            if (peaceScore > 60) type = DIPLOMACY_STATES.PEACE;
+            else if (allianceScore > 40 && Math.random() < 0.3 + (allianceScore / 200)) type = DIPLOMACY_STATES.ALLIANCE;
+            else if (tradeScore > 30 && Math.random() < 0.35) type = DIPLOMACY_STATES.TRADE_PACT;
+
+            // Fallback to simple logic if scoring didn't produce a type
+            if (!type) {
+                if (rel.state === DIPLOMACY_STATES.WAR) {
+                    if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) type = DIPLOMACY_STATES.PEACE;
+                } else if (rel.state === DIPLOMACY_STATES.PEACE) {
+                    if ((rel.relationship || 0) > 40 && Math.random() < 0.2) type = DIPLOMACY_STATES.ALLIANCE;
+                    else if ((rel.relationship || 0) > 0 && Math.random() < 0.3) type = DIPLOMACY_STATES.TRADE_PACT;
+                } else if (rel.state === DIPLOMACY_STATES.TRADE_PACT) {
+                    if ((rel.relationship || 0) > 50 && (rel.turnsAtPeace || 0) > 6 && Math.random() < 0.15) type = DIPLOMACY_STATES.ALLIANCE;
                 }
             }
+
             if (!type) continue;
+
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             const label = type === DIPLOMACY_STATES.PEACE ? 'peace'
                 : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact' : 'an alliance';
+
             if (other === PLAYER_FACTION) {
-                // Don't stack duplicate pending offers of the same type.
                 const dup = diplo.pendingOffers.some(o =>
                     o.from === faction && o.to === other && o.type === type);
-                if (dup) return;
+                if (dup) continue;
                 diplo.pendingOffers.push({ from: faction, to: other, type, turnProposed: this.gameState.turn });
-                this.log(`${factionName} proposes ${label} with ${otherName}. (Diplomacy panel → respond.)`);
+                const reason = sharedEnemy ? ' (shared enemy!)' : isDistant ? ' (distant friend)' : '';
+                this.log(`${factionName} proposes ${label} with ${otherName}${reason}. (Diplomacy panel → respond.)`);
                 return;
             }
-            // AI-AI: both sides must agree (each uses its own personality & the
-            // inverse power ratio, since the weaker party is more cautious).
+
+            // AI-AI: both sides must agree
             const otherDef = this.factionDefs[other];
             const otherPers = (otherDef && otherDef.aiPersonality) || 'DEFENSIVE';
             const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0);
@@ -2201,7 +2322,8 @@ export class Game {
             if (a && b) {
                 setRelation(diplo, faction, other, type);
                 if (type === DIPLOMACY_STATES.TRADE_PACT) rel.tradeAmount = 10;
-                this.log(`${factionName} and ${otherName} signed ${label}.`);
+                const reason = sharedEnemy ? ' (shared enemy!)' : '';
+                this.log(`${factionName} and ${otherName} signed ${label}.${reason}`);
             }
             return;
         }

@@ -1,5 +1,26 @@
-/** Map generation: terrain, ownership, starting positions. */
-import { GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS } from './config.js';
+/** Map generation: terrain, ownership, starting positions.
+ *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
+ *  and per-faction city names. */
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES } from './config.js';
+import { getFactionDef } from './faction.js';
+
+// Per-faction city name counters
+const _factionCityNameIndex = {};
+function nextCityNameForFaction(factionId) {
+    // Try faction-specific names first
+    if (factionId && FACTION_CITY_NAMES[factionId]) {
+        if (!_factionCityNameIndex[factionId]) _factionCityNameIndex[factionId] = 0;
+        const names = FACTION_CITY_NAMES[factionId];
+        const name = names[_factionCityNameIndex[factionId] % names.length];
+        _factionCityNameIndex[factionId]++;
+        return name;
+    }
+    // Fallback to generic names
+    if (!_factionCityNameIndex['_generic']) _factionCityNameIndex['_generic'] = 0;
+    const name = CITY_NAMES[_factionCityNameIndex['_generic'] % CITY_NAMES.length];
+    _factionCityNameIndex['_generic']++;
+    return name;
+}
 
 /** Influence/vision radius of a city, based on its level (1-based).
  *  Stepped (not linear) so influence grows in tiers:
@@ -23,11 +44,13 @@ export function cityFortMax(tile) {
  *  square) are turned into WATER, giving an organic island/continent silhouette.
  *  The interior is kept, so there's still plenty of land for cities and
  *  expansion. Two noise octaves — a slow one for large bays/peninsulas and a
- *  fast one for fine coastline wiggle — break up any boxy symmetry. */
-function applyContinentMask(tiles) {
-    const cx = (GRID_SIZE - 1) / 2;
-    const cz = (GRID_SIZE - 1) / 2;
-    const maxR = GRID_SIZE / 2;
+ *  fast one for fine coastline wiggle — break up any boxy symmetry.
+ *  Accepts an optional cutoffOverride so the caller can retry with a more
+ *  generous land threshold if the first pass produced too little land. */
+function applyContinentMask(tiles, cutoffOverride = null) {
+    const cx = (GRID_WIDTH - 1) / 2;
+    const cz = (GRID_HEIGHT - 1) / 2;
+    const maxR = Math.min(GRID_WIDTH, GRID_HEIGHT) / 2;
     // Random per-generation phases + frequencies so every map's coastline differs.
     const phx = Math.random() * Math.PI * 2;
     const phz = Math.random() * Math.PI * 2;
@@ -37,7 +60,7 @@ function applyContinentMask(tiles) {
     const freqFast = 0.55 + Math.random() * 0.25;  // fine coastline wiggle
     // Land cutoff: keep ~75% of the radius as solid interior, so the shape is
     // clearly rounder than the grid without starving room for cities.
-    const CUTOFF = 0.22;
+    const CUTOFF = cutoffOverride != null ? cutoffOverride : 0.22;
     for (const t of tiles) {
         // 0 at the center, ~1 at edge midpoints, ~1.41 at the corners.
         const d = Math.hypot(t.x - cx, t.z - cz) / maxR;
@@ -73,14 +96,14 @@ function assignBiomes(tiles) {
     // Biome seeds (FOREST / HILLS / DESERT / MARSH / TUNDRA). Seed count scales
     // with map size; cycling types keeps a roughly even mix.
     const biomeTypes = ['FOREST', 'HILLS', 'DESERT', 'MARSH', 'TUNDRA'];
-    const seedCount = Math.max(6, Math.floor(GRID_SIZE / 3));
+    const seedCount = Math.max(6, Math.floor(Math.max(GRID_WIDTH, GRID_HEIGHT) / 3));
     const seeds = [];
     for (let i = 0; i < seedCount; i++) {
         const base = land[Math.floor(Math.random() * land.length)];
         seeds.push({ x: base.x, z: base.z, type: biomeTypes[i % biomeTypes.length] });
     }
 
-    const reach = Math.floor(GRID_SIZE / 2.2) + 2; // plains gaps between regions
+    const reach = Math.floor(Math.max(GRID_WIDTH, GRID_HEIGHT) / 2.2) + 2; // plains gaps between regions
     for (const t of land) {
         let best = null, bestD = Infinity;
         for (const s of seeds) {
@@ -93,7 +116,8 @@ function assignBiomes(tiles) {
     }
 
     // A handful of small MOUNTAIN clusters (impassable barriers + mine sites).
-    const clusterCount = GRID_SIZE >= 48 ? 6 : GRID_SIZE >= 36 ? 4 : 3;
+    const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const clusterCount = mapScale >= 48 ? 6 : mapScale >= 36 ? 4 : 3;
     for (let i = 0; i < clusterCount; i++) {
         const base = land[Math.floor(Math.random() * land.length)];
         const size = 1 + Math.floor(Math.random() * 3); // 1..3 tiles
@@ -119,7 +143,8 @@ function assignBiomes(tiles) {
 function generateRivers(tiles) {
     const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
     const at = (x, z) => byKey.get(`${x},${z}`);
-    const riverCount = GRID_SIZE >= 48 ? 4 : GRID_SIZE >= 36 ? 3 : 2;
+    const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const riverCount = mapScale >= 48 ? 4 : mapScale >= 36 ? 3 : 2;
     const carved = new Set(); // tiles already turned to river (avoid re-carve flicker)
 
     const carve = (t) => {
@@ -144,12 +169,12 @@ function generateRivers(tiles) {
         // Start on a random edge tile and walk inward.
         let x, z, dx, dz;
         const edge = Math.floor(Math.random() * 4);
-        if (edge === 0)      { x = Math.floor(Math.random() * GRID_SIZE); z = 0; dx = 0; dz = 1; }
-        else if (edge === 1) { x = Math.floor(Math.random() * GRID_SIZE); z = GRID_SIZE - 1; dx = 0; dz = -1; }
-        else if (edge === 2) { x = 0; z = Math.floor(Math.random() * GRID_SIZE); dx = 1; dz = 0; }
-        else                 { x = GRID_SIZE - 1; z = Math.floor(Math.random() * GRID_SIZE); dx = -1; dz = 0; }
+        if (edge === 0)      { x = Math.floor(Math.random() * GRID_WIDTH); z = 0; dx = 0; dz = 1; }
+        else if (edge === 1) { x = Math.floor(Math.random() * GRID_WIDTH); z = GRID_HEIGHT - 1; dx = 0; dz = -1; }
+        else if (edge === 2) { x = 0; z = Math.floor(Math.random() * GRID_HEIGHT); dx = 1; dz = 0; }
+        else                 { x = GRID_WIDTH - 1; z = Math.floor(Math.random() * GRID_HEIGHT); dx = -1; dz = 0; }
 
-        const length = Math.floor(GRID_SIZE * (0.95 + Math.random() * 0.4)); // long, dominant rivers
+        const length = Math.floor(Math.max(GRID_WIDTH, GRID_HEIGHT) * (0.95 + Math.random() * 0.4)); // long, dominant rivers
         let sinceWiden = 0;
         for (let s = 0; s < length; s++) {
             const t = at(x, z);
@@ -171,7 +196,7 @@ function generateRivers(tiles) {
                 const ndx = dz, ndz = -dx; dx = ndx; dz = ndz;
             }
             x += dx; z += dz;
-            if (x < 0 || x >= GRID_SIZE || z < 0 || z >= GRID_SIZE) break;
+            if (x < 0 || x >= GRID_WIDTH || z < 0 || z >= GRID_HEIGHT) break;
         }
     }
 }
@@ -185,7 +210,8 @@ function placeWonders(tiles) {
     const eligible = tiles.filter(t =>
         t.terrain !== 'CITY' && t.terrain !== 'WATER' && t.terrain !== 'MOUNTAIN' && t.terrain !== 'RIVER' && !t.wonder);
     if (!eligible.length) return [];
-    const count = GRID_SIZE >= 48 ? 5 : GRID_SIZE >= 36 ? 4 : 3;
+    const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const count = mapScale >= 48 ? 5 : mapScale >= 36 ? 4 : 3;
     // Shuffle a copy of the wonder defs so each map gets a varied subset.
     const pool = [...NATURAL_WONDERS].sort(() => Math.random() - 0.5);
     const placed = [];
@@ -200,7 +226,7 @@ function placeWonders(tiles) {
                 if (d < nearest) nearest = d;
             }
             // Bias toward distance from other wonders; nearest==Infinity (first) is fine.
-            const score = (nearest === Infinity ? GRID_SIZE : nearest) + Math.random() * 4;
+            const score = (nearest === Infinity ? Math.max(GRID_WIDTH, GRID_HEIGHT) : nearest) + Math.random() * 4;
             if (score > bestDist) { bestDist = score; best = t; }
         }
         if (!best) break;
@@ -219,8 +245,8 @@ function placeWonders(tiles) {
  */
 export function generateMap() {
     const tiles = [];
-    for (let x = 0; x < GRID_SIZE; x++) {
-        for (let z = 0; z < GRID_SIZE; z++) {
+    for (let x = 0; x < GRID_WIDTH; x++) {
+        for (let z = 0; z < GRID_HEIGHT; z++) {
             tiles.push({
                 x, z,
                 terrain: 'PLAINS', // base fill; biomes/mountains/rivers overwrite
@@ -236,7 +262,20 @@ export function generateMap() {
 
     // Shape the landmass into an irregular continent (cuts off the square
     // corners and carves a wavy coastline) BEFORE biomes/rivers/cities.
+    // Retry with a more generous cutoff if the first pass produced too little
+    // land (prevents cities from spawning in the ocean on unlucky seeds).
     applyContinentMask(tiles);
+    let landCount = tiles.filter(t => t.terrain !== 'WATER').length;
+    let maskAttempts = 0;
+    while (landCount < tiles.length * 0.30 && maskAttempts < 5) {
+        // Reset all tiles to PLAINS before re-applying the mask.
+        for (const t of tiles) {
+            if (t.terrain === 'WATER') t.terrain = 'PLAINS';
+        }
+        applyContinentMask(tiles, 0.30 + maskAttempts * 0.08);
+        landCount = tiles.filter(t => t.terrain !== 'WATER').length;
+        maskAttempts++;
+    }
 
     // Group land into contiguous biome regions (FOREST/HILLS/DESERT/MARSH/TUNDRA)
     // with plains gaps, plus a few impassable MOUNTAIN clusters.
@@ -247,7 +286,8 @@ export function generateMap() {
     generateRivers(tiles);
 
     // Total city count: one per faction + a few neutral (scales with map size).
-    const neutral = GRID_SIZE >= 48 ? 4 : GRID_SIZE >= 36 ? 3 : 2;
+    const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const neutral = mapScale >= 48 ? 4 : mapScale >= 36 ? 3 : 2;
     const totalCities = FACTIONS.length + neutral;
 
     // Pick city sites spread across the map via farthest-point sampling, avoiding
@@ -396,6 +436,7 @@ export function getAdjacentTiles(tiles, x, z) {
  * Capture a city and transfer all tiles within its influence radius to the
  * capturer. Unowned tiles and tiles of the city's previous owner are flipped;
  * tiles of other factions are left untouched. Returns messages array.
+ * Only logs major news (city conquest) to global chat.
  */
 export function captureCityTerritory(tiles, cityTile, newOwner) {
     const messages = [];
@@ -405,7 +446,15 @@ export function captureCityTerritory(tiles, cityTile, newOwner) {
     // A freshly captured city is fortified for its new owner.
     cityTile.fortMax = cityFortMax(cityTile);
     cityTile.fortification = cityTile.fortMax;
-    messages.push(`${newOwner} captured city at [${cityTile.x}, ${cityTile.z}]!`);
+    // Assign a name if the city doesn't have one (use new owner's faction names)
+    if (!cityTile.cityName) {
+        const factionDef = getFactionDef(newOwner);
+        const factionId = factionDef ? factionDef.id : null;
+        cityTile.cityName = nextCityNameForFaction(factionId);
+    }
+    // Major news: only log city conquest (not every tile capture)
+    const cityName = cityTile.cityName || `[${cityTile.x}, ${cityTile.z}]`;
+    messages.push(`🏰 ${cityName} (Lv.${cityTile.cityLevel || 1}) captured by ${newOwner}!`);
 
     const r = cityRadius(cityTile);
     let claimed = 0;
@@ -420,7 +469,7 @@ export function captureCityTerritory(tiles, cityTile, newOwner) {
             }
         }
     }
-    messages.push(`${claimed} surrounding tile(s) now under ${newOwner} control.`);
+    // Don't log individual tile claims - only the city capture is major news
     return messages;
 }
 
@@ -451,6 +500,7 @@ export function expandCityTerritory(tiles, cityTile, owner) {
  * Found a brand-new city on a valid land tile (settler action). The tile becomes
  * a level-1 city owned by the founder, fortified, and claims its surrounding
  * tiles. Returns messages; empty (with a reason in [0]) if the tile is invalid.
+ * Each city gets a unique name from the city names pool.
  */
 export function foundCity(tiles, tile, owner) {
     const messages = [];
@@ -463,6 +513,10 @@ export function foundCity(tiles, tile, owner) {
     tile.cityLevel = 1;
     tile.fortMax = cityFortMax(tile);
     tile.fortification = tile.fortMax;
+    // Assign a unique name from the founder's faction naming pool
+    const factionDef = getFactionDef(owner);
+    const factionId = factionDef ? factionDef.id : null;
+    tile.cityName = nextCityNameForFaction(factionId);
     return captureCityTerritory(tiles, tile, owner);
 }
 

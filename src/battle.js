@@ -1,8 +1,9 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
+import { isPassable } from './map.js';
 
 /** Fallback stats for combatants with no UNIT_TYPE entry (lords/kings, which
  *  fight as unit-like combatants). They are melee, non-naval, no siege bonus. */
@@ -10,6 +11,51 @@ const LORD_FALLBACK_STATS = { ranged: false, naval: false, siegeBonus: 0, besieg
 function combatStats(u) { return UNIT_TYPE[u.type] || LORD_FALLBACK_STATS; }
 /** Display name for combat log lines (lords use their proper name). */
 function combatName(u) { return u.name || u.type; }
+
+/**
+ * Is `defender` encircled? A defender is encircled when ALL four orthogonal
+ * neighbor tiles are blocked (off-map, impassable terrain, or enemy-occupied)
+ * AND at least 2 enemy units are orthogonally adjacent. Encirclement is a
+ * positional property of the defender, evaluated by the attacker's side, and
+ * applies symmetrically to the player and the AI. Naval defenders are exempt
+ * (water tiles have no meaningful orthogonal-land surround).
+ *
+ * @param defender - the defending unit/lord combatant
+ * @param units - full units Map (to check occupancy)
+ * @param tiles - full tiles Map (to check passability/off-map)
+ */
+export function isEncircled(defender, units, tiles) {
+    if (!defender || !units || !tiles) return false;
+    if (UNIT_TYPE[defender.type] && UNIT_TYPE[defender.type].naval) return false;
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    let escapes = 0;
+    let enemyAdj = 0;
+    for (const [dx, dz] of dirs) {
+        const nx = defender.x + dx, nz = defender.z + dz;
+        const k = `${nx},${nz}`;
+        const t = tiles.get(k);
+        // Off-map or impassable terrain = blocked (no escape that way).
+        if (!t || !isPassable(t)) continue;
+        // Is there a unit on this neighbor tile?
+        let occ = null;
+        for (const u of units.values()) {
+            if (u.x === nx && u.z === nz) { occ = u; break; }
+        }
+        if (occ) {
+            if (occ.owner !== defender.owner) {
+                // Enemy-occupied = blocked (and counts toward the surround).
+                enemyAdj++;
+            } else {
+                // Friendly-occupied = an escape route (allies don't trap you).
+                escapes++;
+            }
+        } else {
+            // Empty passable tile = a real escape route.
+            escapes++;
+        }
+    }
+    return escapes === 0 && enemyAdj >= 2;
+}
 
 /**
  * Resolve combat between attacker and defender.
@@ -25,7 +71,7 @@ function combatName(u) { return u.name || u.type; }
  * @param tempBonuses - optional map faction->{attack,defense} from king actives (Bloodlust/Bulwark)
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
@@ -84,6 +130,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense;
+    // Encircled defenders fight at a disadvantage (no room to maneuver).
+    if (encircled) {
+        effectiveDefense -= ENCIRCLEMENT_DEFENSE_PENALTY;
+        messages.push(`${combatName(defenderUnit)} is encircled! (-${ENCIRCLEMENT_DEFENSE_PENALTY} def, no counter)`);
+    }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
     // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
@@ -113,9 +164,10 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         return { messages, defenderDied: true, attackerDied: false, damageToDefender };
     }
 
-    // --- Defender counter-attack (only if melee and survived) ---
-    // Ranged units (and lords, who are melee) don't counter-attack when attacked at melee range
-    if (!defStats.ranged) {
+    // --- Defender counter-attack (only if melee, not encircled, and survived) ---
+    // Ranged units (and lords, who are melee) don't counter-attack when attacked at melee range.
+    // Encircled defenders cannot counter-attack (they are surrounded).
+    if (!defStats.ranged && !encircled) {
         let defMultiplier = 1.0;
         if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
             defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;
@@ -197,4 +249,41 @@ export function processLoyalty(tiles, owner) {
         }
     }
     return messages;
+}
+
+/**
+ * Predict the outcome of a combat WITHOUT mutating any real state. Used by
+ * the AI to decide whether an attack is favorable before committing.
+ *
+ * Shallow-clones the attacker and defender (resolveCombat only mutates `hp` on
+ * the objects it's handed), passes `null` for both lords so awardXP cannot
+ * mutate real lords during prediction, and runs resolveCombat on the clones.
+ * The real `lords` array is still passed so adjacency auras are computed
+ * (getAdjacentLordBonuses only reads from lords, it never mutates them).
+ *
+ * Returns { defenderDied, attackerDied, damageToDefender, damageToAttacker }.
+ */
+export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false) {
+    if (!attackerUnit || !defenderUnit) {
+        return { defenderDied: false, attackerDied: false, damageToDefender: 0, damageToAttacker: 0 };
+    }
+    const aClone = { ...attackerUnit };
+    const dClone = { ...defenderUnit };
+    const aHp0 = aClone.hp;
+    const dHp0 = dClone.hp;
+    // Clone the lords so that awardXP (fired on a predicted kill) mutates the
+    // clone instead of the real lord, while the real lord's combat bonuses
+    // (read off .stats/.class/.abilities) still apply to the damage math. The
+    // real `lords` array is passed through so adjacency auras are computed
+    // (getAdjacentLordBonuses only reads from it, never mutates).
+    const cloneLord = (l) => l
+        ? { ...l, stats: { ...(l.stats || {}) }, abilities: [...(l.abilities || [])], army: [...(l.army || [])] }
+        : null;
+    const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled);
+    return {
+        defenderDied: result.defenderDied,
+        attackerDied: result.attackerDied,
+        damageToDefender: dHp0 - (dClone.hp || 0),
+        damageToAttacker: aHp0 - (aClone.hp || 0)
+    };
 }

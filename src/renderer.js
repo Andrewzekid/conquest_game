@@ -13,7 +13,9 @@ const UNIT_ICONS = {
     PIKEMAN: '🔱', SCOUT: '🧭', SIEGE: '🛠️', SETTLER: '🏠', ENGINEER: '🔨',
     LONGBOWMAN: '🏹', CATAPHRACT: '♞', MEDIC: '✚', SIEGE_TOWER: '🏯',
     CATAPULT: '🎯', TREBUCHET: '🪨', WORKER: '👷',
-    GALLEY: '⛵', TRANSPORT: '🚢'
+    GALLEY: '⛵', TRANSPORT: '🚢', TRIREME: '🏛️', FRIGATE: '⚓',
+    GALLEON: '🏴‍☠️', CARAVEL: '🧭', BATTLESHIP: '💥', SUBMARINE: '🐟',
+    DESTROYER: '🛡️', IRONCLAD: '⛓️'
 };
 
 export class GameRenderer {
@@ -757,6 +759,14 @@ export class GameRenderer {
             }
             case 'GALLEY':
             case 'TRANSPORT':
+            case 'TRIREME':
+            case 'FRIGATE':
+            case 'GALLEON':
+            case 'CARAVEL':
+            case 'BATTLESHIP':
+            case 'SUBMARINE':
+            case 'DESTROYER':
+            case 'IRONCLAD':
                 return this.makeShipModel(type, color);
             default: {
                 this._addHumanoid(g, P, { helmet: true });

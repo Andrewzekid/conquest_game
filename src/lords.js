@@ -38,10 +38,11 @@ export function createLord(owner, x, z, name, classKey) {
 }
 
 /** A lord's max HP: base 12 + 2/level, kings are much sturdier (they are the
- *  faction leader and their death is catastrophic). */
+ *  faction leader and their death is catastrophic). Kings get a large HP bonus
+ *  (+38) so they can survive longer in battle and lead from the front (50 HP at level 1). */
 export function lordMaxHp(lord) {
     if (!lord) return 1;
-    return 12 + (lord.level - 1) * 2 + (lord.isKing ? 18 : 0);
+    return 12 + (lord.level - 1) * 2 + (lord.isKing ? 38 : 0);
 }
 
 /** A lord's own melee attack: combat stat + class bonus + king bonus. */
@@ -75,7 +76,8 @@ export function lordCombatant(lord) {
         hp: lord.hp,
         maxHp: lord.maxHp,
         attack: lordAttack(lord),
-        defense: lordDefense(lord)
+        // King's Guard: a king with bodyguard units in its army gets bonus defense.
+        defense: lordDefense(lord) + kingGuardBonus(lord)
     };
 }
 
@@ -118,13 +120,26 @@ export function canRecruitLord(resources) {
     return resources.gold >= LORD_RECRUIT_COST.gold && resources.food >= LORD_RECRUIT_COST.food;
 }
 
-/** Max units a lord can command: base 2 + command stat + class bonus. */
+/** Max units a lord can command: base 2 + command stat + class bonus. Kings
+ *  command a larger royal guard (+3 base) so they can lead bigger armies and
+ *  be protected by more bodyguard units. */
 export function maxArmySize(lord) {
     if (!lord) return 0;
     const cls = LORD_CLASSES[lord.class] || {};
     let size = 2 + (lord.stats.command || 0);
     if (cls.bonus && cls.bonus.extraCommand) size += cls.bonus.extraCommand;
+    if (lord.isKing) size += 3; // King's Guard: kings command 3 extra units
     return size;
+}
+
+/** King's Guard defense bonus: a king gets +1 defense for each unit in its
+ *  army (its bodyguard), up to a cap. This makes a well-guarded king much
+ *  harder to kill, encouraging players to keep units stacked with their king.
+ *  Returns the bonus defense to add to the king's combatant defense. */
+export function kingGuardBonus(lord) {
+    if (!lord || !lord.isKing) return 0;
+    const armySize = (lord.army || []).length;
+    return Math.min(armySize, 5); // +1 def per army unit, max +5
 }
 
 /** Can this lord take another unit into its army? */

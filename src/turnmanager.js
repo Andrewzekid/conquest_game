@@ -23,15 +23,17 @@ function processMedicHeal(units) {
     }
 }
 
-export function createTurnManager(gameState, factions, onPhaseChange, runAI, renderAll) {
+export function createTurnManager(gameState, factions, onPhaseChange, runAI, renderAll, spectateMode = false) {
     let currentPhase = PLAYER_FACTION;
-    const aiFactions = factions.filter(f => f !== PLAYER_FACTION);
+    // In spectate mode, ALL factions are AI-controlled (including the "player" slot)
+    const aiFactions = spectateMode ? [...factions] : factions.filter(f => f !== PLAYER_FACTION);
     let recalcFog = null;
     let onAutosave = null;
     let logger = null;
 
     function endPlayerTurn() {
-        if (currentPhase !== PLAYER_FACTION) return;
+        // In spectate mode, skip the player phase check - AI handles everything
+        if (!spectateMode && currentPhase !== PLAYER_FACTION) return;
 
         // Collect resources + upkeep for every faction (using faction defs for passives)
         for (const f of factions) {

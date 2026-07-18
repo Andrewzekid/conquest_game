@@ -1,10 +1,13 @@
-/** Start menu (choose faction + map) and pause menu. Overlays live in index.html. */
+/** Start menu (choose faction + map) and pause menu. Overlays live in index.html.
+ *  Phase F: Added player count slider and spectate mode. */
 import { FACTION_DEFS, FACTION_IDS } from './faction.js';
-import { MAP_SIZES, FACTIONS } from './config.js';
+import { MAP_SIZES, FACTIONS, MAX_FACTIONS } from './config.js';
 import { sfx, unlockAudio } from './sound.js';
 import { loadSavedExists } from './save.js';
 
 let _selectedFaction = 'crimson';
+let _playerCount = 4;
+let _spectateMode = false;
 let _onStart = null;
 
 function el(id) { return document.getElementById(id); }
@@ -36,16 +39,45 @@ function renderFactionCards() {
     }
 }
 
-/** Show the start menu; calls onStart({ playerFactionId, aiFactionIds, mapSize }). */
+/** Show the start menu; calls onStart({ playerFactionId, aiFactionIds, mapSize, playerCount, spectate }). */
 export function showStartMenu(onStart) {
     _onStart = onStart;
     unlockAudio();
     const menu = el('start-menu');
-    if (!menu) { if (onStart) onStart({ playerFactionId: 'crimson', aiFactionIds: null, mapSize: 'medium' }); return; }
+    if (!menu) { if (onStart) onStart({ playerFactionId: 'crimson', aiFactionIds: null, mapSize: 'medium', playerCount: 4, spectate: false }); return; }
 
     // Pre-fill size select.
     const sizeSel = el('start-size');
     if (sizeSel) sizeSel.value = 'medium';
+
+    // Player count slider
+    const playerSlider = el('start-players');
+    const playerDisplay = el('start-players-display');
+    if (playerSlider) {
+        playerSlider.value = _playerCount;
+        if (playerDisplay) playerDisplay.textContent = _playerCount;
+        playerSlider.oninput = () => {
+            _playerCount = parseInt(playerSlider.value);
+            if (playerDisplay) playerDisplay.textContent = _playerCount;
+            sfx.click();
+        };
+    }
+
+    // Spectate mode checkbox
+    const spectateCheck = el('start-spectate');
+    if (spectateCheck) {
+        spectateCheck.checked = _spectateMode;
+        spectateCheck.onchange = () => {
+            _spectateMode = spectateCheck.checked;
+            sfx.click();
+            // Disable faction selection in spectate mode
+            const factionWrap = el('start-factions');
+            if (factionWrap) {
+                factionWrap.style.opacity = _spectateMode ? '0.5' : '1';
+                factionWrap.style.pointerEvents = _spectateMode ? 'none' : 'auto';
+            }
+        };
+    }
 
     const hasSave = loadSavedExists();
     const cont = el('start-continue');
@@ -59,11 +91,17 @@ export function showStartMenu(onStart) {
         sfx.click();
         const mapSize = (sizeSel && sizeSel.value) || 'medium';
         menu.style.display = 'none';
-        // Build AI faction ids: the other factions, picked from the roster
-        // (3 opponents by default, or fewer if not enough remain).
+        // Build AI faction ids based on player count
+        const aiCount = _playerCount - 1;
         const others = FACTION_IDS.filter(id => id !== _selectedFaction);
-        const aiFactionIds = others.slice(0, 3);
-        if (_onStart) _onStart({ playerFactionId: _selectedFaction, aiFactionIds, mapSize });
+        const aiFactionIds = others.slice(0, aiCount);
+        if (_onStart) _onStart({ 
+            playerFactionId: _spectateMode ? null : _selectedFaction, 
+            aiFactionIds, 
+            mapSize,
+            playerCount: _playerCount,
+            spectate: _spectateMode
+        });
     };
     if (cont) cont.onclick = () => { sfx.click(); menu.style.display = 'none'; if (_onStart) _onStart({ load: true }); };
 }

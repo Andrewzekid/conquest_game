@@ -5,7 +5,7 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
 import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
-import { maxArmySize, lordAttack, lordDefense } from './lords.js';
+import { maxArmySize, lordAttack, lordDefense, kingGuardBonus } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity } from './economy.js';
 
@@ -259,7 +259,15 @@ export function bindUI(gameState, callbacks) {
         if (td.resource && td.amount) info += ` — ${td.amount} ${td.resource}`;
         info += ` (${bonusTxt})`;
         if (tile.terrain === 'CITY') {
-            info += ` | Fort ${tile.fortification||0}/${tile.fortMax||0}${(tile.fortification||0)===0 && tile.owner!==PLAYER_FACTION ? ' (BREACHED)' : ''}`;
+            // Show city name, level, and health bar (fortification)
+            const cityName = tile.cityName || `City`;
+            const cityLevel = tile.cityLevel || 1;
+            const fort = tile.fortification || 0;
+            const fortMax = tile.fortMax || 1;
+            const fortPct = Math.round((fort / fortMax) * 100);
+            const breached = fort === 0 && tile.owner !== PLAYER_FACTION;
+            info += ` | 🏰 ${cityName} (Lv.${cityLevel})`;
+            info += ` | HP: ${fort}/${fortMax} (${fortPct}%)${breached ? ' BREACHED' : ''}`;
         }
         if (tile.terrain === 'RIVER') {
             info += tile.bridge ? ' | 🌉 Bridged' : ' | Impassable (needs bridge)';
@@ -346,13 +354,23 @@ export function bindUI(gameState, callbacks) {
             if (unit.type === 'ENGINEER') {
                 const constructing = gameState.construction && gameState.construction.get(unit.id);
                 if (constructing) {
-                    html += `<span style="font-size:11px; color:#ffd700;">🔨 Building Siege Tower — ready in ${constructing.turnsLeft} turn${constructing.turnsLeft === 1 ? '' : 's'}.</span><br>`;
-                } else if (gameState.siegeTowerTarget && !unit.hasAttackedThisTurn) {
-                    const tgt = gameState.siegeTowerTarget;
-                    html += `<button id="build-tower-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Build a Siege Tower here (3 turns) to assault the nearby enemy city.">🏯 Build Siege Tower (3t)</button><br>`;
-                    html += `<span style="font-size:10px; color:#9ab;">Siege target: city at [${tgt.x}, ${tgt.z}]</span><br>`;
+                    const label = constructing.type === 'SIEGE_ENGINE'
+                        ? `Building ${UNIT_TYPE[constructing.engineType] ? UNIT_TYPE[constructing.engineType].name : 'Siege Engine'}`
+                        : 'Building Siege Tower';
+                    html += `<span style="font-size:11px; color:#ffd700;">🔨 ${label} — ready in ${constructing.turnsLeft} turn${constructing.turnsLeft === 1 ? '' : 's'}.</span><br>`;
                 } else if (!unit.hasAttackedThisTurn) {
-                    html += `<span style="font-size:10px; color:#9ab;">Move within 2 tiles of an enemy city to build a Siege Tower.</span><br>`;
+                    // Siege Tower button (if near an enemy city).
+                    if (gameState.siegeTowerTarget) {
+                        const tgt = gameState.siegeTowerTarget;
+                        html += `<button id="build-tower-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Build a Siege Tower here (3 turns) to assault the nearby enemy city.">🏯 Build Siege Tower (3t)</button><br>`;
+                        html += `<span style="font-size:10px; color:#9ab;">Siege target: city at [${tgt.x}, ${tgt.z}]</span><br>`;
+                    }
+                    // Siege Engine build buttons (CATAPULT/TREBUCHET) — field
+                    // construction, no workshop required. Gives factions without
+                    // a Siege Workshop a path to long-range siege engines.
+                    html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
+                    html += `<button class="build-siege-engine-btn" data-engine="CATAPULT" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">💣 Build Catapult (2t)</button>`;
+                    html += `<button class="build-siege-engine-btn" data-engine="TREBUCHET" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">💣 Build Trebuchet (2t)</button>`;
                 }
             }
             // Navy: a land unit adjacent to a friendly Transport with free cargo
@@ -407,6 +425,16 @@ export function bindUI(gameState, callbacks) {
             if (!unit.boarded) {
                 html += `<button id="disband-btn" style="font-size:10px; padding:2px 6px; margin-top:4px; color:#f88;" title="Destroy this unit (refunds 25% of gold cost).">✖ Disband Unit</button><br>`;
             }
+            // Join a lord's army: if a lord with command capacity is on the same
+            // tile and this unit isn't already in that lord's army, show a button.
+            if (unit.owner === PLAYER_FACTION && !unit.boarded) {
+                const lordsHere = (gameState.lords || []).filter(l =>
+                    l.owner === PLAYER_FACTION && l.x === unit.x && l.z === unit.z &&
+                    canCommand(l) && !(l.army || []).includes(unit.id));
+                for (const lord of lordsHere) {
+                    html += `<button class="join-army-btn" data-lord-id="${lord.id}" style="font-size:10px; padding:2px 6px; margin-top:2px; color:#9cf;" title="Join ${lord.name}'s army (${lord.army.length}/${maxArmySize(lord)}).">⚔️ Join ${lord.name}'s Army</button><br>`;
+                }
+            }
             // Pillage: a military unit adjacent to an enemy tile with a terrain
             // improvement can destroy it for a gold reward (uses its action).
             if (unit.type !== 'SETTLER' && unit.type !== 'WORKER' && !unit.hasAttackedThisTurn) {
@@ -446,6 +474,17 @@ export function bindUI(gameState, callbacks) {
             const t = gameState.tiles.get(`${pbtn.dataset.ptx},${pbtn.dataset.ptz}`);
             if (t) callbacks.onPillage && callbacks.onPillage(unit, t);
         };
+        const jbtns = document.querySelectorAll('.join-army-btn');
+        jbtns.forEach(b => {
+            b.onclick = () => {
+                const lord = (gameState.lords || []).find(l => l.id === Number(b.dataset.lordId));
+                if (lord && callbacks.onJoinArmy) callbacks.onJoinArmy(unit, lord);
+            };
+        });
+        const sebtns = document.querySelectorAll('.build-siege-engine-btn');
+        sebtns.forEach(b => {
+            b.onclick = () => callbacks.onBuildSiegeEngine && callbacks.onBuildSiegeEngine(unit, b.dataset.engine);
+        });
     }
 
     function showLordInfo(lord) {
@@ -461,11 +500,11 @@ export function bindUI(gameState, callbacks) {
             <strong>${cls.icon} ${lord.name} the ${cls.name}</strong> (Lv.${lord.level})${lord.isKing ? ' 👑 KING' : ''}<br>
             Owner: ${fc.name || lord.owner}<br>
             HP: ${lord.hp == null ? '?' : Math.max(0, lord.hp|0)}/${lord.maxHp == null ? '?' : lord.maxHp|0}
-             | ATK ${lordAttack(lord)} | DEF ${lordDefense(lord)}<br>
+             | ATK ${lordAttack(lord)} | DEF ${lordDefense(lord) + kingGuardBonus(lord)}<br>
             XP: ${lord.xp}/${50 * lord.level}<br>
             CMD: ${lord.stats.command} | CMB: ${lord.stats.combat} | GOV: ${lord.stats.governance}<br>
             Class: ${cls.name} — ${cls.desc}<br>
-            Army: ${army}/${maxArmySize(lord)} units<br>
+            Army: ${army}/${maxArmySize(lord)} units${lord.isKing ? ` (King's Guard: +${kingGuardBonus(lord)} DEF from bodyguard)` : ''}<br>
             Abilities: ${abilities}<br>
             ${lord.hasAttackedThisTurn ? '' : '(Can attack) '}${lord.hasMovedThisTurn ? '(Moved)' : '(Can move)'}
         `;

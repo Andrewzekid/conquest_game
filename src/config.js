@@ -1,10 +1,37 @@
 // --- Game Configuration ---
-// Mutable live binding: game.js sets this to the chosen map size at startup.
-// Importers read it at call time, so they pick up the chosen size.
-export let GRID_SIZE = 40;
+// Mutable live binding: game.js sets these at startup based on chosen map size.
+// Importers read them at call time, so they pick up the chosen dimensions.
+export let GRID_WIDTH = 40;
+export let GRID_HEIGHT = 40;
+export let GRID_SIZE = 40; // Legacy: equals width for compatibility
 export const TILE_SIZE = 1;
-export const MAP_SIZES = { small: 28, medium: 40, large: 52 };
-export function setGridSize(n) { GRID_SIZE = n; }
+
+// Tile count-based map sizes with player count recommendations
+export const MAP_SIZES = {
+    tiny:   { tiles: 400,  players: 3, name: 'Tiny' },
+    small:  { tiles: 800,  players: 5, name: 'Small' },
+    medium: { tiles: 1600, players: 7, name: 'Medium' },
+    large:  { tiles: 2500, players: 9, name: 'Large' },
+    huge:   { tiles: 4000, players: 10, name: 'Huge' },
+    epic:   { tiles: 6000, players: 10, name: 'Epic' }
+};
+
+// Calculate actual dimensions from tile count with random aspect ratio
+export function calculateMapDimensions(sizeKey) {
+    const size = MAP_SIZES[sizeKey] || MAP_SIZES.medium;
+    const targetTiles = size.tiles;
+    // Aspect ratio between 0.65 (tall) and 1.5 (wide)
+    const aspect = 0.65 + Math.random() * 0.85;
+    const width = Math.round(Math.sqrt(targetTiles * aspect));
+    const height = Math.round(targetTiles / width);
+    return { width, height, totalTiles: width * height };
+}
+
+export function setGridDimensions(width, height) {
+    GRID_WIDTH = width;
+    GRID_HEIGHT = height;
+    GRID_SIZE = Math.max(width, height); // Legacy compatibility
+}
 
 // Terrain types. `key` is the string identifier used in tile.terrain (fixes map/renderer mismatch).
 export const TERRAIN = {
@@ -42,17 +69,25 @@ export const UNIT_TYPE = {
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
-    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 7, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
+    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
     TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 9, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
     // Naval units (unlocked by a Harbor building in a coastal/river city).
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
-    TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 }
+    TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
+    TRIREME:     { name: 'Trireme',      hp: 16, attack: 7, defense: 3, moveRange: 5, upkeep: { food: 3, gold: 6, wood: 3 }, naval: true, ranged: false, attackRange: 1, vision: 4 },
+    FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
+    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 },
+    CARAVEL:     { name: 'Caravel',      hp: 14, attack: 4, defense: 3, moveRange: 6, upkeep: { food: 3, gold: 5, wood: 3 }, naval: true, ranged: false, attackRange: 1, vision: 7 },
+    BATTLESHIP:  { name: 'Battleship',   hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 4, vision: 5, aoe: true, canSetFire: true },
+    SUBMARINE:   { name: 'Submarine',    hp: 18, attack: 14, defense: 2, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 2, iron: 3 }, naval: true, ranged: false, attackRange: 1, vision: 3, stealth: true },
+    DESTROYER:   { name: 'Destroyer',    hp: 25, attack: 9, defense: 5, moveRange: 5, upkeep: { food: 4, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 6, antiSub: true },
+    IRONCLAD:    { name: 'Ironclad',     hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 3, iron: 3 }, naval: true, ranged: true, attackRange: 2, vision: 4 }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
 // (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
 export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
-export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT'];
+export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'TRIREME', 'FRIGATE', 'GALLEON', 'CARAVEL', 'BATTLESHIP', 'SUBMARINE', 'DESTROYER', 'IRONCLAD'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
 export const SIEGE_ENGINES = ['CATAPULT', 'TREBUCHET'];
@@ -89,7 +124,15 @@ export const UNIT_COST = {
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
     GALLEY:      { gold: 70, food: 10, wood: 40, iron: 0,  production: 20 },
-    TRANSPORT:   { gold: 60, food: 5,  wood: 30, iron: 0,  production: 25 }
+    TRANSPORT:   { gold: 60, food: 5,  wood: 30, iron: 0,  production: 25 },
+    TRIREME:     { gold: 80, food: 10, wood: 45, iron: 0,  production: 22 },
+    FRIGATE:     { gold: 100, food: 15, wood: 50, iron: 10, production: 28 },
+    GALLEON:     { gold: 150, food: 20, wood: 60, iron: 20, production: 35 },
+    CARAVEL:     { gold: 70, food: 10, wood: 50, iron: 0,  production: 18 },
+    BATTLESHIP:  { gold: 200, food: 25, wood: 60, iron: 30, production: 45 },
+    SUBMARINE:   { gold: 120, food: 10, wood: 30, iron: 25, production: 30 },
+    DESTROYER:   { gold: 140, food: 15, wood: 45, iron: 20, production: 32 },
+    IRONCLAD:    { gold: 180, food: 20, wood: 50, iron: 25, production: 38 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -100,6 +143,10 @@ export const BRIDGE_COST = { gold: 40, wood: 20 };
 export const SIEGE_TOWER_COST = { gold: 80, wood: 20, iron: 20, production: 30 };
 export const SIEGE_TOWER_BUILD_TURNS = 3;
 export const SIEGE_TOWER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
+
+// Engineers can only build Siege Towers (not CATAPULT/TREBUCHET).
+// Long-range siege engines require a Siege Workshop building in a city.
+// Removed SIEGE_ENGINE_BUILD_COST to restrict engineers to Siege Towers only.
 
 // Cost for an Engineer to construct Ladders (cheaper alternative to siege tower,
 // allows infantry to assault fortified cities). Requires wood, built in 1 turn.
@@ -114,7 +161,15 @@ export const TYPE_ADVANTAGE = {
     ARTILLERY:   { strongAgainst: 'CAVALRY',   multiplier: 1.4 },
     CAVALRY:     { strongAgainst: 'INFANTRY',  multiplier: 1.4 },
     PIKEMAN:     { strongAgainst: 'CAVALRY',   multiplier: 1.5 },
-    CATAPHRACT:  { strongAgainst: 'INFANTRY',  multiplier: 1.5 }
+    CATAPHRACT:  { strongAgainst: 'INFANTRY',  multiplier: 1.5 },
+    // Naval type advantages
+    FRIGATE:     { strongAgainst: 'GALLEY',    multiplier: 1.5 },
+    GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 },
+    BATTLESHIP:  { strongAgainst: 'GALLEON',   multiplier: 1.5 },
+    SUBMARINE:   { strongAgainst: 'TRANSPORT', multiplier: 1.8 },
+    DESTROYER:   { strongAgainst: 'SUBMARINE', multiplier: 1.6 },
+    TRIREME:     { strongAgainst: 'GALLEY',    multiplier: 1.3 },
+    IRONCLAD:    { strongAgainst: 'FRIGATE',   multiplier: 1.4 }
 };
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
@@ -142,6 +197,12 @@ export const CONCEAL_MAX_PER_TILE = 2;    // max units that can conceal on one t
 export const AMBUSH_ATTACK_BONUS = 3;     // bonus attack when revealing for surprise attack
 export const AMBUSH_DEFENSE_BONUS = 2;    // bonus defense when ambushed unit counter-attacks
 
+// --- Encirclement ---
+// A defender with no orthogonal escape tile AND >=2 adjacent enemy units is
+// "encircled": it takes a defense penalty and cannot counter-attack. This is a
+// positional mechanic (surround the enemy), symmetric for player and AI.
+export const ENCIRCLEMENT_DEFENSE_PENALTY = 2;
+
 // --- Cavalry Charge ---
 // Cavalry (and Cataphract) units can charge an adjacent enemy, moving onto the
 // enemy's tile and attacking with a bonus. After charging, the unit cannot move
@@ -157,6 +218,12 @@ export const CHARGE_RANGE = 1;            // Chebyshev distance for charge targe
 // clears. Set to 2 so the effect spans exactly one full turn.
 export const CHARGE_EXHAUST_TURNS = 2;          // post-charge exhaustion counter start value
 export const CHARGE_EXHAUST_RANGED_VULN = 1.5;  // ranged damage multiplier vs exhausted cavalry
+
+// --- Freeze (Frost Clan Winter's Grasp) ---
+// Frozen units cannot move on their next turn. The freeze counter is set by the
+// Winter's Grasp active ability and ticks down at the start of the frozen
+// unit's owner's turn (like charge exhaustion).
+export const FREEZE_TURNS = 1; // units frozen by Winter's Grasp skip 1 move
 
 // --- Ranged arrow bombard vs cities ---
 // Non-siege ranged units (ARCHER, LONGBOWMAN) can fire arrows at an enemy
@@ -190,7 +257,7 @@ export const UNIT_XP_PER_KILL = 12;
 export const UNIT_XP_PER_LEVEL = 30;
 
 // AI settings
-export const AI_MAX_UNITS = 14;
+export const AI_MAX_UNITS = 18;
 
 // --- Economy ---
 export const MARKET_RATES = {
@@ -238,18 +305,61 @@ export const NATURAL_WONDERS = [
 ];
 
 // --- Factions ---
-// 'player' is human-controlled; all others are AI. Add/remove ids here to scale the map.
-export const FACTIONS = ['player', 'ai1', 'ai2', 'ai3'];
+// Dynamic faction slots - supports 2-10 players
+// 'player' is human-controlled; all others are AI
+export const MAX_FACTIONS = 10;
 export const PLAYER_FACTION = 'player';
+
+// Generate faction slots dynamically based on player count
+export function generateFactionSlots(playerCount) {
+    const slots = ['player'];
+    for (let i = 1; i < playerCount; i++) {
+        slots.push(`ai${i}`);
+    }
+    return slots;
+}
+
+// Default faction slots (4 players)
+export let FACTIONS = ['player', 'ai1', 'ai2', 'ai3'];
 
 // Per-faction colors. `tile` is the emissive tint shown on owned tiles;
 // `unit` is the marker color for that faction's units.
+// Extended to support up to 10 factions
 export const FACTION_COLORS = {
     player: { tile: 0x2e5dc4, unit: 0x4488ff, name: 'You' },
     ai1:    { tile: 0xb33333, unit: 0xff5544, name: 'Crimson' },
     ai2:    { tile: 0x3fa847, unit: 0x88dd44, name: 'Verdant' },
-    ai3:    { tile: 0x8a3fbf, unit: 0xcc66ff, name: 'Violet' }
+    ai3:    { tile: 0x8a3fbf, unit: 0xcc66ff, name: 'Violet' },
+    ai4:    { tile: 0x234c9c, unit: 0x4488ff, name: 'Azure' },
+    ai5:    { tile: 0x101012, unit: 0x5a5a66, name: 'Obsidian' },
+    ai6:    { tile: 0xc9a028, unit: 0xffd700, name: 'Golden' },
+    ai7:    { tile: 0x4a4a5a, unit: 0x8888aa, name: 'Iron' },
+    ai8:    { tile: 0x2a1a3a, unit: 0x6a4a8a, name: 'Shadow' },
+    ai9:    { tile: 0x1a4a6a, unit: 0x44aadd, name: 'Storm' }
 };
+
+// Per-faction city names - each faction has thematic naming
+export const FACTION_CITY_NAMES = {
+    crimson: ['Warhold', 'Bloodkeep', 'Ironforge', 'Flamecrest', 'Conquest', 'Ragefall', 'Siegebreak', 'Warmonger'],
+    verdant: ['Greenhollow', 'Oakshire', 'Willowmere', 'Thornvale', 'Mossgate', 'Leafwind', 'Rootdeep', 'Bloomhaven'],
+    violet: ['Spellspire', 'Arcanum', 'Mystara', 'Runekeep', 'Shadowmere', 'Crystalpeak', 'Starfall', 'Moonridge'],
+    azure: ['Kings Landing', 'Lords Keep', 'Crownhaven', 'Shieldwall', 'Bastion', 'Fortis', 'Guardia', 'Sentinel'],
+    obsidian: ['Shadowfell', 'Doomspire', 'Nightkeep', 'Voidreach', 'Darkhollow', 'Gloomhaven', 'Eclipse', 'Abyssia'],
+    golden: ['Goldshire', 'Sunforge', 'Midaskeep', 'Treasurehold', 'Gildedgate', 'Prosperity', 'Fortune', 'Richmond'],
+    iron: ['Steelhold', 'Anvilkeep', 'Forgegate', 'Hammerfall', 'Ironclad', 'Metalburg', 'Smelter', 'Crucible'],
+    shadow: ['Nightshade', 'Duskfall', 'Twilight', 'Veilkeep', 'Whisper', 'Silentium', 'Umbra', 'Phantom'],
+    storm: ['Thunderwall', 'Lightningkeep', 'Tempest', 'Galeforce', 'Stormwind', 'Hurricane', 'Cyclone', 'Maelstrom']
+};
+
+// Default city names pool (fallback)
+export const CITY_NAMES = [
+    'Ironhold', 'Stormkeep', 'Goldshire', 'Ravencrest', 'Dragonspire',
+    'Frostgate', 'Sunforge', 'Shadowmere', 'Crystalpeak', 'Thunderwall',
+    'Silverton', 'Oakshield', 'Flamecrest', 'Windhaven', 'Stonehelm',
+    'Brightwater', 'Darkhollow', 'Ironforge', 'Starfall', 'Moonridge',
+    'Emberkeep', 'Frostholm', 'Goldenvale', 'Ravenscar', 'Dragonmaw',
+    'Stormwind', 'Sunblade', 'Shadowfen', 'Crystalis', 'Thunderpeak'
+];
 
 // --- Lords ---
 export const LORD_ABILITIES = {
@@ -281,10 +391,22 @@ export const DIPLOMACY_STATES = {
     TRADE_PACT: 'trade_pact'
 };
 
+// AI is now much more reluctant to accept peace/trade - wars are grinding and
+// breaking a treaty should be costly. The player must fight or offer significant
+// value to get anything but the most temporary truces.
 export const AI_PERSONALITIES = {
-    AGGRESSIVE:  { warChance: 0.7,  acceptAlliance: 0.3, acceptTrade: 0.5 },
-    DEFENSIVE:   { warChance: 0.2,  acceptAlliance: 0.5, acceptTrade: 0.8 },
-    ECONOMIC:    { warChance: 0.1,  acceptAlliance: 0.6, acceptTrade: 0.95 }
+    AGGRESSIVE:  { warChance: 0.8,  acceptAlliance: 0.15, acceptTrade: 0.25, acceptPeace: 0.3 },
+    DEFENSIVE:   { warChance: 0.3,  acceptAlliance: 0.25, acceptTrade: 0.4, acceptPeace: 0.5 },
+    ECONOMIC:    { warChance: 0.15, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 }
+};
+
+// Trade materials: specific resources that can be exchanged in trade pacts.
+// Each trade pact specifies which material is traded and how much per turn.
+export const TRADE_MATERIALS = {
+    GOLD:    { key: 'gold',    name: 'Gold',    emoji: '💰' },
+    FOOD:    { key: 'food',    name: 'Food',    emoji: '🌾' },
+    WOOD:    { key: 'wood',    name: 'Wood',    emoji: '🪵' },
+    IRON:    { key: 'iron',    name: 'Iron',    emoji: '⛏️' }
 };
 
 // --- Victory ---
