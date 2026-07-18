@@ -1,8 +1,15 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
 import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN } from './config.js';
-import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP } from './lords.js';
+import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
+
+/** Fallback stats for combatants with no UNIT_TYPE entry (lords/kings, which
+ *  fight as unit-like combatants). They are melee, non-naval, no siege bonus. */
+const LORD_FALLBACK_STATS = { ranged: false, naval: false, siegeBonus: 0, besiege: false, aoe: false, attack: 0, defense: 0 };
+function combatStats(u) { return UNIT_TYPE[u.type] || LORD_FALLBACK_STATS; }
+/** Display name for combat log lines (lords use their proper name). */
+function combatName(u) { return u.name || u.type; }
 
 /**
  * Resolve combat between attacker and defender.
@@ -22,8 +29,8 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
-    const atkStats = UNIT_TYPE[attackerUnit.type];
-    const defStats = UNIT_TYPE[defenderUnit.type];
+    const atkStats = combatStats(attackerUnit);
+    const defStats = combatStats(defenderUnit);
     const terrainBonus = TERRAIN_BONUS[terrain] || TERRAIN_BONUS.PLAINS;
     // Naval units defending on water/river are in their element — no exposed-
     // crossing penalty (the -2 WATER/RIVER defense bonus doesn't apply to ships).
@@ -86,46 +93,56 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         messages.push(`${defenderUnit.type} is exhausted — ranged fire deals ${damageToDefender} (×${CHARGE_EXHAUST_RANGED_VULN})!`);
     }
     defenderUnit.hp -= damageToDefender;
-    messages.push(`${attackerUnit.type} attacks ${defenderUnit.type} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);
+    messages.push(`${combatName(attackerUnit)} attacks ${combatName(defenderUnit)} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);
+
+    // Keep a lord combatant's hp synced onto its lord object as it changes.
+    const sync = () => { syncLordHp(attackerUnit); syncLordHp(defenderUnit); };
 
     const defenderDied = defenderUnit.hp <= 0;
     if (defenderDied) {
-        messages.push(`${defenderUnit.type} was destroyed!`);
-        // Award XP to the attacker's lord and the attacker unit itself.
-        if (attackerLord) {
-            const xpMsgs = awardXP(attackerLord, LORD_XP_PER_KILL);
-            messages.push(...xpMsgs);
+        messages.push(`${combatName(defenderUnit)} was destroyed!`);
+        // Award XP: a lord attacker earns lord XP; otherwise the attacker's
+        // commanding lord (if any) and the attacker unit itself gain XP.
+        if (attackerUnit._isLord) {
+            messages.push(...awardXP(attackerUnit._lord, LORD_XP_PER_KILL));
+        } else {
+            if (attackerLord) messages.push(...awardXP(attackerLord, LORD_XP_PER_KILL));
+            messages.push(...awardUnitXP(attackerUnit, UNIT_XP_PER_KILL));
         }
-        messages.push(...awardUnitXP(attackerUnit, UNIT_XP_PER_KILL));
+        sync();
         return { messages, defenderDied: true, attackerDied: false, damageToDefender };
     }
 
     // --- Defender counter-attack (only if melee and survived) ---
-    // Ranged units don't counter-attack when attacked at melee range
+    // Ranged units (and lords, who are melee) don't counter-attack when attacked at melee range
     if (!defStats.ranged) {
         let defMultiplier = 1.0;
         if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
             defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;
-            messages.push(`${defenderUnit.type} counter type advantage!`);
+            messages.push(`${combatName(defenderUnit)} counter type advantage!`);
         }
 
         const effectiveAttackDef = (defenderUnit.attack ?? defStats.attack) * defMultiplier + defLordBonus.attack;
         const effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
         const damageToAttacker = Math.max(1, Math.floor(effectiveAttackDef - effectiveDefenseAtk * 0.3));
         attackerUnit.hp -= damageToAttacker;
-        messages.push(`${defenderUnit.type} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);
+        messages.push(`${combatName(defenderUnit)} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);
 
         const attackerDied = attackerUnit.hp <= 0;
         if (attackerDied) {
-            messages.push(`${attackerUnit.type} was destroyed in counter-attack!`);
-            if (defenderLord) {
-                const xpMsgs = awardXP(defenderLord, LORD_XP_PER_KILL);
-                messages.push(...xpMsgs);
+            messages.push(`${combatName(attackerUnit)} was destroyed in counter-attack!`);
+            if (defenderUnit._isLord) {
+                messages.push(...awardXP(defenderUnit._lord, LORD_XP_PER_KILL));
+            } else {
+                if (defenderLord) messages.push(...awardXP(defenderLord, LORD_XP_PER_KILL));
+                messages.push(...awardUnitXP(defenderUnit, UNIT_XP_PER_KILL));
             }
+            sync();
             return { messages, defenderDied: false, attackerDied: true, damageToDefender };
         }
     }
 
+    sync();
     return { messages, defenderDied: false, attackerDied: false, damageToDefender };
 }
 

@@ -485,10 +485,15 @@ export function besiegeCity(unit, cityTile) {
  *  that is not currently pinned at 0 by an adjacent enemy siege unit. Called
  *  once per turn so a city you stop besieging recovers. */
 export function regenFortification(tiles, units) {
-    const siegeAdjacent = new Set(); // city keys pinned at 0 by an enemy siege unit
+    const siegeAdjacent = new Set(); // city keys pinned at 0 by an enemy besieger
     if (units) {
         for (const u of units.values()) {
-            if (u.type !== 'SIEGE' && u.type !== 'ARTILLERY' && u.type !== 'SIEGE_TOWER') continue;
+            // Any unit with a besiege role (SIEGE, ARTILLERY, SIEGE_TOWER,
+            // CATAPULT, TREBUCHET, …) holds a city at 0 while adjacent. Using
+            // the besiege flag instead of a hardcoded list means new siege
+            // units are covered automatically.
+            const udef = UNIT_TYPE[u.type];
+            if (!udef || !udef.besiege) continue;
             for (const [dx, dz] of [[0,1],[0,-1],[1,0],[-1,0]]) {
                 const k = `${u.x+dx},${u.z+dz}`;
                 siegeAdjacent.add(k);

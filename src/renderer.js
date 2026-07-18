@@ -224,6 +224,33 @@ export class GameRenderer {
         });
     }
 
+    /** Refresh a single tile's mesh after its terrain changes at runtime (e.g.
+     *  a Settler founds a city on a plains tile). The base mesh was built for the
+     *  original terrain, so without this the new city never gets a keep prop and
+     *  renderAll keeps coloring it as the old terrain. Rebuilds scenery, height,
+     *  userData and the cityProps entry for this tile. */
+    updateTileTerrain(tile) {
+        const key = `${tile.x},${tile.z}`;
+        const mesh = this.tileMeshes.get(key);
+        if (!mesh) return;
+        // Drop existing scenery / wonder children (base mesh stays).
+        for (const child of [...mesh.children]) mesh.remove(child);
+        const terrain = tile.terrain;
+        const y = (terrain === 'MOUNTAIN') ? 0.5
+            : (terrain === 'CITY') ? 0.55
+            : (terrain === 'HILLS') ? 0.18
+            : (terrain === 'WATER') ? -0.05
+            : (terrain === 'RIVER') ? -0.04 : 0;
+        mesh.position.y = y;
+        mesh.userData = { ...TERRAIN[terrain], x: tile.x, z: tile.z };
+        this.tileHeights.set(key, y);
+        const { group, keep } = this.makeScenery(terrain);
+        mesh.add(group);
+        if (keep) this.cityProps.set(key, keep); else this.cityProps.delete(key);
+        if (tile.wonder) mesh.add(this.makeWonderProp(tile.wonder));
+        mesh.material.color = new THREE.Color(TERRAIN[terrain].color);
+    }
+
     animate() {
         requestAnimationFrame(() => this.animate());
         const now = performance.now();

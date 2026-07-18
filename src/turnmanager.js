@@ -92,9 +92,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 unit.chargeExhausted -= 1;
             }
         }
-        // Reset lord per-turn flags (lords/kings can move once per turn too).
+        // Reset lord per-turn flags (lords/kings can move and attack once per
+        // turn, like units) and slowly regenerate their HP between battles.
         if (gameState.lords) {
-            for (const lord of gameState.lords) lord.hasMovedThisTurn = false;
+            for (const lord of gameState.lords) {
+                lord.hasMovedThisTurn = false;
+                lord.hasAttackedThisTurn = false;
+                if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp < lord.maxHp) {
+                    lord.hp = Math.min(lord.maxHp, lord.hp + 2);
+                }
+            }
         }
 
         // Each city may train one unit per turn — reset the limit.

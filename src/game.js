@@ -22,7 +22,8 @@ import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
 import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
-         findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize } from './lords.js';
+         findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
+         lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn } from './building.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
 import { getFactionDef, getUnitCostFor, getFactionVision } from './faction.js';
@@ -233,6 +234,11 @@ export class Game {
                 const def = this.factionDefs[lord.owner];
                 if (def) lord.active = def.king.active;
             }
+            // Backfill combat fields for pre-lord-combat saves: lords now have
+            // HP and can attack once per turn.
+            if (typeof lord.maxHp !== 'number') lord.maxHp = lordMaxHp(lord);
+            if (typeof lord.hp !== 'number') lord.hp = lord.maxHp;
+            if (typeof lord.hasAttackedThisTurn !== 'boolean') lord.hasAttackedThisTurn = false;
         }
         if (!this.gameState.turnManager) {
             this.gameState.turnManager = createTurnManager(
@@ -474,6 +480,17 @@ export class Game {
             }
         }
 
+        // 0a) Lord/King attack: a selected player lord clicks an adjacent enemy
+        //     (unit or exposed lord) that's in its attack list. Lords fight like units.
+        if (selLord && selLord.owner === PLAYER_FACTION && !selLord.hasAttackedThisTurn) {
+            const tgt = clickedUnit || clickedLord;
+            if (tgt && tgt.owner !== PLAYER_FACTION &&
+                this.gameState.attackTargets.some(t => t.id === tgt.id)) {
+                this.handleLordAttack(selLord, tgt);
+                return;
+            }
+        }
+
         // 0b) Bridge: a selected player Engineer/Siege clicks an adjacent river tile.
         if (sel && sel.owner === PLAYER_FACTION && tile && tile.terrain === 'RIVER' && !tile.bridge &&
             !sel.hasAttackedThisTurn && (UNIT_TYPE[sel.type].canBuildBridge || sel.type === 'SIEGE')) {
@@ -513,6 +530,14 @@ export class Game {
         if (sel && sel.owner === PLAYER_FACTION && clickedUnit && clickedUnit.owner !== PLAYER_FACTION) {
             const inRange = this.gameState.attackTargets.some(u => u.id === clickedUnit.id);
             if (inRange && !sel.hasAttackedThisTurn) { this.handleAttack(sel, clickedUnit); return; }
+        }
+
+        // 2b) Attack an exposed enemy lord: a selected player unit clicks an
+        //     enemy lord with no bodyguard unit on its tile, in attack range.
+        if (sel && sel.owner === PLAYER_FACTION && !sel.hasAttackedThisTurn &&
+            clickedLord && clickedLord.owner !== PLAYER_FACTION) {
+            const inRange = this.gameState.attackTargets.some(t => t.id === clickedLord.id);
+            if (inRange) { this.handleAttack(sel, lordCombatant(clickedLord)); return; }
         }
 
         // 3) Move: a selected, still-movable player unit clicks a reachable tile.
@@ -619,6 +644,23 @@ export class Game {
             const warTargets = getAttackTargets(unit, this.gameState.units)
                 .filter(t => canAttack(this.gameState.diplomacy, unit.owner, t.owner));
             this.gameState.attackTargets = warTargets;
+            // Lords/kings fight too: an EXPOSED enemy lord (no friendly unit
+            // bodyguarding it on the same tile) within attack range can be
+            // struck directly. A lord stacked with a unit is protected by that
+            // unit (attack the unit first; once it dies the lord is exposed).
+            const udef = UNIT_TYPE[unit.type];
+            const range = (udef && udef.attackRange) || (udef && udef.ranged ? 2 : 1);
+            for (const l of (this.gameState.lords || [])) {
+                if (!l || l.owner === unit.owner) continue;
+                if ((l.hp || 0) <= 0) continue;
+                if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
+                const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
+                if (dist > range) continue;
+                const guarded = [...this.gameState.units.values()].some(
+                    u => u.owner === l.owner && u.x === l.x && u.z === l.z);
+                if (guarded) continue;
+                this.gameState.attackTargets.push(lordCombatant(l));
+            }
         } else {
             this.gameState.attackTargets = [];
         }
@@ -702,10 +744,33 @@ export class Game {
         } else {
             this.gameState.moveTargets.clear();
         }
+        // Lords are melee combatants: they can attack adjacent at-war enemy
+        // units, and exposed at-war enemy lords (a stacked enemy lord is
+        // guarded by its unit and not directly targetable).
         this.gameState.attackTargets = [];
+        if (!lord.hasAttackedThisTurn && lord.owner === PLAYER_FACTION) {
+            for (const u of this.gameState.units.values()) {
+                if (u.owner === lord.owner) continue;
+                if (!canAttack(this.gameState.diplomacy, lord.owner, u.owner)) continue;
+                if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) <= 1) {
+                    this.gameState.attackTargets.push(u);
+                }
+            }
+            for (const other of (this.gameState.lords || [])) {
+                if (!other || other === lord || other.owner === lord.owner) continue;
+                if ((other.hp || 0) <= 0) continue;
+                if (!canAttack(this.gameState.diplomacy, lord.owner, other.owner)) continue;
+                if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
+                const guarded = [...this.gameState.units.values()].some(
+                    u => u.owner === other.owner && u.x === other.x && u.z === other.z);
+                if (guarded) continue;
+                this.gameState.attackTargets.push(lordCombatant(other));
+            }
+        }
 
         this.ui.showLordInfo(lord);
         this.renderer.highlightMoveTargets(this.gameState.moveTargets);
+        this.renderer.highlightAttackTargets(this.gameState.attackTargets);
         this.log(`Selected lord: ${lord.name} (Lv.${lord.level})${lord.isKing ? ' 👑' : ''}`);
     }
 
@@ -774,7 +839,8 @@ export class Game {
         const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
         const attackerLord = findCommandingLord(this.gameState.lords, attacker);
-        const defenderLord = findCommandingLord(this.gameState.lords, defender);
+        // A lord defender has no separate commanding lord (it IS the lord).
+        const defenderLord = defender._isLord ? null : findCommandingLord(this.gameState.lords, defender);
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
@@ -783,21 +849,23 @@ export class Game {
 
         attacker.hasAttackedThisTurn = true;
 
+        const nameOf = (c) => c._isLord ? c.name : (UNIT_TYPE[c.type] && UNIT_TYPE[c.type].name) || c.type;
         if (result.defenderDied) {
-            this._onUnitDeath(defender);
-            this.log(`${UNIT_TYPE[defender.type].name} destroyed!`);
-            // Obsidian respawn-on-kill passive.
+            this._onCombatantDeath(defender);
+            this.log(`${nameOf(defender)} destroyed!`);
+            // Obsidian respawn-on-kill passive (only meaningful when killing a unit).
             this._maybeRespawnOnKill(attacker.owner);
         }
         if (result.attackerDied) {
-            this._onUnitDeath(attacker);
-            this.log(`${UNIT_TYPE[attacker.type].name} destroyed!`);
+            this._onCombatantDeath(attacker);
+            this.log(`${nameOf(attacker)} destroyed!`);
             this.gameState.selectedUnit = null;
         }
 
         // Long-range siege engines (CATAPULT, TREBUCHET): AOE splash damage to
         // enemy units adjacent to the target, and a burn DoT on survivors.
-        if (UNIT_TYPE[attacker.type].aoe) {
+        const atkDef = UNIT_TYPE[attacker.type];
+        if (atkDef && atkDef.aoe) {
             this._applyAoeAndFire(attacker, defender, result.damageToDefender || 0);
             // Lobbed projectile + ground shockwave VFX (transient, self-retiring).
             if (this.renderer && this.renderer.addImpact) {
@@ -809,6 +877,104 @@ export class Game {
         this.renderer.clearHighlights();
         this.renderAll();
         this.ui.updateResourceBar();
+        this.checkVictory();
+    }
+
+    /** Normalize a clicked target (a unit, a lord object, or an already-built
+     *  lord combatant) into something resolveCombat can fight. Units are their
+     *  own combatant; lord objects are wrapped via lordCombatant. */
+    _asCombatant(target) {
+        if (!target) return null;
+        if (target._isLord) return target;            // already a combatant
+        if (UNIT_TYPE[target.type]) return target;     // a real unit
+        return lordCombatant(target);                 // a lord/king object
+    }
+
+    /** A lord/king attacks an adjacent enemy (a unit or another lord). The lord
+     *  is the attacker, so it has no separate commanding lord; it can take
+     *  counter-attack damage and die like any combatant. */
+    handleLordAttack(lord, target) {
+        if (!lord || lord.hasAttackedThisTurn || !target) return;
+        if (!canAttack(this.gameState.diplomacy, lord.owner, target.owner)) {
+            this.log(`Cannot attack: not at war with ${target.owner}!`);
+            return;
+        }
+        const atk = lordCombatant(lord);
+        const def = this._asCombatant(target);
+        if (!atk || !def) return;
+        const defenderTile = this.tiles.get(`${def.x},${def.z}`);
+        const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
+        const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
+        const result = resolveCombat(atk, def, terrain, null, defenderLord,
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+        result.messages.forEach(m => this.log(m));
+        sfx.attack();
+        lord.hasAttackedThisTurn = true;
+        syncLordHp(atk); // resolveCombat already syncs, but be safe.
+
+        const nameOf = (c) => c._isLord ? c.name : (UNIT_TYPE[c.type] && UNIT_TYPE[c.type].name) || c.type;
+        if (result.defenderDied) {
+            this._onCombatantDeath(def);
+            this.log(`${nameOf(def)} destroyed by ${lord.name}!`);
+        }
+        if (result.attackerDied) {
+            this._onCombatantDeath(atk);
+            this.log(`${nameOf(atk)} fell in battle!`);
+            this.gameState.selectedLord = null;
+        }
+        this.gameState.moveTargets.clear();
+        this.gameState.attackTargets = [];
+        this.renderer.clearHighlights();
+        this.renderAll();
+        this.ui.updateResourceBar();
+        this.checkVictory();
+    }
+
+    /** Route a combatant death to the right cleanup: units via _onUnitDeath,
+     *  lords/kings via _onLordDeath. */
+    _onCombatantDeath(c) {
+        if (!c) return;
+        if (c._isLord) this._onLordDeath(c._lord);
+        else this._onUnitDeath(c);
+    }
+
+    /** A lord/king has fallen. Removes the lord, frees its army, and — if it was
+     *  a king — eliminates the faction (the king is the faction's leader). */
+    _onLordDeath(lord) {
+        if (!lord) return;
+        const idx = this.gameState.lords.indexOf(lord);
+        if (idx >= 0) this.gameState.lords.splice(idx, 1);
+        // Disband the fallen lord's army: its units keep existing but lose their
+        // commanding lord (and the stat/aura bonuses that came with it).
+        for (const u of this.gameState.units.values()) {
+            if (u.lordId === lord.id) u.lordId = null;
+        }
+        const wasKing = !!lord.isKing;
+        const title = wasKing ? 'King' : 'Lord';
+        const nm = lord.name || title;
+        this.log(`${title} ${nm} has fallen in battle!`);
+        if (wasKing) this._onKingDeath(lord);
+    }
+
+    /** A faction's king has died — the faction is eliminated. Its units are
+     *  removed and its cities go neutral so they can be recaptured. */
+    _onKingDeath(king) {
+        const f = king.owner;
+        const name = this.factionColors[f] ? this.factionColors[f].name : f;
+        if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
+        if (this.gameState.eliminated.has(f)) return;
+        this.gameState.eliminated.add(f);
+        this.log(`${name}'s king has fallen — ${name} is eliminated!`);
+        // Remove the faction's remaining units and lords.
+        for (const u of [...this.gameState.units.values()]) {
+            if (u.owner === f) this._onUnitDeath(u);
+        }
+        this.gameState.lords = (this.gameState.lords || []).filter(l => l.owner !== f);
+        // Its cities become neutral (open for conquest).
+        for (const t of this.tiles.values()) {
+            if (t.owner === f) { t.owner = null; t.loyalty = 0; }
+        }
+        sfx.defeat();
         this.checkVictory();
     }
 
@@ -1169,6 +1335,9 @@ export class Game {
         }
         msgs.forEach(m => this.log(m));
         sfx.capture();
+        // The tile's terrain changed (PLAINS -> CITY); rebuild its mesh so the
+        // keep/flag scenery appears (the base mesh was built for the old terrain).
+        this.renderer.updateTileTerrain(tile);
         // Consume the settler.
         this.gameState.units.delete(unit.id);
         removeUnitFromArmies(this.gameState.lords, unit.id);
@@ -1951,6 +2120,13 @@ export class Game {
         for (const other of candidates) {
             if (declared) break;
             const rel = getRelation(this.gameState.diplomacy, faction, other);
+            // Honor a fresh peace/trade/alliance for a minimum cooling-off period
+            // before the AI will even consider breaking it. Without this, a
+            // stronger AI re-declares war the very turn after accepting peace,
+            // making treaties meaningless (the player sees "peace" but is
+            // attacked immediately). Breaking a long-standing deal is allowed.
+            const PEACE_COOLDOWN = 6;
+            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) continue;
             const theirPower = Math.max(1, this._factionPower(other));
             const ratio = myPower / theirPower;
             // Threshold: clear advantage needed. Alliances need a bigger edge.
@@ -2086,6 +2262,54 @@ export class Game {
         }
     }
 
+    /** An AI lord/king attacks an adjacent at-war enemy. Prefers the lowest-HP
+     *  enemy unit (most likely to kill); falls back to an exposed enemy lord.
+     *  Reuses the player's handleLordAttack so logging/cleanup are consistent. */
+    _aiLordAttack(faction) {
+        for (const lord of (this.gameState.lords || [])) {
+            if (lord.owner !== faction || lord.hasAttackedThisTurn) continue;
+            let best = null, bestHp = Infinity;
+            for (const u of this.gameState.units.values()) {
+                if (u.owner === faction) continue;
+                if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
+                if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) > 1) continue;
+                if ((u.hp || 0) < bestHp) { bestHp = u.hp || 0; best = u; }
+            }
+            if (!best) {
+                for (const other of this.gameState.lords) {
+                    if (other === lord || other.owner === faction) continue;
+                    if (!canAttack(this.gameState.diplomacy, faction, other.owner)) continue;
+                    if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
+                    const guarded = [...this.gameState.units.values()]
+                        .some(u => u.owner === other.owner && u.x === other.x && u.z === other.z);
+                    if (guarded) continue;
+                    best = other; break;
+                }
+            }
+            if (best) this.handleLordAttack(lord, best);
+        }
+    }
+
+    /** Any AI unit that still has its action and sits adjacent to an exposed
+     *  at-war enemy lord attacks that lord. */
+    _aiUnitAttackLords(faction) {
+        for (const unit of this.gameState.units.values()) {
+            if (unit.owner !== faction || unit.hasAttackedThisTurn) continue;
+            const udef = UNIT_TYPE[unit.type];
+            const range = (udef && udef.attackRange) || (udef && udef.ranged ? 2 : 1);
+            for (const other of this.gameState.lords) {
+                if (other.owner === faction) continue;
+                if (!canAttack(this.gameState.diplomacy, faction, other.owner)) continue;
+                if (Math.max(Math.abs(unit.x - other.x), Math.abs(unit.z - other.z)) > range) continue;
+                const guarded = [...this.gameState.units.values()]
+                    .some(u => u.owner === other.owner && u.x === other.x && u.z === other.z);
+                if (guarded) continue;
+                this.handleAttack(unit, lordCombatant(other));
+                break;
+            }
+        }
+    }
+
     runAITurn(faction) {
         const pool = this.gameState.resources[faction];
         const def = this.factionDefs[faction];
@@ -2112,6 +2336,9 @@ export class Game {
         // capital. Done before unit actions so the army repositions around the
         // relocated lord.
         this._aiMoveLords(faction);
+        // Lords/kings lead from the front: after moving, an AI lord attacks an
+        // adjacent at-war enemy (unit or exposed lord) if it has one.
+        this._aiLordAttack(faction);
 
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy);
 
@@ -2235,6 +2462,9 @@ export class Game {
                     if (unit && tile && tile.terrain === 'CITY' && pool.gold >= CAPTURE_COST) {
                         pool.gold -= CAPTURE_COST;
                         captureCityTerritory(this.tiles, tile, faction).forEach(m => this.log(`${factionName}: ${m}`));
+                        // Garrison the capturing unit on the city tile.
+                        unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
+                        this.renderer.updateTileTerrain(tile);
                     }
                     break;
                 }
@@ -2257,6 +2487,7 @@ export class Game {
                         if (tile.terrain !== before || tile.owner === faction) {
                             msgs.forEach(m => this.log(`${factionName}: ${m}`));
                             sfx.capture();
+                            this.renderer.updateTileTerrain(tile);
                             this.gameState.units.delete(unit.id);
                             removeUnitFromArmies(this.gameState.lords, unit.id);
                         } else if (msgs.length) {
@@ -2294,6 +2525,11 @@ export class Game {
                 }
             }
         }
+        // Mop-up: any AI unit that still has its action and is adjacent to an
+        // exposed at-war enemy lord strikes the lord (lords fight, so a lone
+        // enemy lord is fair game). Runs after the main action loop so it never
+        // pre-empts a unit's planned move/attack.
+        this._aiUnitAttackLords(faction);
         this.updateFog();
         this.checkVictory();
     }

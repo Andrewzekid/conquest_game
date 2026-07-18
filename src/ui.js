@@ -5,7 +5,7 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
 import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
-import { maxArmySize } from './lords.js';
+import { maxArmySize, lordAttack, lordDefense } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity } from './economy.js';
 
@@ -460,12 +460,14 @@ export function bindUI(gameState, callbacks) {
         let html = `
             <strong>${cls.icon} ${lord.name} the ${cls.name}</strong> (Lv.${lord.level})${lord.isKing ? ' 👑 KING' : ''}<br>
             Owner: ${fc.name || lord.owner}<br>
+            HP: ${lord.hp == null ? '?' : Math.max(0, lord.hp|0)}/${lord.maxHp == null ? '?' : lord.maxHp|0}
+             | ATK ${lordAttack(lord)} | DEF ${lordDefense(lord)}<br>
             XP: ${lord.xp}/${50 * lord.level}<br>
             CMD: ${lord.stats.command} | CMB: ${lord.stats.combat} | GOV: ${lord.stats.governance}<br>
             Class: ${cls.name} — ${cls.desc}<br>
             Army: ${army}/${maxArmySize(lord)} units<br>
             Abilities: ${abilities}<br>
-            ${lord.hasMovedThisTurn ? '(Moved)' : '(Can move)'}
+            ${lord.hasAttackedThisTurn ? '' : '(Can attack) '}${lord.hasMovedThisTurn ? '(Moved)' : '(Can move)'}
         `;
         // Player lord auto-move goal status + cancel.
         if (lord.owner === PLAYER_FACTION) {
