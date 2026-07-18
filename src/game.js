@@ -1544,6 +1544,20 @@ export class Game {
                     }
                     break;
                 }
+                case 'workerBuild': {
+                    // A Worker builds a terrain improvement on its current tile.
+                    const unit = this.gameState.units.get(action.unitId);
+                    const tile = unit ? this.tiles.get(`${unit.x},${unit.z}`) : null;
+                    if (unit && tile && unit.type === 'WORKER' && tile.owner === faction &&
+                        !unit.hasAttackedThisTurn && influence && influence.has(`${tile.x},${tile.z}`)) {
+                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles);
+                        if (msgs.length && msgs[0].startsWith('Built')) {
+                            unit.hasAttackedThisTurn = true;
+                            msgs.forEach(m => this.log(`${factionName}: ${m}`));
+                        }
+                    }
+                    break;
+                }
                 case 'move': {
                     const unit = this.gameState.units.get(action.unitId);
                     if (unit) {

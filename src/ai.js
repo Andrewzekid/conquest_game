@@ -132,6 +132,22 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
+    // 2c. Workers: train a few if there are improvable owned tiles within a
+    //     city's influence that don't yet have their terrain improvement. Cap
+    //     at min(2, cityCount) so workers don't crowd out the army.
+    const workerCount = myUnits.filter(u => u.type === 'WORKER').length;
+    const workerCap = Math.max(1, Math.min(2, myCityCount));
+    if (workerCount < workerCap && capRoom() && hasImprovableTile(tiles, owner, buildings, influence)) {
+        const wc = getUnitCostFor('WORKER', factionDef);
+        if (canAfford('WORKER', res, wc)) {
+            const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
+            if (spawnTile) {
+                actions.push({ type: 'train', unitType: 'WORKER', tileKey: `${spawnTile.x},${spawnTile.z}` });
+                res = spendCost('WORKER', res, wc);
+            }
+        }
+    }
+
     // 3. One economy building per turn if affordable (farms/lumbermills/mines/markets).
     for (const t of owned) {
         if (actions.filter(a => a.type === 'build').length >= 2) break;
@@ -167,6 +183,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
             }
             continue; // nowhere to settle — idle.
+        }
+
+        // a1b) Workers build terrain improvements. If standing on an owned,
+        //      unimproved, in-influence resource tile, build the matching
+        //      improvement; otherwise step toward the nearest such tile.
+        if (unit.type === 'WORKER') {
+            const here = tiles.get(`${unit.x},${unit.z}`);
+            const hereBldg = here ? improvementForTerrain(here.terrain) : null;
+            const hereHas = hereBldg && (buildings.get(`${here.x},${here.z}`) || []).includes(hereBldg);
+            if (here && here.owner === owner && hereBldg && !hereHas &&
+                (!influence || influence.has(`${here.x},${here.z}`)) &&
+                canAffordBuilding(hereBldg, res) && !unit.hasAttackedThisTurn) {
+                actions.push({ type: 'workerBuild', unitId: unit.id, buildingType: hereBldg });
+                res = payBuilding(hereBldg, res);
+                continue;
+            }
+            const spot = findImprovementSpot(unit, tiles, owner, buildings, influence);
+            if (spot) {
+                const step = stepToward(unit, spot, tiles, owner, units, moved, isAtWar);
+                if (step) {
+                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+            continue;
         }
 
         // a2) Engineers build a Siege Tower when within range of an at-war
@@ -333,6 +374,42 @@ function pickEconomyBuilding(tile, existing, resources) {
     if (!type || existing.includes(type)) return null;
     if (!canAffordBuilding(type, resources)) return null;
     return type;
+}
+
+/** The terrain improvement (FARM/LUMBERMILL/MINE) that fits this terrain, or
+ *  null for terrains with no improvement (DESERT/MARSH/TUNDRA/HILLS/WATER/etc). */
+function improvementForTerrain(terrain) {
+    return ({ PLAINS: 'FARM', FOREST: 'LUMBERMILL', MOUNTAIN: 'MINE' })[terrain] || null;
+}
+
+/** Does the faction own at least one tile within influence that could still
+ *  receive its terrain improvement? Drives the AI's worker-training decision. */
+function hasImprovableTile(tiles, owner, buildings, influence) {
+    for (const t of tiles.values()) {
+        if (t.owner !== owner) continue;
+        const b = improvementForTerrain(t.terrain);
+        if (!b) continue;
+        if ((buildings.get(`${t.x},${t.z}`) || []).includes(b)) continue;
+        if (influence && !influence.has(`${t.x},${t.z}`)) continue;
+        return true;
+    }
+    return false;
+}
+
+/** Nearest owned, unimproved, in-influence tile whose terrain has an
+ *  improvement the worker can head toward. Returns the tile or null. */
+function findImprovementSpot(unit, tiles, owner, buildings, influence) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.owner !== owner) continue;
+        const b = improvementForTerrain(t.terrain);
+        if (!b) continue;
+        if ((buildings.get(`${t.x},${t.z}`) || []).includes(b)) continue;
+        if (influence && !influence.has(`${t.x},${t.z}`)) continue;
+        const d = Math.max(Math.abs(t.x - unit.x), Math.abs(t.z - unit.z));
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    return best;
 }
 
 function findAffordableUnit(resources, roster, factionDef) {
