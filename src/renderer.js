@@ -1019,6 +1019,7 @@ export class GameRenderer {
         // Rebuild unit markers (distinct shape per unit type) — enemy units
         // only render on tiles the player can currently see.
         this.unitGroup.clear();
+        this._flames = []; // repopulated below with live flame meshes for flicker
         for (const unit of gameState.units.values()) {
             // Units embarked aboard a Transport are hidden (rendered as cargo pips on the ship).
             if (unit.boarded) continue;
@@ -1059,6 +1060,7 @@ export class GameRenderer {
                 flame.position.set(0, naval ? 0.85 : 1.15, 0);
                 mesh.add(flame);
                 mesh.add(this.makeIconSprite('🔥', 0.32, naval ? 0.95 : 1.3));
+                this._flames.push(flame); // tracked so animate() can flicker it
             }
             this.unitGroup.add(mesh);
         }

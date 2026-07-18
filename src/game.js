@@ -788,6 +788,10 @@ export class Game {
         // enemy units adjacent to the target, and a burn DoT on survivors.
         if (UNIT_TYPE[attacker.type].aoe) {
             this._applyAoeAndFire(attacker, defender, result.damageToDefender || 0);
+            // Lobbed projectile + ground shockwave VFX (transient, self-retiring).
+            if (this.renderer && this.renderer.addImpact) {
+                this.renderer.addImpact(defender.x, defender.z, attacker.x, attacker.z);
+            }
         }
         this.gameState.moveTargets.clear();
         this.gameState.attackTargets = [];
@@ -2032,6 +2036,9 @@ export class Game {
                         if (result.attackerDied) this._onUnitDeath(attacker);
                         if (UNIT_TYPE[attacker.type].aoe) {
                             this._applyAoeAndFire(attacker, defender, result.damageToDefender || 0);
+                            if (this.renderer && this.renderer.addImpact) {
+                                this.renderer.addImpact(defender.x, defender.z, attacker.x, attacker.z);
+                            }
                         }
                     }
                     break;

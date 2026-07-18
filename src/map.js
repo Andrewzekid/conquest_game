@@ -19,24 +19,34 @@ export function cityFortMax(tile) {
 }
 
 /** Carve an irregular, non-square continent out of the grid: tiles far from
- *  the map center (plus a wavy noise term so the coast isn't a perfect circle)
- *  are turned into WATER, giving an organic island/continent silhouette. The
- *  interior is kept, so there's still plenty of land for cities and expansion. */
+ *  the map center (plus layered wavy noise so the coast isn't a circle or a
+ *  square) are turned into WATER, giving an organic island/continent silhouette.
+ *  The interior is kept, so there's still plenty of land for cities and
+ *  expansion. Two noise octaves — a slow one for large bays/peninsulas and a
+ *  fast one for fine coastline wiggle — break up any boxy symmetry. */
 function applyContinentMask(tiles) {
     const cx = (GRID_SIZE - 1) / 2;
     const cz = (GRID_SIZE - 1) / 2;
     const maxR = GRID_SIZE / 2;
-    // Random per-generation phase + frequency so every map's coastline differs.
+    // Random per-generation phases + frequencies so every map's coastline differs.
     const phx = Math.random() * Math.PI * 2;
     const phz = Math.random() * Math.PI * 2;
-    const freq = 0.4 + Math.random() * 0.3;
+    const phx2 = Math.random() * Math.PI * 2;
+    const phz2 = Math.random() * Math.PI * 2;
+    const freqSlow = 0.18 + Math.random() * 0.08;  // large bays/lobes
+    const freqFast = 0.55 + Math.random() * 0.25;  // fine coastline wiggle
+    // Land cutoff: keep ~75% of the radius as solid interior, so the shape is
+    // clearly rounder than the grid without starving room for cities.
+    const CUTOFF = 0.22;
     for (const t of tiles) {
         // 0 at the center, ~1 at edge midpoints, ~1.41 at the corners.
         const d = Math.hypot(t.x - cx, t.z - cz) / maxR;
-        // Wavy noise (range ~[-0.18, 0.18]) makes bays and peninsulas.
-        const noise = 0.18 * (Math.sin(t.x * freq + phx) + Math.cos(t.z * freq + phz)) / 2;
-        const landScore = (1.0 - d) + noise;
-        if (landScore < 0.06) {
+        // Slow octave (range ~[-0.22, 0.22]) shapes big bays/peninsulas; fast
+        // octave (range ~[-0.10, 0.10]) adds fine wiggle to the coast.
+        const slow = 0.22 * (Math.sin(t.x * freqSlow + phx) + Math.cos(t.z * freqSlow + phz)) / 2;
+        const fast = 0.10 * (Math.sin(t.z * freqFast + phx2) + Math.cos(t.x * freqFast + phz2)) / 2;
+        const landScore = (1.0 - d) + slow + fast;
+        if (landScore < CUTOFF) {
             t.terrain = 'WATER';
         }
     }
