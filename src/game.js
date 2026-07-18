@@ -1,8 +1,9 @@
 /** Main game orchestrator: wires all systems together. */
 import { GRID_SIZE, MAP_SIZES, setGridSize, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
-         DIPLOMACY_STATES, LORD_RECRUIT_COST, BRIDGE_COST, EXTRA_UNITS,
+         DIPLOMACY_STATES, LORD_RECRUIT_COST, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
          SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
+         PILLAGE_GOLD_REWARD,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
@@ -16,7 +17,7 @@ import { computeVisibility, updateExplored } from './fog.js';
 import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize } from './lords.js';
-import { constructBuilding } from './building.js';
+import { constructBuilding, removeBuilding, pillageableOn } from './building.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
 import { getFactionDef, getUnitCostFor, getFactionVision } from './faction.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
@@ -251,6 +252,7 @@ export class Game {
             onDisembark: (transport) => this.handleDisembark(transport),
             onWorkerBuild: (unit, buildingType) => this.handleWorkerBuild(unit, buildingType),
             onDisband: (unit) => this.handleDisband(unit),
+            onPillage: (unit, tile) => this.handlePillage(unit, tile),
             onEndTurn: () => this.endPlayerTurn()
         });
     }
@@ -1141,6 +1143,34 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
+    /** A military unit pillages (destroys) an enemy terrain improvement on an
+     *  adjacent or same-tile enemy-owned tile, pocketing a gold reward. The
+     *  pillage uses the unit's action for the turn. */
+    handlePillage(unit, targetTile) {
+        if (!unit || unit.owner !== PLAYER_FACTION) return;
+        if (unit.type === 'SETTLER' || unit.type === 'WORKER') { this.log('Only military units can pillage.'); return; }
+        if (unit.hasAttackedThisTurn) { this.log('This unit has already acted this turn.'); return; }
+        if (!targetTile) return;
+        // Must be within Chebyshev 1 (adjacent or same tile).
+        if (Math.max(Math.abs(targetTile.x - unit.x), Math.abs(targetTile.z - unit.z)) > 1) {
+            this.log('Target is not adjacent.'); return;
+        }
+        if (!targetTile.owner || targetTile.owner === PLAYER_FACTION) { this.log('Can only pillage enemy improvements.'); return; }
+        if (!canAttack(this.gameState.diplomacy, PLAYER_FACTION, targetTile.owner)) {
+            this.log('Cannot pillage: not at war with that faction.'); return;
+        }
+        const removed = removeBuilding(targetTile, this.gameState.buildings);
+        if (!removed) { this.log('Nothing to pillage there.'); return; }
+        this.gameState.resources.player.gold = (this.gameState.resources.player.gold || 0) + PILLAGE_GOLD_REWARD;
+        unit.hasAttackedThisTurn = true;
+        const bName = BUILDING_TYPE[removed] ? BUILDING_TYPE[removed].name : removed;
+        this.log(`${UNIT_TYPE[unit.type].name} pillaged a ${bName} at [${targetTile.x}, ${targetTile.z}] (+${PILLAGE_GOLD_REWARD} gold)!`);
+        sfx.capture();
+        this.ui.showUnitInfo(unit);
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
     handleTrain(unitType, tile) {
         const cityKey = `${tile.x},${tile.z}`;
         if (this.gameState.trainedThisTurn.has(cityKey)) {
@@ -1554,6 +1584,23 @@ export class Game {
                         if (msgs.length && msgs[0].startsWith('Built')) {
                             unit.hasAttackedThisTurn = true;
                             msgs.forEach(m => this.log(`${factionName}: ${m}`));
+                        }
+                    }
+                    break;
+                }
+                case 'pillage': {
+                    // A military unit destroys an enemy improvement on an adjacent tile.
+                    const unit = this.gameState.units.get(action.unitId);
+                    const tile = this.tiles.get(action.tileKey);
+                    if (unit && tile && !unit.hasAttackedThisTurn && tile.owner &&
+                        tile.owner !== faction && canAttack(this.gameState.diplomacy, faction, tile.owner) &&
+                        Math.max(Math.abs(tile.x - unit.x), Math.abs(tile.z - unit.z)) <= 1) {
+                        const removed = removeBuilding(tile, this.gameState.buildings);
+                        if (removed) {
+                            pool.gold = (pool.gold || 0) + PILLAGE_GOLD_REWARD;
+                            unit.hasAttackedThisTurn = true;
+                            const bName = BUILDING_TYPE[removed] ? BUILDING_TYPE[removed].name : removed;
+                            this.log(`${factionName}: pillaged a ${bName} at [${tile.x}, ${tile.z}] (+${PILLAGE_GOLD_REWARD} gold).`);
                         }
                     }
                     break;

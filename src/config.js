@@ -113,6 +113,11 @@ export const TYPE_ADVANTAGE = {
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
 
+// Pillage: a military unit can destroy an enemy terrain improvement on an
+// adjacent tile, pocketing a gold reward. One improvement per pillage action.
+export const PILLAGE_GOLD_REWARD = 15;
+export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE'];
+
 // AOE/fire ailment tuning for siege engines (CATAPULT, TREBUCHET).
 export const AOE_RADIUS = 1;            // Chebyshev radius around the target tile for splash
 export const AOE_SPLASH_FRACTION = 0.5; // splash dmg = floor(primaryDmg * this), min 1

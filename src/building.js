@@ -1,5 +1,5 @@
 /** Building system: construction, defensiveness, buildable list (pure logic). */
-import { BUILDING_TYPE } from './config.js';
+import { BUILDING_TYPE, PILLAGEABLE_BUILDINGS } from './config.js';
 
 /** A city tile is coastal if any orthogonal neighbor is WATER or RIVER
  *  (Harbors must touch navigable water). */
@@ -80,6 +80,26 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
     messages.push(`Built ${bData.name} at [${tile.x}, ${tile.z}].`);
 
     return messages;
+}
+
+/** List the pillageable terrain improvements present on a tile (FARM/LUMBERMILL/MINE). */
+export function pillageableOn(tile, buildings) {
+    if (!tile) return [];
+    const list = buildings.get(`${tile.x},${tile.z}`) || [];
+    return list.filter(b => PILLAGEABLE_BUILDINGS.includes(b));
+}
+
+/** Remove one pillageable improvement from a tile (the first match). Returns
+ *  the building type removed, or null if there was nothing to pillage. */
+export function removeBuilding(tile, buildings) {
+    if (!tile) return null;
+    const key = `${tile.x},${tile.z}`;
+    const list = buildings.get(key) || [];
+    const idx = list.findIndex(b => PILLAGEABLE_BUILDINGS.includes(b));
+    if (idx < 0) return null;
+    const [removed] = list.splice(idx, 1);
+    if (list.length) buildings.set(key, list); else buildings.delete(key);
+    return removed;
 }
 
 /**

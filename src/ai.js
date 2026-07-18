@@ -1,6 +1,6 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
-         SIEGE_ENGINES, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS } from './config.js';
+         SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { canAttack } from './diplomacy.js';
@@ -16,6 +16,8 @@ import { canAttack } from './diplomacy.js';
  *   { type: 'besiege',        unitId, tileKey }
  *   { type: 'foundCity',     unitId, tileKey }
  *   { type: 'buildSiegeTower', unitId, tileKey }   // engineer builds a tower vs the named enemy city
+ *   { type: 'workerBuild',    unitId, buildingType } // worker builds an improvement on its tile
+ *   { type: 'pillage',        unitId, tileKey }      // military unit destroys an enemy improvement
  *
  * @param factionDef - this faction's def (roster + unit cost flavor)
  * @param diploState - diplomacy state (used to respect peace/trade/alliance:
@@ -247,6 +249,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             continue;
         }
 
+        // d2) Pillage: a military unit adjacent to an at-war enemy tile with a
+        //     terrain improvement destroys it for gold (only when there's no
+        //     better target above). Workers/settlers don't pillage.
+        if (unit.type !== 'SETTLER' && unit.type !== 'WORKER' && !unit.hasAttackedThisTurn && atWar) {
+            const ptile = findAdjacentPillageable(unit, tiles, owner, isAtWar, buildings);
+            if (ptile) {
+                actions.push({ type: 'pillage', unitId: unit.id, tileKey: `${ptile.x},${ptile.z}` });
+                continue;
+            }
+        }
+
         // e) Otherwise advance one step toward the best target.
         const target = pickTarget(unit, tiles, owner, isAtWar);
         if (target) {
@@ -298,6 +311,22 @@ function canAffordCost(res, cost) {
         if ((res[k] || 0) < (cost[k] || 0)) return false;
     }
     return true;
+}
+
+/** An adjacent (Chebyshev-1) at-war enemy-owned tile bearing a pillageable
+ *  terrain improvement, or null. */
+function findAdjacentPillageable(unit, tiles, owner, isAtWar, buildings) {
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+            const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+            if (!t) continue;
+            if (!t.owner || t.owner === owner) continue;
+            if (isAtWar && !isAtWar(t.owner)) continue;
+            const list = (buildings && buildings.get(`${t.x},${t.z}`)) || [];
+            if (list.some(b => PILLAGEABLE_BUILDINGS.includes(b))) return t;
+        }
+    }
+    return null;
 }
 
 /** Find an at-war enemy CITY within Chebyshev `radius` of `unit`. */

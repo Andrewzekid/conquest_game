@@ -2,7 +2,7 @@
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
          EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
-import { getBuildableBuildings } from './building.js';
+import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize } from './lords.js';
@@ -86,6 +86,22 @@ export function bindUI(gameState, callbacks) {
             if (best) break;
         }
         return best;
+    }
+
+    /** An adjacent (Chebyshev-1) enemy-owned tile that has a pillageable terrain
+     *  improvement, or null. Used to surface a Pillage button on military units. */
+    function findAdjacentPillageable(state, unit) {
+        const tiles = state.tiles;
+        if (!tiles) return null;
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+                if (!t) continue;
+                if (!t.owner || t.owner === unit.owner) continue;
+                if (pillageableOn(t, state.buildings).length > 0) return t;
+            }
+        }
+        return null;
     }
 
     function updateResourceBar() {
@@ -268,6 +284,15 @@ export function bindUI(gameState, callbacks) {
             if (!unit.boarded) {
                 html += `<button id="disband-btn" style="font-size:10px; padding:2px 6px; margin-top:4px; color:#f88;" title="Destroy this unit (refunds 25% of gold cost).">✖ Disband Unit</button><br>`;
             }
+            // Pillage: a military unit adjacent to an enemy tile with a terrain
+            // improvement can destroy it for a gold reward (uses its action).
+            if (unit.type !== 'SETTLER' && unit.type !== 'WORKER' && !unit.hasAttackedThisTurn) {
+                const ptile = findAdjacentPillageable(gameState, unit);
+                if (ptile) {
+                    const bName = (BUILDING_TYPE[pillageableOn(ptile, gameState.buildings)[0]] || {}).name || 'improvement';
+                    html += `<button id="pillage-btn" data-ptx="${ptile.x}" data-ptz="${ptile.z}" style="font-size:10px; padding:2px 6px; margin-top:2px; color:#fc6;" title="Pillage the enemy ${bName} at [${ptile.x}, ${ptile.z}] for gold.">🔥 Pillage ${bName} [${ptile.x},${ptile.z}]</button><br>`;
+                }
+            }
         }
         if (els.unitInfo) els.unitInfo.innerHTML = html;
         const cbtn = document.getElementById('cancel-goal-btn');
@@ -292,6 +317,11 @@ export function bindUI(gameState, callbacks) {
             if (confirm(`Disband this ${UNIT_TYPE[unit.type].name}? Refunds 25% of its gold cost.`)) {
                 callbacks.onDisband && callbacks.onDisband(unit);
             }
+        };
+        const pbtn = document.getElementById('pillage-btn');
+        if (pbtn) pbtn.onclick = () => {
+            const t = gameState.tiles.get(`${pbtn.dataset.ptx},${pbtn.dataset.ptz}`);
+            if (t) callbacks.onPillage && callbacks.onPillage(unit, t);
         };
     }
 
