@@ -121,6 +121,129 @@ export function bindUI(gameState, callbacks) {
                 els.phaseIndicator.textContent = fc ? `${fc.name} (AI)` : phase.toUpperCase();
             }
         }
+        // Update resource tooltips with production breakdown
+        updateResourceTooltips();
+    }
+
+    /** Calculate and display production breakdown tooltips for each resource. */
+    function updateResourceTooltips() {
+        const tiles = gameState.tiles;
+        const buildings = gameState.buildings;
+        const units = gameState.units;
+        if (!tiles) return;
+
+        // Calculate production sources
+        let goldCities = 0, goldMarkets = 0, goldTrade = 0, goldUpkeep = 0;
+        let foodFarms = 0, foodCities = 0, foodTerrain = 0, foodUpkeep = 0;
+        let woodMills = 0, woodCities = 0, woodForests = 0, woodUpkeep = 0;
+        let ironMines = 0, ironMountains = 0, ironHills = 0, ironUpkeep = 0;
+        let prodCities = 0, prodBarracks = 0, prodWorkshops = 0;
+
+        // Count cities and their base production
+        for (const tile of tiles.values()) {
+            if (tile.owner !== PLAYER_FACTION) continue;
+            const key = `${tile.x},${tile.z}`;
+            const tileBuildings = buildings.get(key) || [];
+
+            if (tile.terrain === 'CITY') {
+                const cl = tile.cityLevel || 1;
+                goldCities += 8 + (cl - 1) * 2; // Base city gold
+                foodCities += 2 + cl; // City food
+                woodCities += 1 + cl; // City wood (new feature)
+                prodCities += 2 * cl; // City production
+
+                // Building bonuses on city tile
+                for (const bType of tileBuildings) {
+                    if (bType === 'MARKET') goldMarkets += 10;
+                    if (bType === 'BARRACKS') prodBarracks += 10;
+                    if (bType === 'SIEGE_WORKSHOP') prodWorkshops += 5;
+                    if (bType === 'HARBOR') prodWorkshops += 5;
+                }
+            } else {
+                // Non-city tiles: check for terrain improvements
+                const terrain = TERRAIN[tile.terrain];
+                if (terrain && terrain.resource) {
+                    const amount = terrain.amount || 0;
+                    if (terrain.resource === 'food') foodTerrain += amount;
+                    if (terrain.resource === 'wood') woodForests += amount;
+                    if (terrain.resource === 'iron') {
+                        if (tile.terrain === 'MOUNTAIN') ironMountains += amount;
+                        else if (tile.terrain === 'HILLS') ironHills += amount;
+                    }
+                }
+
+                // Building bonuses on non-city tiles
+                for (const bType of tileBuildings) {
+                    if (bType === 'FARM') foodFarms += 5;
+                    if (bType === 'LUMBERMILL') woodMills += 5;
+                    if (bType === 'MINE') ironMines += 5;
+                }
+            }
+        }
+
+        // Calculate unit upkeep
+        for (const unit of units.values()) {
+            if (unit.owner !== PLAYER_FACTION) continue;
+            const upkeep = unit.upkeep || {};
+            goldUpkeep += upkeep.gold || 0;
+            foodUpkeep += upkeep.food || 0;
+            woodUpkeep += upkeep.wood || 0;
+            ironUpkeep += upkeep.iron || 0;
+        }
+
+        // Trade routes (simplified - count trade pacts)
+        const diplo = gameState.diplomacy;
+        if (diplo && diplo.relations) {
+            for (const rel of Object.values(diplo.relations)) {
+                if (rel.state === DIPLOMACY_STATES.TRADE_PACT && rel.tradeAmount) {
+                    goldTrade += rel.tradeAmount;
+                }
+            }
+        }
+
+        // Update tooltip elements
+        const setTooltip = (id, value, isPositive = true) => {
+            const el = document.getElementById(id);
+            if (el) {
+                const prefix = value >= 0 ? '+' : '';
+                el.textContent = `${prefix}${Math.floor(value)}`;
+                el.className = `tooltip-value ${value >= 0 ? 'tooltip-positive' : 'tooltip-negative'}`;
+            }
+        };
+
+        // Gold tooltip
+        setTooltip('gold-cities', goldCities);
+        setTooltip('gold-markets', goldMarkets);
+        setTooltip('gold-trade', goldTrade);
+        setTooltip('gold-upkeep', -goldUpkeep, false);
+        setTooltip('gold-net', goldCities + goldMarkets + goldTrade - goldUpkeep);
+
+        // Food tooltip
+        setTooltip('food-farms', foodFarms);
+        setTooltip('food-cities', foodCities);
+        setTooltip('food-terrain', foodTerrain);
+        setTooltip('food-upkeep', -foodUpkeep, false);
+        setTooltip('food-net', foodFarms + foodCities + foodTerrain - foodUpkeep);
+
+        // Wood tooltip
+        setTooltip('wood-mills', woodMills);
+        setTooltip('wood-cities', woodCities);
+        setTooltip('wood-forests', woodForests);
+        setTooltip('wood-upkeep', -woodUpkeep, false);
+        setTooltip('wood-net', woodMills + woodCities + woodForests - woodUpkeep);
+
+        // Iron tooltip
+        setTooltip('iron-mines', ironMines);
+        setTooltip('iron-mountains', ironMountains);
+        setTooltip('iron-hills', ironHills);
+        setTooltip('iron-upkeep', -ironUpkeep, false);
+        setTooltip('iron-net', ironMines + ironMountains + ironHills - ironUpkeep);
+
+        // Production tooltip
+        setTooltip('prod-cities', prodCities);
+        setTooltip('prod-barracks', prodBarracks);
+        setTooltip('prod-workshops', prodWorkshops);
+        setTooltip('prod-net', prodCities + prodBarracks + prodWorkshops);
     }
 
     function showTileInfo(tile) {

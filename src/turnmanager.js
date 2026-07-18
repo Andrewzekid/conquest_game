@@ -1,5 +1,5 @@
 /** Turn manager: phase FSM (player -> each AI faction -> player) */
-import { collectResources, processUpkeep, processCityGrowth } from './economy.js';
+import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth } from './economy.js';
 import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
 
@@ -43,6 +43,9 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             processCityGrowth(gameState.tiles, f, gameState.resources[f], (m) => logger ? logger(`${fname}: ${m}`) : null);
         }
 
+        // Neutral (unowned) cities also grow and expand influence over time.
+        processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
         // Medics heal adjacent friendly units (once per round, all factions).
         processMedicHeal(gameState.units);
 
@@ -52,6 +55,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         for (const unit of gameState.units.values()) {
             unit.hasMovedThisTurn = false;
             unit.hasAttackedThisTurn = false;
+        }
+        // Post-charge exhaustion: cavalry that charged last turn can't move
+        // this turn and stays vulnerable to ranged fire. The counter starts at
+        // 2 — at the first reset it imposes immobility and drops to 1 (vulnerable
+        // for this turn); at the next reset it clears to 0 (free again).
+        for (const unit of gameState.units.values()) {
+            if (unit.chargeExhausted && unit.chargeExhausted > 0) {
+                if (unit.chargeExhausted >= 2) unit.hasMovedThisTurn = true;
+                unit.chargeExhausted -= 1;
+            }
         }
         // Reset lord per-turn flags (lords/kings can move once per turn too).
         if (gameState.lords) {

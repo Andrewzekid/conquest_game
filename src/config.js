@@ -8,7 +8,7 @@ export function setGridSize(n) { GRID_SIZE = n; }
 
 // Terrain types. `key` is the string identifier used in tile.terrain (fixes map/renderer mismatch).
 export const TERRAIN = {
-    PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 3,  defense: 0 },
+    PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 2,  defense: 0 },
     FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 3,  defense: 1 },
     MOUNTAIN: { key: 'MOUNTAIN', color: 0x7d6b58, name: 'Mountain', resource: 'iron',  amount: 3,  defense: 3 },
     HILLS:    { key: 'HILLS',    color: 0x9aaa55, name: 'Hills',    resource: 'iron',  amount: 2,  defense: 1 },
@@ -17,7 +17,7 @@ export const TERRAIN = {
     TUNDRA:   { key: 'TUNDRA',   color: 0xc6d4d0, name: 'Tundra',  resource: 'food',  amount: 2,  defense: 1 },
     WATER:    { key: 'WATER',    color: 0x2f6fb0, name: 'Water',    resource: null,    amount: 0,  defense: 0 },
     RIVER:    { key: 'RIVER',    color: 0x2f90d8, name: 'River',    resource: 'food',  amount: 2,  defense: 0 },
-    CITY:     { key: 'CITY',     color: 0xc9b06b, name: 'City',     resource: 'gold',  amount: 8,  defense: 3 }
+    CITY:     { key: 'CITY',     color: 0xc9b06b, name: 'City',     resource: 'gold',  amount: 8,  defense: 3, wood: 1 }
 };
 
 export const UNIT_TYPE = {
@@ -43,7 +43,7 @@ export const UNIT_TYPE = {
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
     CATAPULT:    { name: 'Catapult',   hp: 12, attack: 7, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
-    TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 9, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 5, aoe: true, canSetFire: true, buildTurns: 2 },
+    TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 9, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
     // Naval units (unlocked by a Harbor building in a coastal/river city).
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 }
@@ -51,7 +51,7 @@ export const UNIT_TYPE = {
 
 // Units available to every faction in addition to its themed roster. Ships
 // (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
@@ -79,13 +79,13 @@ export const UNIT_COST = {
     PIKEMAN:     { gold: 45, food: 10, wood: 10, iron: 10, production: 15 },
     SCOUT:       { gold: 25, food: 5,  wood: 5,  iron: 0,  production: 8 },
     SIEGE:       { gold: 75, food: 10, wood: 15, iron: 15, production: 25 },
-    SETTLER:     { gold: 50, food: 25, wood: 10, iron: 0,  production: 20 },
+    SETTLER:     { gold: 50, food: 25, wood: 0,  iron: 0,  production: 20 },
     ENGINEER:    { gold: 60, food: 10, wood: 20, iron: 10, production: 20 },
     WORKER:      { gold: 30, food: 10, wood: 5,  iron: 0,  production: 10 },
     LONGBOWMAN:  { gold: 60, food: 0,  wood: 25, iron: 0,  production: 18 },
     CATAPHRACT:  { gold: 90, food: 20, wood: 0,  iron: 15, production: 25 },
     MEDIC:       { gold: 55, food: 10, wood: 10, iron: 0,  production: 15 },
-    SIEGE_TOWER: { gold: 95, food: 10, wood: 20, iron: 20, production: 30 },
+    SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
     GALLEY:      { gold: 70, food: 10, wood: 40, iron: 0,  production: 20 },
@@ -97,9 +97,15 @@ export const BRIDGE_COST = { gold: 40, wood: 20 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 110, wood: 25, iron: 25, production: 40 };
+export const SIEGE_TOWER_COST = { gold: 80, wood: 20, iron: 20, production: 30 };
 export const SIEGE_TOWER_BUILD_TURNS = 3;
 export const SIEGE_TOWER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
+
+// Cost for an Engineer to construct Ladders (cheaper alternative to siege tower,
+// allows infantry to assault fortified cities). Requires wood, built in 1 turn.
+export const LADDER_COST = { gold: 30, wood: 15 };
+export const LADDER_BUILD_TURNS = 1;
+export const LADDER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
 
 // Type advantage system (rock-paper-scissors bonus)
 export const TYPE_ADVANTAGE = {
@@ -124,6 +130,41 @@ export const AOE_SPLASH_FRACTION = 0.5; // splash dmg = floor(primaryDmg * this)
 export const BURN_TURNS = 2;            // how many turns a fire ailment lasts
 export const BURN_DAMAGE_PER_TURN = 2;  // hp lost per turn while burning
 
+// --- Concealment / Ambush system ---
+// Units can hide in MOUNTAIN or FOREST terrain when outside enemy vision.
+// Setting up concealment takes 1-2 turns (depending on terrain). Once concealed,
+// units are invisible to enemies. When an enemy enters the same or adjacent tile,
+// concealed units may reveal for a surprise attack with combat bonuses.
+export const CONCEAL_TERRAINS = ['MOUNTAIN', 'FOREST'];  // terrain types that allow concealment
+export const CONCEAL_TURNS_MOUNTAIN = 2;  // turns to conceal in mountains (harder terrain)
+export const CONCEAL_TURNS_FOREST = 1;    // turns to conceal in forests (easier)
+export const CONCEAL_MAX_PER_TILE = 2;    // max units that can conceal on one tile
+export const AMBUSH_ATTACK_BONUS = 3;     // bonus attack when revealing for surprise attack
+export const AMBUSH_DEFENSE_BONUS = 2;    // bonus defense when ambushed unit counter-attacks
+
+// --- Cavalry Charge ---
+// Cavalry (and Cataphract) units can charge an adjacent enemy, moving onto the
+// enemy's tile and attacking with a bonus. After charging, the unit cannot move
+// for the rest of the turn (hasMovedThisTurn is set). Charge range is 1 tile
+// (orthogonal or diagonal adjacent).
+export const CHARGE_UNITS = ['CAVALRY', 'CATAPHRACT'];  // unit types that can charge
+export const CHARGE_ATTACK_BONUS = 2;     // bonus attack when charging
+export const CHARGE_RANGE = 1;            // Chebyshev distance for charge target
+// After charging, cavalry is exhausted: it cannot move on its next turn and
+// takes extra damage from ranged attackers (archers/artillery) while exhausted.
+// The counter is consumed over two round-resets: at the first reset it imposes
+// immobility (and leaves the unit vulnerable for that turn); at the second it
+// clears. Set to 2 so the effect spans exactly one full turn.
+export const CHARGE_EXHAUST_TURNS = 2;          // post-charge exhaustion counter start value
+export const CHARGE_EXHAUST_RANGED_VULN = 1.5;  // ranged damage multiplier vs exhausted cavalry
+
+// --- Ranged arrow bombard vs cities ---
+// Non-siege ranged units (ARCHER, LONGBOWMAN) can fire arrows at an enemy
+// fortified city to chip its fortification from range. Damage is intentionally
+// nerfed (1/turn) vs proper siege engines — bows harass, they don't breach.
+export const RANGED_BOMBARD_FORT_DAMAGE = 1;
+export const RANGED_BOMBARD_TYPES = ['ARCHER', 'LONGBOWMAN'];
+
 // City area of influence (Civ 6 style): buildings may only be constructed on
 // tiles within this Chebyshev radius of an owned city. Cities level up to grow it.
 export const CITY_INFLUENCE_RADIUS = 3;       // base radius at city level 1
@@ -139,7 +180,7 @@ export const CITY_LEVEL_UP_COST = { gold: 80, food: 40, production: 20 }; // bas
 export const CITY_GROWTH_BASE = 1;            // flat growth per turn
 export const CITY_GROWTH_PER_SURPLUS_FOOD = 0.05; // +growth per surplus food (clamped)
 export const CITY_GROWTH_SURPLUS_CAP = 30;    // max surplus food counted toward growth
-export const CITY_MAX_LEVEL = 5;
+export const CITY_MAX_LEVEL = 10;
 export function cityGrowthThreshold(level) { return 10 + level * 5; } // growth needed to reach level+1
 
 export const INITIAL_RESOURCES = { gold: 100, food: 100, wood: 0, iron: 0, production: 10 };
@@ -149,7 +190,7 @@ export const UNIT_XP_PER_KILL = 12;
 export const UNIT_XP_PER_LEVEL = 30;
 
 // AI settings
-export const AI_MAX_UNITS = 9;
+export const AI_MAX_UNITS = 14;
 
 // --- Economy ---
 export const MARKET_RATES = {
@@ -163,13 +204,13 @@ export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 
 // --- Buildings ---
 export const BUILDING_TYPE = {
-    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 5 },   terrain: 'PLAINS', desc: '+5 food/turn.' },
+    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 3 },   terrain: 'PLAINS', desc: '+3 food/turn.' },
     LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 5 },   terrain: 'FOREST', desc: '+5 wood/turn.' },
     MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', desc: '+10 gold/turn.' },
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY',
                   desc: '+10 production/turn. Units trained in this city start as veterans (Lv.2) and cost 25% less gold.' },
-    WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 3 }, terrain: 'CITY', desc: '+3 defense to units defending this tile.' },
+    WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
     HARBOR:     { name: 'Harbor',     cost: { gold: 120, wood: 60, iron: 0 },   bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
@@ -184,12 +225,12 @@ export const BUILDING_TYPE = {
 export const NATURAL_WONDERS = [
     { id: 'goldspire',  name: "Goldspire Mountain",  emoji: '⛏️', color: 0xd4a017, bonus: { gold: 8, iron: 2 },
       desc: 'A gold-laced peak. +8 gold, +2 iron/turn to its owner.' },
-    { id: 'ancient_grove', name: "Ancient Grove",   emoji: '🌲', color: 0x2a8a3a, bonus: { food: 6, wood: 5 },
-      desc: 'A primordial forest. +6 food, +5 wood/turn to its owner.' },
+    { id: 'ancient_grove', name: "Ancient Grove",   emoji: '🌲', color: 0x2a8a3a, bonus: { food: 4, wood: 5 },
+      desc: 'A primordial forest. +4 food, +5 wood/turn to its owner.' },
     { id: 'crystal_lake', name: "Crystal Lake",     emoji: '💎', color: 0x33b5e5, bonus: { production: 6, gold: 3 },
       desc: 'A radiant lake. +6 production, +3 gold/turn to its owner.' },
-    { id: 'fertile_vale', name: "Fertile Vale",      emoji: '🌾', color: 0xb6d73a, bonus: { food: 10 },
-      desc: 'Verdant lowlands. +10 food/turn to its owner.' },
+    { id: 'fertile_vale', name: "Fertile Vale",      emoji: '🌾', color: 0xb6d73a, bonus: { food: 6 },
+      desc: 'Verdant lowlands. +6 food/turn to its owner.' },
     { id: 'iron_vein',   name: "Iron Vein",          emoji: '🪨', color: 0x8899aa, bonus: { iron: 6, production: 2 },
       desc: 'A rich iron deposit. +6 iron, +2 production/turn to its owner.' },
     { id: 'sun_pyre',    name: "Sun Pyre",           emoji: '🔥', color: 0xff7722, bonus: { gold: 6, production: 4 },

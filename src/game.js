@@ -4,6 +4,12 @@ import { GRID_SIZE, MAP_SIZES, setGridSize, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTU
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
          SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
+         CONCEAL_TERRAINS, CONCEAL_TURNS_MOUNTAIN, CONCEAL_TURNS_FOREST, CONCEAL_MAX_PER_TILE,
+         AMBUSH_ATTACK_BONUS, AMBUSH_DEFENSE_BONUS,
+         CHARGE_UNITS, CHARGE_ATTACK_BONUS, CHARGE_RANGE,
+         CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
+         RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
+         LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
@@ -118,6 +124,12 @@ export class Game {
             construction: new Map(),
             // Bridge tile keys (rivers bridged by Siege/Engineer). Also mirrored on tile.bridge.
             bridges: new Set(),
+            // Concealment system: tileKey -> [unitId, ...] for units hidden in terrain.
+            concealedUnits: new Map(),
+            // Pending ambush opportunity (player choice).
+            pendingAmbush: null,
+            // Charge targets for cavalry selection highlighting.
+            chargeTargets: [],
             // King abilities.
             kingCooldowns: Object.fromEntries(FACTIONS.map(f => [f, 0])),
             tempBonuses: {},       // faction -> {attack,defense} for this turn
@@ -180,6 +192,9 @@ export class Game {
         if (!this.gameState.construction) this.gameState.construction = new Map();
         if (!this.gameState.bridges) this.gameState.bridges = new Set();
         if (!this.gameState.scryRevealed) this.gameState.scryRevealed = new Set();
+        if (!this.gameState.concealedUnits) this.gameState.concealedUnits = new Map();
+        if (!this.gameState.chargeTargets) this.gameState.chargeTargets = [];
+        this.gameState.pendingAmbush = null;
         this.gameState.selectedUnit = null;
         this.gameState.selectedLord = null;
         this.gameState.selectedTile = null;
@@ -463,6 +478,26 @@ export class Game {
             if (dist <= 1) { this.handleBesiege(sel, tile); return; }
         }
 
+        // 1c) Arrow bombard: a selected player Archer/Longbowman fires at an
+        // enemy fortified city within attack range, chipping 1 fortification.
+        if (sel && sel.owner === PLAYER_FACTION && tile && tile.terrain === 'CITY' &&
+            tile.owner !== PLAYER_FACTION && (tile.fortification || 0) > 0 &&
+            !sel.hasAttackedThisTurn && RANGED_BOMBARD_TYPES.includes(sel.type)) {
+            const range = (UNIT_TYPE[sel.type].attackRange) || 2;
+            const dist = Math.abs(sel.x - tile.x) + Math.abs(sel.z - tile.z);
+            if (dist <= range) { this.handleArrowBombard(sel, tile); return; }
+        }
+
+        // 1b) Charge: a selected player cavalry clicks an adjacent enemy for charge attack.
+        if (sel && sel.owner === PLAYER_FACTION && clickedUnit && clickedUnit.owner !== PLAYER_FACTION) {
+            const isChargeTarget = this.gameState.chargeTargets &&
+                this.gameState.chargeTargets.some(u => u.id === clickedUnit.id);
+            if (isChargeTarget && !sel.hasAttackedThisTurn && CHARGE_UNITS.includes(sel.type)) {
+                this.handleCharge(sel, clickedUnit);
+                return;
+            }
+        }
+
         // 2) Attack: a selected player unit clicks an enemy unit in attack range.
         if (sel && sel.owner === PLAYER_FACTION && clickedUnit && clickedUnit.owner !== PLAYER_FACTION) {
             const inRange = this.gameState.attackTargets.some(u => u.id === clickedUnit.id);
@@ -603,6 +638,20 @@ export class Game {
             if (tgt) this.gameState.siegeTowerTarget = tgt;
         }
 
+        // Charge targets for cavalry: adjacent enemies that can be charged.
+        this.gameState.chargeTargets = [];
+        if (unit.owner === PLAYER_FACTION && !unit.hasAttackedThisTurn &&
+            CHARGE_UNITS.includes(unit.type)) {
+            for (const other of this.gameState.units.values()) {
+                if (other.owner === unit.owner) continue;
+                if (!canAttack(this.gameState.diplomacy, unit.owner, other.owner)) continue;
+                const dist = Math.max(Math.abs(unit.x - other.x), Math.abs(unit.z - other.z));
+                if (dist <= CHARGE_RANGE) {
+                    this.gameState.chargeTargets.push(other);
+                }
+            }
+        }
+
         this.ui.showUnitInfo(unit);
         this.renderer.highlightMoveTargets(this.gameState.moveTargets);
         this.renderer.highlightAttackTargets(this.gameState.attackTargets);
@@ -692,6 +741,9 @@ export class Game {
         // Arrived at goal → clear it.
         if (unit.goal && unit.goal.x === x && unit.goal.z === z) unit.goal = null;
 
+        // Check for ambush trigger from concealed enemies.
+        this._checkAmbushTrigger(unit, x, z);
+
         this.gameState.selectedUnit = null;
         this.gameState.moveTargets.clear();
         this.gameState.attackTargets = [];
@@ -745,6 +797,229 @@ export class Game {
         this.checkVictory();
     }
 
+    // --- Cavalry Charge System ---
+    /**
+     * A cavalry unit charges an adjacent enemy, moving onto their tile and
+     * attacking with a bonus. After charging, the unit cannot move for the
+     * rest of the turn.
+     */
+    handleCharge(attacker, defender) {
+        if (!attacker || !defender) return;
+        if (!CHARGE_UNITS.includes(attacker.type)) {
+            this.log('Only cavalry units can charge.');
+            return;
+        }
+        if (attacker.hasAttackedThisTurn) {
+            this.log('This unit has already acted this turn.');
+            return;
+        }
+        if (!canAttack(this.gameState.diplomacy, attacker.owner, defender.owner)) {
+            this.log('Cannot charge: not at war with that faction!');
+            return;
+        }
+        // Check range (must be adjacent)
+        const dist = Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.z - defender.z));
+        if (dist > CHARGE_RANGE) {
+            this.log('Target is too far to charge.');
+            return;
+        }
+        // Move attacker to defender's tile
+        attacker.x = defender.x;
+        attacker.z = defender.z;
+        this.log(`🐎 ${UNIT_TYPE[attacker.type].name} charges ${UNIT_TYPE[defender.type].name}!`);
+        sfx.attack();
+        // Apply charge bonus temporarily
+        const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
+        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+        // Execute combat
+        const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
+        const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
+        const attackerLord = findCommandingLord(this.gameState.lords, attacker);
+        const defenderLord = findCommandingLord(this.gameState.lords, defender);
+        const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+        result.messages.forEach(m => this.log(m));
+        // Restore original attack
+        attacker.attack = originalAttack;
+        // Mark as acted (both move and attack used). Charging exhausts the
+        // cavalry: it can't move next turn and is vulnerable to ranged fire.
+        attacker.hasAttackedThisTurn = true;
+        attacker.hasMovedThisTurn = true;
+        attacker.chargeExhausted = CHARGE_EXHAUST_TURNS;
+        this.log(`🐎 ${UNIT_TYPE[attacker.type].name} is exhausted — cannot move next turn, vulnerable to ranged fire.`);
+        // Handle deaths
+        if (result.defenderDied) {
+            this._onUnitDeath(defender);
+            this.log(`${UNIT_TYPE[defender.type].name} destroyed!`);
+            this._maybeRespawnOnKill(attacker.owner);
+        }
+        if (result.attackerDied) {
+            this._onUnitDeath(attacker);
+            this.log(`${UNIT_TYPE[attacker.type].name} destroyed in charge!`);
+        }
+        this.gameState.moveTargets.clear();
+        this.gameState.attackTargets = [];
+        this.gameState.chargeTargets = [];
+        this.renderer.clearHighlights();
+        this.renderAll();
+        this.ui.updateResourceBar();
+        this.checkVictory();
+    }
+
+    // --- Concealment / Ambush System ---
+    /**
+     * Check if a unit is currently visible to any enemy faction.
+     */
+    _isInEnemyVision(unit) {
+        for (const other of this.gameState.units.values()) {
+            if (other.owner === unit.owner) continue;
+            if (other.concealState === 'concealed') continue; // concealed units don't provide vision
+            if (canAttack(this.gameState.diplomacy, unit.owner, other.owner)) {
+                const vision = (UNIT_TYPE[other.type] && UNIT_TYPE[other.type].vision) || 3;
+                const dist = Math.max(Math.abs(unit.x - other.x), Math.abs(unit.z - other.z));
+                if (dist <= vision) return true;
+            }
+        }
+        for (const t of this.tiles.values()) {
+            if (t.terrain === 'CITY' && t.owner && t.owner !== unit.owner) {
+                if (canAttack(this.gameState.diplomacy, unit.owner, t.owner)) {
+                    const dist = Math.max(Math.abs(unit.x - t.x), Math.abs(unit.z - t.z));
+                    if (dist <= cityRadius(t)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A unit begins concealing itself in the current tile's terrain.
+     */
+    handleConceal(unit) {
+        if (!unit || unit.owner !== PLAYER_FACTION) return;
+        if (unit.hasMovedThisTurn || unit.hasAttackedThisTurn) {
+            this.log('Unit must not have acted this turn to conceal.');
+            return;
+        }
+        const tile = this.tiles.get(`${unit.x},${unit.z}`);
+        if (!tile || !CONCEAL_TERRAINS.includes(tile.terrain)) {
+            this.log('Can only conceal in mountains or forests.');
+            return;
+        }
+        if (this._isInEnemyVision(unit)) {
+            this.log('Cannot conceal while in enemy vision!');
+            return;
+        }
+        const tileKey = `${unit.x},${unit.z}`;
+        const concealed = this.gameState.concealedUnits.get(tileKey) || [];
+        if (concealed.length >= CONCEAL_MAX_PER_TILE) {
+            this.log('This tile already has maximum concealed units.');
+            return;
+        }
+        const turnsNeeded = tile.terrain === 'MOUNTAIN' ? CONCEAL_TURNS_MOUNTAIN : CONCEAL_TURNS_FOREST;
+        unit.concealState = 'concealing';
+        unit.concealTurnsLeft = turnsNeeded;
+        unit.concealTerrain = tile.terrain;
+        unit.hasAttackedThisTurn = true;
+        this.log(`${UNIT_TYPE[unit.type].name} begins concealing in ${tile.terrain.toLowerCase()} (${turnsNeeded} turn(s)).`);
+        sfx.click();
+        this.renderAll();
+    }
+
+    /**
+     * Tick concealment progress for all units at turn start.
+     */
+    _tickConcealment() {
+        for (const unit of this.gameState.units.values()) {
+            if (unit.concealState === 'concealing') {
+                if (this._isInEnemyVision(unit)) {
+                    unit.concealState = null;
+                    unit.concealTurnsLeft = 0;
+                    unit.concealTerrain = null;
+                    this.log(`${UNIT_TYPE[unit.type].name}'s concealment was interrupted by enemy vision!`);
+                    continue;
+                }
+                unit.concealTurnsLeft--;
+                if (unit.concealTurnsLeft <= 0) {
+                    unit.concealState = 'concealed';
+                    const tileKey = `${unit.x},${unit.z}`;
+                    const concealed = this.gameState.concealedUnits.get(tileKey) || [];
+                    if (!concealed.includes(unit.id)) concealed.push(unit.id);
+                    this.gameState.concealedUnits.set(tileKey, concealed);
+                    this.log(`${UNIT_TYPE[unit.type].name} is now fully concealed!`);
+                } else {
+                    this.log(`${UNIT_TYPE[unit.type].name}: ${unit.concealTurnsLeft} turn(s) until concealed.`);
+                }
+            }
+        }
+    }
+
+    /**
+     * Check if a moving unit triggers an ambush from concealed enemies.
+     */
+    _checkAmbushTrigger(movingUnit, x, z) {
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dz = -1; dz <= 1; dz++) {
+                const checkX = x + dx, checkZ = z + dz;
+                const tileKey = `${checkX},${checkZ}`;
+                const concealed = this.gameState.concealedUnits.get(tileKey) || [];
+                for (const unitId of concealed) {
+                    const ambusher = this.gameState.units.get(unitId);
+                    if (!ambusher) continue;
+                    if (ambusher.owner === movingUnit.owner) continue;
+                    if (!canAttack(this.gameState.diplomacy, ambusher.owner, movingUnit.owner)) continue;
+                    if (ambusher.owner === PLAYER_FACTION) {
+                        this.gameState.pendingAmbush = {
+                            ambusherId: unitId,
+                            targetId: movingUnit.id,
+                            fromTile: tileKey
+                        };
+                        this.log(`⚠️ Ambush opportunity! ${UNIT_TYPE[ambusher.type].name} can surprise attack!`);
+                    } else {
+                        this._executeAmbush(ambusher, movingUnit);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Execute an ambush attack with bonuses.
+     */
+    _executeAmbush(ambusher, target) {
+        ambusher.concealState = null;
+        ambusher.concealTerrain = null;
+        const tileKey = `${ambusher.x},${ambusher.z}`;
+        const concealed = this.gameState.concealedUnits.get(tileKey) || [];
+        this.gameState.concealedUnits.set(tileKey, concealed.filter(id => id !== ambusher.id));
+        const originalAttack = ambusher.attack ?? UNIT_TYPE[ambusher.type].attack;
+        ambusher.attack = originalAttack + AMBUSH_ATTACK_BONUS;
+        this.log(`🗡️ ${UNIT_TYPE[ambusher.type].name} ambushes ${UNIT_TYPE[target.type].name}! (+${AMBUSH_ATTACK_BONUS} attack)`);
+        this.handleAttack(ambusher, target);
+        ambusher.attack = originalAttack;
+    }
+
+    /**
+     * Player confirms ambush attack.
+     */
+    handleAmbushConfirm() {
+        const ambush = this.gameState.pendingAmbush;
+        if (!ambush) return;
+        const ambusher = this.gameState.units.get(ambush.ambusherId);
+        const target = this.gameState.units.get(ambush.targetId);
+        if (!ambusher || !target) return;
+        this._executeAmbush(ambusher, target);
+        this.gameState.pendingAmbush = null;
+    }
+
+    /**
+     * Player declines ambush (stays concealed).
+     */
+    handleAmbushDecline() {
+        this.gameState.pendingAmbush = null;
+        this.log('Ambush opportunity passed.');
+    }
+
     /** Record a fallen unit in the graveyard for Raise Dead. */
     _onUnitDeath(unit) {
         this.gameState.units.delete(unit.id);
@@ -764,6 +1039,10 @@ export class Game {
     _applyAoeAndFire(attacker, primary, primaryDamage) {
         const atkDef = UNIT_TYPE[attacker.type];
         if (!atkDef.aoe) return;
+        // Trigger AOE impact visual: expanding ring + lobbed projectile.
+        if (this.renderer && this.renderer.addImpact) {
+            this.renderer.addImpact(primary.x, primary.z, attacker.x, attacker.z);
+        }
         const splash = Math.max(1, Math.floor((primaryDamage || 0) * AOE_SPLASH_FRACTION));
         const splashVictims = [];
         for (const u of this.gameState.units.values()) {
@@ -827,6 +1106,31 @@ export class Game {
         msgs.forEach(m => this.log(m));
         if (msgs.length) sfx.besiege();
         unit.hasAttackedThisTurn = true; // besieging uses the unit's action
+        this.gameState.moveTargets.clear();
+        this.gameState.attackTargets = [];
+        this.gameState.bridgeTargets = [];
+        this.renderer.clearHighlights();
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
+    /** An Archer/Longbowman looses arrows at an enemy fortified city within range,
+     *  chipping its fortification by a nerfed amount (bows harass, not breach).
+     *  Uses the unit's attack action for the turn. */
+    handleArrowBombard(unit, cityTile) {
+        if (!unit || unit.owner !== PLAYER_FACTION || !RANGED_BOMBARD_TYPES.includes(unit.type)) return;
+        if (unit.hasAttackedThisTurn) { this.log('This unit has already acted this turn.'); return; }
+        if (!cityTile || cityTile.terrain !== 'CITY' || cityTile.owner === PLAYER_FACTION) return;
+        if (!canAttack(this.gameState.diplomacy, PLAYER_FACTION, cityTile.owner)) {
+            this.log('Cannot bombard: not at war with that faction.'); return;
+        }
+        const fort = cityTile.fortification || 0;
+        if (fort <= 0) { this.log('That city is already breached.'); return; }
+        cityTile.fortification = Math.max(0, fort - RANGED_BOMBARD_FORT_DAMAGE);
+        unit.hasAttackedThisTurn = true;
+        sfx.attack();
+        this.log(`🏹 ${UNIT_TYPE[unit.type].name} bombards city [${cityTile.x}, ${cityTile.z}] — fortification ${cityTile.fortification}/${cityTile.fortMax}.`);
+        if (cityTile.fortification === 0) this.log(`City [${cityTile.x}, ${cityTile.z}] is BREACHED — it can now be captured!`);
         this.gameState.moveTargets.clear();
         this.gameState.attackTargets = [];
         this.gameState.bridgeTargets = [];
@@ -939,6 +1243,35 @@ export class Game {
         engineer.hasAttackedThisTurn = true; // starting construction uses the action
         sfx.besiege();
         this.log(`🔨 Engineer #${engineer.id} started a Siege Tower near [${target.x}, ${target.z}] — ready in ${SIEGE_TOWER_BUILD_TURNS} turns.`);
+        this.ui.showUnitInfo(engineer);
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
+    /** An Engineer starts constructing Ladders near an enemy city.
+     *  Pays LADDER_COST up front; ladders complete after LADDER_BUILD_TURNS.
+     *  Ladders allow infantry to assault fortified cities (cheaper alternative to siege tower). */
+    handleBuildLadder(engineer) {
+        if (!engineer || engineer.type !== 'ENGINEER' || engineer.owner !== PLAYER_FACTION) return;
+        if (engineer.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
+        if (this.gameState.construction && this.gameState.construction.has(engineer.id)) {
+            this.log('This engineer is already building something.'); return;
+        }
+        const target = this._siegeTargetNear(engineer, LADDER_BUILD_RADIUS);
+        if (!target) { this.log('No enemy city nearby to build ladders against.'); return; }
+        const pool = this.gameState.resources.player;
+        for (const [res, amt] of Object.entries(LADDER_COST)) {
+            if ((pool[res] || 0) < amt) { this.log('Not enough resources to build ladders.'); return; }
+        }
+        for (const [res, amt] of Object.entries(LADDER_COST)) pool[res] = (pool[res] || 0) - amt;
+        this.gameState.construction.set(engineer.id, {
+            type: 'LADDER', turnsLeft: LADDER_BUILD_TURNS,
+            x: engineer.x, z: engineer.z, faction: PLAYER_FACTION,
+            targetCity: `${target.x},${target.z}`
+        });
+        engineer.hasAttackedThisTurn = true; // starting construction uses the action
+        sfx.besiege();
+        this.log(`🪜 Engineer #${engineer.id} started building Ladders near [${target.x}, ${target.z}] — ready in ${LADDER_BUILD_TURNS} turn.`);
         this.ui.showUnitInfo(engineer);
         this.renderAll();
         this.ui.updateResourceBar();
@@ -1512,6 +1845,61 @@ export class Game {
         }
     }
 
+    /** Move AI lords/kings outward so they lead expansion and press the map
+     *  instead of sitting on the capital. Each lord steps toward the nearest
+     *  at-war enemy city; if none, toward the nearest unowned land tile (so the
+     *  empire expands into unsettled land); if none, toward the nearest enemy
+     *  tile. Lords share tiles with their own army, so own units never block. */
+    _aiMoveLords(faction) {
+        const lords = (this.gameState.lords || []).filter(l =>
+            l.owner === faction && !l.hasMovedThisTurn);
+        if (!lords.length) return;
+        const atWar = (o) => canAttack(this.gameState.diplomacy, faction, o);
+
+        const pickTarget = (lord) => {
+            let target = null, best = Infinity;
+            // 1) Nearest at-war enemy city.
+            for (const t of this.tiles.values()) {
+                if (t.terrain !== 'CITY' || !t.owner || t.owner === faction) continue;
+                if (!atWar(t.owner)) continue;
+                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
+                if (d < best) { best = d; target = t; }
+            }
+            if (target) return target;
+            // 2) Nearest unowned, settleable land tile (expansion).
+            best = Infinity;
+            for (const t of this.tiles.values()) {
+                if (t.owner) continue;
+                if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
+                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
+                if (d < best) { best = d; target = t; }
+            }
+            if (target) return target;
+            // 3) Nearest enemy-owned tile (probe the frontier).
+            best = Infinity;
+            for (const t of this.tiles.values()) {
+                if (!t.owner || t.owner === faction) continue;
+                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
+                if (d < best) { best = d; target = t; }
+            }
+            return target;
+        };
+
+        for (const lord of lords) {
+            const target = pickTarget(lord);
+            if (!target) continue;
+            // Lords move up to 2 tiles per turn (like Infantry). Step twice
+            // toward the target; stop if we reach it or get stuck.
+            for (let s = 0; s < 2; s++) {
+                if (lord.x === target.x && lord.z === target.z) break;
+                const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
+                if (!step || (step.x === lord.x && step.z === lord.z)) break;
+                lord.x = step.x; lord.z = step.z;
+            }
+            lord.hasMovedThisTurn = true;
+        }
+    }
+
     runAITurn(faction) {
         const pool = this.gameState.resources[faction];
         const def = this.factionDefs[faction];
@@ -1528,6 +1916,12 @@ export class Game {
 
         // Tick this AI faction's in-progress Siege Tower builds.
         this._tickConstructionFor(faction);
+
+        // Lead from the front: move AI lords/kings outward toward a target so
+        // they expand and press the map instead of sitting home guarding the
+        // capital. Done before unit actions so the army repositions around the
+        // relocated lord.
+        this._aiMoveLords(faction);
 
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy);
 
@@ -1746,6 +2140,7 @@ export class Game {
             this._tickProduction();
             this._tickConstruction();
             this._tickBurn(); // fire ailment ticks once per round (start of player turn)
+            this._tickConcealment(); // concealment progress
             this._processAutoGoals();
             this._processLordGoals();
             // Scry reveal expires at the start of the player's next turn.

@@ -57,9 +57,10 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         if (governor) gold = Math.floor(gold * getLordGovernanceMultiplier(governor));
         resources.gold = (resources.gold || 0) + gold;
         resources.production = (resources.production || 0) + 2 * cl;
-        // Cities are population centers: they produce their own food (farms +
-        // hinterland) and wood (timber yards) by default, scaling with level.
-        resources.food = (resources.food || 0) + 2 + cl;
+        // Cities are population centers: they produce a little food (hinterland
+        // foraging) and wood (timber yards) by default, scaling weakly with level.
+        // Food is intentionally scarce — farms and fertile terrain matter.
+        resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
         resources.wood = (resources.wood || 0) + 1 + cl;
         // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
         applyBuildingBonuses(tileKey, tile, buildings, resources);
@@ -237,6 +238,36 @@ export function processCityGrowth(tiles, owner, resources, log) {
             tile.fortification = tile.fortMax;
             const claimed = expandCityTerritory(tiles, tile, owner);
             const msg = `City at [${tile.x}, ${tile.z}] grew to Lv.${tile.cityLevel} (influence ${cityRadius(tile)})!${claimed ? ` Claimed ${claimed} new tile(s).` : ''}`;
+            messages.push(msg);
+            if (log) log(msg);
+        }
+    }
+    return messages;
+}
+
+/**
+ * Natural growth for NEUTRAL (unowned) cities. They have no economy/surplus, so
+ * they grow at a flat base rate and slowly expand their influence over
+ * surrounding unowned tiles — making the wilderness harder to settle into over
+ * time and letting independent city-states contest the map. Called once per
+ * round (not per faction). Returns log messages.
+ */
+export function processNeutralCityGrowth(tiles, log) {
+    const messages = [];
+    const gain = CITY_GROWTH_BASE;
+    for (const tile of tiles.values()) {
+        if (tile.terrain !== 'CITY') continue;
+        if (tile.owner) continue; // owned cities grow via processCityGrowth
+        if ((tile.cityLevel || 1) >= CITY_MAX_LEVEL) continue;
+        tile.growth = (tile.growth || 0) + gain;
+        const need = cityGrowthThreshold(tile.cityLevel || 1);
+        if (tile.growth >= need) {
+            tile.growth -= need;
+            tile.cityLevel = (tile.cityLevel || 1) + 1;
+            tile.fortMax = 2 + tile.cityLevel;
+            tile.fortification = tile.fortMax;
+            const claimed = expandCityTerritory(tiles, tile, null);
+            const msg = `Neutral city at [${tile.x}, ${tile.z}] grew to Lv.${tile.cityLevel} (influence ${cityRadius(tile)}).${claimed ? ` Claimed ${claimed} tile(s).` : ''}`;
             messages.push(msg);
             if (log) log(msg);
         }

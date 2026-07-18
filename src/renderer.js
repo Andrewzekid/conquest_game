@@ -57,6 +57,10 @@ export class GameRenderer {
         this.scene.add(this.auraGroup);
         this.bridgeGroup = new THREE.Group(); // bridges over rivers
         this.scene.add(this.bridgeGroup);
+        this.effectsGroup = new THREE.Group(); // transient VFX (AOE impact rings, projectiles)
+        this.scene.add(this.effectsGroup);
+        this._effects = [];   // active transient effects: { obj, born, life, kind }
+        this._flames = [];     // active fire-ailment flame markers (for flicker)
 
         this.tileMeshes = new Map(); // `${x},${z}` -> base tile Mesh
         this.tileHeights = new Map();
@@ -98,11 +102,21 @@ export class GameRenderer {
             snow.position.y = 0.85;
             group.add(snow);
         } else if (terrain === 'HILLS') {
-            const dome = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-                new THREE.MeshPhongMaterial({ color: 0x8a9245 }));
-            dome.scale.set(1, 0.4, 1);
-            dome.position.y = 0.1;
-            group.add(dome);
+            // Hills: smaller mountain peaks (same style as mountains but lower)
+            const peak1 = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.55, 5),
+                new THREE.MeshPhongMaterial({ color: 0x8a7a68 }));
+            peak1.position.set(-0.15, 0.28, 0.1);
+            group.add(peak1);
+            const peak2 = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.45, 5),
+                new THREE.MeshPhongMaterial({ color: 0x9a8a78 }));
+            peak2.position.set(0.2, 0.23, -0.1);
+            group.add(peak2);
+            // Small grass patches at base
+            const grass = new THREE.Mesh(new THREE.SphereGeometry(0.3, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2),
+                new THREE.MeshPhongMaterial({ color: 0x6a8a45 }));
+            grass.scale.set(1, 0.2, 1);
+            grass.position.set(0, 0.02, 0.2);
+            group.add(grass);
         } else if (terrain === 'WATER') {
             const plane = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.95),
                 new THREE.MeshPhongMaterial({ color: 0x3f8fd0, transparent: true, opacity: 0.55 }));
@@ -212,8 +226,70 @@ export class GameRenderer {
 
     animate() {
         requestAnimationFrame(() => this.animate());
+        const now = performance.now();
+        // Animate transient VFX (AOE impact rings / projectiles) and retire
+        // expired ones. effectsGroup is NOT cleared by renderAll, so these live
+        // across frames until their life elapses.
+        if (this._effects.length) {
+            const alive = [];
+            for (const fx of this._effects) {
+                const t = (now - fx.born) / fx.life; // 0..1
+                if (t >= 1) { this.effectsGroup.remove(fx.obj); continue; }
+                if (fx.kind === 'ring') {
+                    const s = 0.4 + t * 1.6;
+                    fx.obj.scale.set(s, s, s);
+                    fx.obj.material.opacity = 0.8 * (1 - t);
+                }
+                alive.push(fx);
+            }
+            this._effects = alive;
+        }
+        // Flicker fire-ailment flame markers (opacity/scale oscillation).
+        if (this._flames.length) {
+            const f = 0.7 + 0.3 * Math.sin(now / 90);
+            for (const fl of this._flames) {
+                if (fl.material) fl.material.opacity = 0.6 + 0.3 * f;
+                fl.scale.set(1, 0.9 + 0.2 * f, 1);
+            }
+        }
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
+    }
+
+    /** Spawn a transient AOE impact effect at a tile: an expanding ring on the
+     *  ground plus a lobbed rock. Lives ~700ms. Called when a CATAPULT/TREBUCHET
+     *  attacks. */
+    addImpact(x, z, fromX, fromZ) {
+        const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
+        const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;
+        // Expanding shockwave ring flat on the ground.
+        const ring = new THREE.Mesh(
+            new THREE.RingGeometry(0.25, 0.32, 18),
+            new THREE.MeshBasicMaterial({ color: 0xffaa33, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(cx, y, cz);
+        this.effectsGroup.add(ring);
+        this._effects.push({ obj: ring, born: performance.now(), life: 700, kind: 'ring' });
+        // Lobbed rock travelling from attacker tile toward the target, arcing
+        // up and back down. Self-managed via its own rAF loop; removed on impact.
+        const rock = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(0.12, 0),
+            new THREE.MeshBasicMaterial({ color: 0x6b6b6b, transparent: true, opacity: 1 }));
+        const fx0 = (fromX != null ? fromX : x) - GRID_SIZE / 2;
+        const fz0 = (fromZ != null ? fromZ : z) - GRID_SIZE / 2;
+        rock.position.set(fx0, y + 1.0, fz0);
+        const rockLife = 600;
+        const t0 = performance.now();
+        this.effectsGroup.add(rock);
+        const step = () => {
+            const tt = (performance.now() - t0) / rockLife;
+            if (tt >= 1 || !rock.parent) { if (rock.parent) this.effectsGroup.remove(rock); return; }
+            rock.position.x = fx0 + (cx - fx0) * tt;
+            rock.position.z = fz0 + (cz - fz0) * tt;
+            rock.position.y = y + 1.0 + Math.sin(tt * Math.PI) * 1.2;
+            requestAnimationFrame(step);
+        };
+        step();
     }
 
     getIntersects(mouse, camera) {
@@ -300,6 +376,16 @@ export class GameRenderer {
             if (mesh && mesh.visible) {
                 mesh.material.emissive = new THREE.Color(0x22bb88); // teal = build-bridge target
                 mesh.material.emissiveIntensity = 0.75;
+            }
+        }
+    }
+
+    highlightChargeTargets(units) {
+        for (const unit of units) {
+            const mesh = this.tileMeshes.get(`${unit.x},${unit.z}`);
+            if (mesh && mesh.visible) {
+                mesh.material.emissive = new THREE.Color(0xff8800); // orange = charge target
+                mesh.material.emissiveIntensity = 0.85;
             }
         }
     }

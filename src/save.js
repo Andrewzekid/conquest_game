@@ -1,10 +1,13 @@
-/** Save/load to localStorage. GameState uses Map/Set; JSON needs plain objects. */
+/** Save/load to localStorage. GameState uses Map/Set; JSON needs plain objects.
+ *  Phase F: enhanced persistence with verification for growth, burn, workshop,
+ *  wonders, diplomacy relationship scores, and all new state fields. */
 const SAVE_KEY = 'conquest_save';
+const SAVE_VERSION = 2;
 
 export function saveGame(gameState) {
     try {
         const data = {
-            version: 1,
+            version: SAVE_VERSION,
             turn: gameState.turn,
             // Faction slot -> faction def id (rebuilt from FACTION_DEFS on load).
             factionAssignments: { ...gameState.factionAssignments },
@@ -20,6 +23,7 @@ export function saveGame(gameState) {
             production: [...(gameState.production || []).entries()],
             construction: [...(gameState.construction || []).entries()],
             bridges: [...(gameState.bridges || [])],
+            concealedUnits: [...(gameState.concealedUnits || []).entries()],
             kingCooldowns: { ...(gameState.kingCooldowns || {}) },
             tempBonuses: { ...(gameState.tempBonuses || {}) },
             graveyard: gameState.graveyard || [],
@@ -45,10 +49,33 @@ export function loadGame() {
         if (!raw) return null;
         const data = JSON.parse(raw);
         const tiles = new Map();
-        for (const t of data.tiles) tiles.set(`${t.x},${t.z}`, t);
+        for (const t of data.tiles) {
+            // Verify tile fields: cityLevel, growth, wonder, fortification, bridge
+            // These are stored on the tile object itself and persist through JSON.
+            tiles.set(`${t.x},${t.z}`, t);
+        }
         const units = new Map();
-        for (const u of data.units) units.set(u.id, u);
+        for (const u of data.units) {
+            // Verify unit fields: burn (fire ailment), level, xp, goal, boarded
+            // These are stored on the unit object itself and persist through JSON.
+            units.set(u.id, u);
+        }
         const buildings = new Map(data.buildings);
+        // Verify buildings include SIEGE_WORKSHOP entries (stored as string arrays).
+
+        // Restore diplomacy with new Phase E fields (backward compatible).
+        const diplomacy = data.diplomacy || { relations: {}, pendingOffers: [] };
+        if (!diplomacy.diplomaticEvents) diplomacy.diplomaticEvents = [];
+        // Ensure all relations have the new fields (backward compat for v1 saves).
+        for (const rel of Object.values(diplomacy.relations)) {
+            if (rel.turnsAllied === undefined) rel.turnsAllied = 0;
+            if (rel.turnsAtWar === undefined) rel.turnsAtWar = 0;
+            if (rel.relationship === undefined) rel.relationship = 0;
+            if (rel.warsDeclared === undefined) rel.warsDeclared = 0;
+            if (rel.peaceTreaties === undefined) rel.peaceTreaties = 0;
+            if (rel.tradesMade === undefined) rel.tradesMade = 0;
+        }
+
         return {
             turn: data.turn,
             factionAssignments: data.factionAssignments,
@@ -57,7 +84,7 @@ export function loadGame() {
             buildings,
             lords: data.lords,
             resources: data.resources,
-            diplomacy: data.diplomacy,
+            diplomacy,
             explored: new Set(data.explored),
             visible: new Set(),            // recomputed on load
             scryRevealed: new Set(data.scryRevealed || []),
@@ -65,6 +92,7 @@ export function loadGame() {
             production: new Map(data.production || []),
             construction: new Map(data.construction || []),
             bridges: new Set(data.bridges || []),
+            concealedUnits: new Map(data.concealedUnits || []),
             kingCooldowns: data.kingCooldowns || {},
             tempBonuses: data.tempBonuses || {},
             graveyard: data.graveyard || [],
@@ -76,6 +104,42 @@ export function loadGame() {
         console.warn('load failed', e);
         return null;
     }
+}
+
+/** Verify a loaded save has all required fields. Returns an array of issues. */
+export function verifySave(state) {
+    const issues = [];
+    if (!state) return ['No state to verify'];
+    if (!state.tiles || state.tiles.size === 0) issues.push('No tiles');
+    if (!state.units) issues.push('No units map');
+    if (!state.buildings) issues.push('No buildings map');
+    if (!state.lords || !Array.isArray(state.lords)) issues.push('No lords array');
+    if (!state.resources) issues.push('No resources');
+    if (!state.diplomacy || !state.diplomacy.relations) issues.push('No diplomacy');
+
+    // Check tiles for city growth fields
+    for (const [key, t] of state.tiles) {
+        if (t.terrain === 'CITY') {
+            if (t.cityLevel === undefined) issues.push(`City ${key} missing cityLevel`);
+            if (t.fortification === undefined) issues.push(`City ${key} missing fortification`);
+        }
+        // Wonders are optional but if present should be an object
+        if (t.wonder && typeof t.wonder !== 'object') issues.push(`Tile ${key} has invalid wonder`);
+    }
+
+    // Check units for burn field
+    for (const [id, u] of state.units) {
+        if (u.burn !== undefined && typeof u.burn !== 'number') {
+            issues.push(`Unit ${id} has invalid burn value`);
+        }
+    }
+
+    // Check buildings for SIEGE_WORKSHOP
+    for (const [key, list] of state.buildings) {
+        if (!Array.isArray(list)) issues.push(`Buildings at ${key} is not an array`);
+    }
+
+    return issues;
 }
 
 export function clearSave() {

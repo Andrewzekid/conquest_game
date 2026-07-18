@@ -1,10 +1,15 @@
 /** Map generation: terrain, ownership, starting positions. */
-import { GRID_SIZE, TERRAIN, FACTIONS, CITY_INFLUENCE_RADIUS, CITY_INFLUENCE_PER_LEVEL, UNIT_TYPE, NATURAL_WONDERS } from './config.js';
+import { GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS } from './config.js';
 
-/** Influence/vision radius of a city, based on its level (1-based). */
+/** Influence/vision radius of a city, based on its level (1-based).
+ *  Stepped (not linear) so influence grows in tiers:
+ *    Lv 1-2 → 1,  Lv 3-4 → 2,  Lv 5-9 → 3,  Lv 10+ → 4. */
 export function cityRadius(tile) {
     const level = (tile && tile.cityLevel) || 1;
-    return CITY_INFLUENCE_RADIUS + (level - 1) * CITY_INFLUENCE_PER_LEVEL;
+    if (level >= 10) return 4;
+    if (level >= 5) return 3;
+    if (level >= 3) return 2;
+    return 1;
 }
 
 /** A city's fortification max scales with its level. Besiege to reduce it to 0

@@ -1,6 +1,7 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
-         SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS } from './config.js';
+         SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
+         GRID_SIZE } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { canAttack } from './diplomacy.js';
@@ -124,7 +125,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // 2b. Civ6 expansion: with no per-tile capture, the AI must FOUND cities to
     //     grow. If it can afford a Settler and is below its city-count target,
     //     train one (it will be walked to an unowned land tile and founded).
-    const settlerTarget = 3; // simple city-count goal
+    //     The target scales with map size so AI empires keep spreading on
+    //     larger maps instead of turtling at 3 cities.
+    const settlerTarget = Math.max(4, Math.round(GRID_SIZE / 7));
     const hasSettler = myUnits.some(u => u.type === 'SETTLER');
     if (!hasSettler && myCityCount < settlerTarget && capRoom()) {
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);

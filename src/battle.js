@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -78,7 +78,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense;
 
-    const damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
+    // — archers and artillery exploit the spent, immobile mount.
+    if (defenderUnit.chargeExhausted && defenderUnit.chargeExhausted > 0 && atkStats.ranged) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * CHARGE_EXHAUST_RANGED_VULN));
+        messages.push(`${defenderUnit.type} is exhausted — ranged fire deals ${damageToDefender} (×${CHARGE_EXHAUST_RANGED_VULN})!`);
+    }
     defenderUnit.hp -= damageToDefender;
     messages.push(`${attackerUnit.type} attacks ${defenderUnit.type} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);
 
