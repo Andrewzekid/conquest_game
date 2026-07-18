@@ -20,7 +20,7 @@ import { computeAIActions } from './ai.js';
 import { GameRenderer } from './renderer.js';
 import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
-import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar } from './diplomacy.js';
+import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn } from './building.js';
@@ -135,6 +135,10 @@ export class Game {
             tempBonuses: {},       // faction -> {attack,defense} for this turn
             graveyard: [],         // fallen units (for Obsidian Raise Dead)
             eliminated: new Set(),
+            // Per-faction reputation (0-100, starts 50). Breaking treaties or
+            // declaring war on peaceful factions lowers it; long peace raises it.
+            // AI uses it to decide whether to deal with you.
+            reputation: Object.fromEntries(FACTIONS.map(f => [f, 50])),
             gameOver: false,
             winner: null,
             paused: false
@@ -194,6 +198,13 @@ export class Game {
         if (!this.gameState.scryRevealed) this.gameState.scryRevealed = new Set();
         if (!this.gameState.concealedUnits) this.gameState.concealedUnits = new Map();
         if (!this.gameState.chargeTargets) this.gameState.chargeTargets = [];
+        // Reputation may be absent in pre-Phase-E saves — default everyone to 50.
+        if (!this.gameState.reputation) {
+            this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
+        }
+        // pendingOffers may be absent on old saves.
+        if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
+        if (!this.gameState.diplomacy.pendingOffers) this.gameState.diplomacy.pendingOffers = [];
         this.gameState.pendingAmbush = null;
         this.gameState.selectedUnit = null;
         this.gameState.selectedLord = null;
@@ -1603,21 +1614,102 @@ export class Game {
 
     handleDiplomacy(action, target) {
         const diplo = this.gameState.diplomacy;
-        const tName = this.factionColors[target] ? this.factionColors[target].name : target;
-        if (action === 'proposePeace') {
-            setRelation(diplo, 'player', target, DIPLOMACY_STATES.PEACE);
-            this.log(`Peace established with ${tName}.`);
-        } else if (action === 'declareWar') {
-            setRelation(diplo, 'player', target, DIPLOMACY_STATES.WAR);
-            this.log(`War declared on ${tName}!`);
-        } else if (action === 'proposeTrade') {
-            setRelation(diplo, 'player', target, DIPLOMACY_STATES.TRADE_PACT);
+        if (!this.gameState.reputation) this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
+        const rep = this.gameState.reputation;
+        const adjustRep = (faction, delta) => {
+            rep[faction] = Math.max(0, Math.min(100, (rep[faction] == null ? 50 : rep[faction]) + delta));
+        };
+        const treatyLabel = (type) => type === DIPLOMACY_STATES.PEACE ? 'peace'
+            : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact' : 'an alliance';
+        const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        // Player proposes a treaty to an AI; the AI accepts/rejects via
+        // aiDecideTreaty using its personality, the power ratio, and the
+        // current relationship score. Alliances also require decent reputation.
+        const propose = (type) => {
             const rel = getRelation(diplo, 'player', target);
-            rel.tradeAmount = 10;
-            this.log(`Trade pact established with ${tName} (10g/turn exchange).`);
+            const ratio = Math.max(0.1, this._factionPower('player') / Math.max(1, this._factionPower(target)));
+            const def = this.factionDefs[target];
+            const pers = (def && def.aiPersonality) || 'DEFENSIVE';
+            const playerRep = rep.player == null ? 50 : rep.player;
+            if (type === DIPLOMACY_STATES.ALLIANCE && (playerRep < 30 || (rel.relationship || 0) <= -20)) {
+                this.log(`${nameOf(target)} spurns your alliance proposal (low standing).`);
+                return;
+            }
+            // A low-reputation player is treated as if its relationship score were
+            // worse, so the AI is less willing to sign trade/peace with a known
+            // treaty-breaker.
+            const effRel = (rel.relationship || 0) + (playerRep - 50) / 2;
+            if (aiDecideTreaty(pers, type, ratio, effRel)) {
+                setRelation(diplo, 'player', target, type);
+                if (type === DIPLOMACY_STATES.TRADE_PACT) rel.tradeAmount = 10;
+                this.log(`${nameOf(target)} accepts your proposal — ${treatyLabel(type)} established.`);
+                if (type === DIPLOMACY_STATES.ALLIANCE) this.updateFog();
+            } else {
+                this.log(`${nameOf(target)} rejects your ${treatyLabel(type)} proposal.`);
+            }
+        };
+
+        if (action === 'proposePeace') {
+            propose(DIPLOMACY_STATES.PEACE);
+        } else if (action === 'proposeTrade') {
+            propose(DIPLOMACY_STATES.TRADE_PACT);
+        } else if (action === 'proposeAlliance') {
+            propose(DIPLOMACY_STATES.ALLIANCE);
+        } else if (action === 'declareWar') {
+            const wasPeaceful = getRelation(diplo, 'player', target).state !== DIPLOMACY_STATES.WAR;
+            setRelation(diplo, 'player', target, DIPLOMACY_STATES.WAR);
+            if (wasPeaceful) {
+                adjustRep('player', -15);
+                this.log(`War declared on ${nameOf(target)}! (Reputation -15)`);
+            } else {
+                this.log(`War declared on ${nameOf(target)}!`);
+            }
+            // Joint war: the player's allies are dragged in against the target.
+            this._jointWar(PLAYER_FACTION, target);
+        } else if (action === 'cancelTrade') {
+            const rel = getRelation(diplo, 'player', target);
+            if (rel.state === DIPLOMACY_STATES.TRADE_PACT) {
+                rel.tradeAmount = 0;
+                setRelation(diplo, 'player', target, DIPLOMACY_STATES.PEACE);
+                adjustRep('player', -5);
+                this.log(`Trade pact with ${nameOf(target)} cancelled. (Reputation -5)`);
+            }
+        } else if (action === 'acceptOffer' || action === 'declineOffer') {
+            const idx = Number(target);
+            const offer = diplo.pendingOffers[idx];
+            if (!offer || offer.to !== PLAYER_FACTION) return;
+            diplo.pendingOffers.splice(idx, 1);
+            if (action === 'acceptOffer') {
+                setRelation(diplo, 'player', offer.from, offer.type);
+                if (offer.type === DIPLOMACY_STATES.TRADE_PACT) {
+                    getRelation(diplo, 'player', offer.from).tradeAmount = 10;
+                }
+                this.log(`You accepted ${treatyLabel(offer.type)} with ${nameOf(offer.from)}.`);
+                adjustRep('player', +3);
+                if (offer.type === DIPLOMACY_STATES.ALLIANCE) this.updateFog();
+            } else {
+                this.log(`You declined ${nameOf(offer.from)}'s ${treatyLabel(offer.type)} offer.`);
+            }
         }
         sfx.click();
         this.ui.showDiplomacyPanel();
+    }
+
+    /** Joint war: declaring war on a faction drags the declarer's allies into
+     *  the war on the declarer's side. Relations are symmetric (relKey), so a
+     *  single setRelation call per ally suffices. */
+    _jointWar(declarer, target) {
+        const diplo = this.gameState.diplomacy;
+        const nm = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        for (const ally of FACTIONS) {
+            if (ally === declarer || ally === target) continue;
+            if (this.gameState.eliminated && this.gameState.eliminated.has(ally)) continue;
+            if (isAllied(diplo, declarer, ally) &&
+                getRelation(diplo, ally, target).state !== DIPLOMACY_STATES.WAR) {
+                setRelation(diplo, ally, target, DIPLOMACY_STATES.WAR);
+                this.log(`${nm(ally)} joins the war against ${nm(target)} (alliance obligation).`);
+            }
+        }
     }
 
     handleRecruitLord() {
@@ -1866,11 +1958,76 @@ export class Game {
             const threshold = isAlly ? 1.8 : 1.3;
             if (ratio < threshold) continue;
             if (!aiDecideWar(personality, ratio)) continue;
+            // Breaking a non-war treaty to declare war costs the aggressor
+            // reputation (surprise attacks make the world distrust you).
+            const wasAllied = rel.state === DIPLOMACY_STATES.ALLIANCE;
+            const wasTreaty = rel.state !== DIPLOMACY_STATES.WAR;
             setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR);
+            if (wasTreaty && this.gameState.reputation) {
+                const hit = wasAllied ? 25 : 10;
+                this.gameState.reputation[faction] = Math.max(0,
+                    (this.gameState.reputation[faction] == null ? 50 : this.gameState.reputation[faction]) - hit);
+            }
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             this.log(`${factionName} has declared war on ${otherName}! (power ${myPower} vs ${theirPower})`);
             sfx.attack();
             declared = true;
+        }
+    }
+
+    /** AI may propose a treaty (peace / trade / alliance) to one other faction
+     *  per turn. AI->player offers are pushed to pendingOffers for the player to
+     *  accept/decline in the diplomacy panel; AI-AI offers resolve automatically
+     *  via aiDecideTreaty on both sides. Proposals are driven by personality,
+     *  relationship score, and how long the current state has held. */
+    _aiMaybeProposeTreaty(faction, def, factionName) {
+        if (!def) return;
+        const personality = def.aiPersonality || 'DEFENSIVE';
+        const myPower = Math.max(1, this._factionPower(faction));
+        const diplo = this.gameState.diplomacy;
+        const alive = (o) => !(this.gameState.eliminated && this.gameState.eliminated.has(o));
+        for (const other of FACTIONS) {
+            if (other === faction || !alive(other)) continue;
+            const rel = getRelation(diplo, faction, other);
+            const theirPower = Math.max(1, this._factionPower(other));
+            const ratio = myPower / theirPower;
+            let type = null;
+            if (rel.state === DIPLOMACY_STATES.WAR) {
+                // Losing, or a long grinding war → sue for peace.
+                if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) type = DIPLOMACY_STATES.PEACE;
+            } else if (rel.state === DIPLOMACY_STATES.PEACE) {
+                if ((rel.relationship || 0) > 40 && Math.random() < 0.25) type = DIPLOMACY_STATES.ALLIANCE;
+                else if ((rel.relationship || 0) > 0 && Math.random() < 0.35) type = DIPLOMACY_STATES.TRADE_PACT;
+            } else if (rel.state === DIPLOMACY_STATES.TRADE_PACT) {
+                if ((rel.relationship || 0) > 50 && (rel.turnsAtPeace || 0) > 6 && Math.random() < 0.2) {
+                    type = DIPLOMACY_STATES.ALLIANCE;
+                }
+            }
+            if (!type) continue;
+            const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
+            const label = type === DIPLOMACY_STATES.PEACE ? 'peace'
+                : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact' : 'an alliance';
+            if (other === PLAYER_FACTION) {
+                // Don't stack duplicate pending offers of the same type.
+                const dup = diplo.pendingOffers.some(o =>
+                    o.from === faction && o.to === other && o.type === type);
+                if (dup) return;
+                diplo.pendingOffers.push({ from: faction, to: other, type, turnProposed: this.gameState.turn });
+                this.log(`${factionName} proposes ${label} with ${otherName}. (Diplomacy panel → respond.)`);
+                return;
+            }
+            // AI-AI: both sides must agree (each uses its own personality & the
+            // inverse power ratio, since the weaker party is more cautious).
+            const otherDef = this.factionDefs[other];
+            const otherPers = (otherDef && otherDef.aiPersonality) || 'DEFENSIVE';
+            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0);
+            const b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0);
+            if (a && b) {
+                setRelation(diplo, faction, other, type);
+                if (type === DIPLOMACY_STATES.TRADE_PACT) rel.tradeAmount = 10;
+                this.log(`${factionName} and ${otherName} signed ${label}.`);
+            }
+            return;
         }
     }
 
@@ -1942,6 +2099,10 @@ export class Game {
         // an alliance requires a larger advantage. At most one declaration per
         // turn keeps the board from descending into instant chaos.
         this._aiMaybeDeclareWar(faction, def, factionName);
+
+        // --- AI diplomacy: propose peace/trade/alliance from a position of
+        // need or friendship. AI->player offers land in pendingOffers. ---
+        this._aiMaybeProposeTreaty(faction, def, factionName);
 
         // Tick this AI faction's in-progress Siege Tower builds.
         this._tickConstructionFor(faction);
@@ -2153,6 +2314,29 @@ export class Game {
         for (const t of this.tiles.values()) {
             if (t.owner === PLAYER_FACTION && t.terrain === 'CITY') {
                 sources.push({ x: t.x, z: t.z, radius: cityRadius(t) });
+            }
+        }
+        // Allied shared vision: units, lords, and cities of factions allied to
+        // the player also feed the player's visibility (but NOT explored — only
+        // the player's own sight permanently reveals terrain).
+        const diplo = this.gameState.diplomacy;
+        if (diplo) {
+            for (const u of this.gameState.units.values()) {
+                if (u.owner !== PLAYER_FACTION && isAllied(diplo, PLAYER_FACTION, u.owner)) {
+                    const r = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].vision) || baseVision;
+                    sources.push({ x: u.x, z: u.z, radius: r, ally: true });
+                }
+            }
+            for (const l of this.gameState.lords) {
+                if (l.owner !== PLAYER_FACTION && isAllied(diplo, PLAYER_FACTION, l.owner)) {
+                    sources.push({ x: l.x, z: l.z, radius: baseVision, ally: true });
+                }
+            }
+            for (const t of this.tiles.values()) {
+                if (t.owner !== PLAYER_FACTION && t.terrain === 'CITY' &&
+                    isAllied(diplo, PLAYER_FACTION, t.owner)) {
+                    sources.push({ x: t.x, z: t.z, radius: cityRadius(t), ally: true });
+                }
             }
         }
         const baseVisible = computeVisibility(sources);

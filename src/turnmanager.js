@@ -2,6 +2,7 @@
 import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth } from './economy.js';
 import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
+import { processTradePacts, updatePeaceCounters } from './diplomacy.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -45,6 +46,31 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Neutral (unowned) cities also grow and expand influence over time.
         processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
+        // Diplomacy bookkeeping: tick peace/alliance/war counters (which drift
+        // relationship scores), then pay out trade-pact bonuses.
+        if (gameState.diplomacy) {
+            updatePeaceCounters(gameState.diplomacy);
+            const tradeMsgs = processTradePacts(gameState.diplomacy, gameState.resources);
+            if (logger) tradeMsgs.forEach(m => logger(m));
+        }
+        // Reputation drift: a faction at peace with everyone slowly rebuilds
+        // trust (+1/turn, capped 100). War stops the recovery; treaty breaks and
+        // surprise declarations already applied one-time hits in handleDiplomacy.
+        if (gameState.reputation && gameState.diplomacy) {
+            for (const f of factions) {
+                if (gameState.eliminated && gameState.eliminated.has(f)) continue;
+                let atWar = false;
+                for (const o of factions) {
+                    if (o === f) continue;
+                    const s = gameState.diplomacy.relations[`${[f, o].sort().join(':')}`];
+                    if (s && s.state === 'war') { atWar = true; break; }
+                }
+                if (!atWar) {
+                    gameState.reputation[f] = Math.min(100, (gameState.reputation[f] == null ? 50 : gameState.reputation[f]) + 1);
+                }
+            }
+        }
 
         // Medics heal adjacent friendly units (once per round, all factions).
         processMedicHeal(gameState.units);

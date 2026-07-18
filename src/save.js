@@ -28,6 +28,7 @@ export function saveGame(gameState) {
             tempBonuses: { ...(gameState.tempBonuses || {}) },
             graveyard: gameState.graveyard || [],
             eliminated: [...(gameState.eliminated || [])],
+            reputation: { ...(gameState.reputation || {}) },
             gameOver: gameState.gameOver,
             winner: gameState.winner
         };
@@ -104,6 +105,7 @@ export function loadGame() {
             tempBonuses: data.tempBonuses || {},
             graveyard: data.graveyard || [],
             eliminated: new Set(data.eliminated || []),
+            reputation: data.reputation || null,
             gameOver: data.gameOver || false,
             winner: data.winner || null
         };

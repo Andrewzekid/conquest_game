@@ -3,7 +3,7 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
          EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn } from './building.js';
-import { getDiplomacySummary } from './diplomacy.js';
+import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
@@ -694,7 +694,24 @@ export function bindUI(gameState, callbacks) {
     function showDiplomacyPanel() {
         if (!els.diplomacyPanel) return;
         const summary = getDiplomacySummary(gameState.diplomacy, FACTIONS);
+        const rep = gameState.reputation || {};
         els.diplomacyPanel.innerHTML = '<h3>Diplomacy</h3>';
+
+        // Player reputation header (how trustworthy the world finds you).
+        const myRep = rep[PLAYER_FACTION] == null ? 50 : rep[PLAYER_FACTION];
+        const repHdr = document.createElement('div');
+        repHdr.style.cssText = 'margin:4px 0; padding:4px; border-left:3px solid #d4af37; font-size:12px;';
+        repHdr.innerHTML = `Your reputation: <b>${myRep}</b> <span style="opacity:.7;">(${relationshipLabel(myRep - 50)})</span>`;
+        els.diplomacyPanel.appendChild(repHdr);
+
+        const mkBtn = (label, action, target) => {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.style.cssText = 'margin:2px 2px 0 0; padding:2px 6px; font-size:11px; cursor:pointer;';
+            b.onclick = () => callbacks.onDiplomacy && callbacks.onDiplomacy(action, target);
+            return b;
+        };
+
         for (const rel of summary) {
             const involvesPlayer = rel.a === PLAYER_FACTION || rel.b === PLAYER_FACTION;
             const target = rel.a === PLAYER_FACTION ? rel.b : rel.a;
@@ -708,33 +725,51 @@ export function bindUI(gameState, callbacks) {
                                rel.state === 'peace' ? '#44ff44' :
                                rel.state === 'alliance' ? '#4488ff' : '#ffaa00';
             div.innerHTML = `
-                <span style="color:${stateColor}; font-weight:bold;">${rel.state.toUpperCase()}</span>
-                - ${aName} vs ${bName}
+                <span style="color:${stateColor}; font-weight:bold;">${stateLabel(rel.state)}</span>
+                — ${aName} vs ${bName}
                 ${rel.tradeAmount > 0 ? `(Trade: ${rel.tradeAmount}g)` : ''}
+                <span style="opacity:.6; font-size:10px;">[${relationshipLabel(rel.relationship)} ${rel.relationship|0}]</span>
             `;
 
-            // Action buttons only on rows involving the player.
-            if (involvesPlayer && rel.state === 'war') {
-                const peaceBtn = document.createElement('button');
-                peaceBtn.textContent = `Peace w/ ${targetName}`;
-                peaceBtn.style.cssText = 'margin-left:5px; padding:2px 6px; font-size:11px;';
-                peaceBtn.onclick = () => callbacks.onDiplomacy && callbacks.onDiplomacy('proposePeace', target);
-                div.appendChild(peaceBtn);
-            } else if (involvesPlayer && rel.state === 'peace') {
-                const tradeBtn = document.createElement('button');
-                tradeBtn.textContent = `Trade w/ ${targetName}`;
-                tradeBtn.style.cssText = 'margin-left:5px; padding:2px 6px; font-size:11px;';
-                tradeBtn.onclick = () => callbacks.onDiplomacy && callbacks.onDiplomacy('proposeTrade', target);
-                div.appendChild(tradeBtn);
-
-                const warBtn = document.createElement('button');
-                warBtn.textContent = `War w/ ${targetName}`;
-                warBtn.style.cssText = 'margin-left:5px; padding:2px 6px; font-size:11px;';
-                warBtn.onclick = () => callbacks.onDiplomacy && callbacks.onDiplomacy('declareWar', target);
-                div.appendChild(warBtn);
+            // Action buttons only on rows involving the player. The available
+            // action set depends on the current state (see plan E5).
+            if (involvesPlayer) {
+                if (rel.state === 'war') {
+                    div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                } else if (rel.state === 'peace') {
+                    div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
+                    div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
+                    div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
+                } else if (rel.state === 'trade_pact') {
+                    div.appendChild(mkBtn(`Cancel Trade`, 'cancelTrade', target));
+                    div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
+                    div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
+                } else if (rel.state === 'alliance') {
+                    div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
+                }
             }
 
             els.diplomacyPanel.appendChild(div);
+        }
+
+        // Pending AI offers to the player, with Accept/Decline buttons.
+        const offers = (gameState.diplomacy && gameState.diplomacy.pendingOffers) || [];
+        const playerOffers = offers.map((o, i) => ({ o, i })).filter(x => x.o.to === PLAYER_FACTION);
+        if (playerOffers.length) {
+            const hdr = document.createElement('div');
+            hdr.style.cssText = 'margin-top:6px; font-weight:bold; font-size:12px;';
+            hdr.textContent = 'Pending offers:';
+            els.diplomacyPanel.appendChild(hdr);
+            for (const { o, i } of playerOffers) {
+                const fromName = fcOf(o.from).name || o.from;
+                const row = document.createElement('div');
+                row.style.cssText = 'margin:3px 0; padding:3px; border-left:3px solid #4488ff; font-size:11px;';
+                const kind = o.type === 'peace' ? 'Peace' : o.type === 'trade_pact' ? 'Trade Pact' : 'Alliance';
+                row.innerHTML = `${fromName} proposes <b>${kind}</b>`;
+                row.appendChild(mkBtn('Accept', 'acceptOffer', i));
+                row.appendChild(mkBtn('Decline', 'declineOffer', i));
+                els.diplomacyPanel.appendChild(row);
+            }
         }
     }
 

@@ -163,23 +163,22 @@ export function aiDecideWar(personality, powerRatio, relationship = 0) {
     return Math.random() < effectiveChance + relMod;
 }
 
-/** Process trade pact: exchange resources between factions each turn. */
+/** Process trade pact: both sides gain a mutual prosperity bonus each turn
+ *  (flat gold + production), scaled by the pact's tradeAmount. Unlike a pure
+ *  gold swap this is net-positive — trade makes both partners richer, so
+ *  signing pacts with peers is worthwhile. */
 export function processTradePacts(diploState, resources) {
     const messages = [];
     for (const [key, rel] of Object.entries(diploState.relations)) {
-        if (rel.state === DIPLOMACY_STATES.TRADE_PACT && rel.tradeAmount > 0) {
-            const [a, b] = key.split(':');
-            if (resources[a] && resources[b]) {
-                const amt = rel.tradeAmount;
-                if (resources[a].gold >= amt && resources[b].gold >= amt) {
-                    resources[a].gold -= amt;
-                    resources[b].gold += amt;
-                    resources[b].gold -= amt;
-                    resources[a].gold += amt;
-                    messages.push(`Trade pact: ${a} and ${b} exchanged ${amt} gold.`);
-                }
-            }
-        }
+        if (rel.state !== DIPLOMACY_STATES.TRADE_PACT) continue;
+        const [a, b] = key.split(':');
+        if (!resources[a] || !resources[b]) continue;
+        const amt = rel.tradeAmount || 5;
+        resources[a].gold = (resources[a].gold || 0) + amt;
+        resources[b].gold = (resources[b].gold || 0) + amt;
+        resources[a].production = (resources[a].production || 0) + 2;
+        resources[b].production = (resources[b].production || 0) + 2;
+        messages.push(`Trade pact: ${a} and ${b} each gain +${amt} gold, +2 production.`);
     }
     return messages;
 }
