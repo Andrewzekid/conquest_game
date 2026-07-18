@@ -1,0 +1,7 @@
+# Build/output dirs
+target/
+node_modules/
+
+# Editor / OS cruft
+.DS_Store
+*.log

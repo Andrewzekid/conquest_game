@@ -1,0 +1,169 @@
+/** Lords system: hero units with stats, abilities, leveling, governance, army command. */
+import { LORD_BASE_STATS, LORD_ABILITIES, LORD_XP_PER_KILL, LORD_XP_PER_LEVEL, LORD_RECRUIT_COST, LORD_CLASSES } from './config.js';
+
+let _lordId = 0;
+function nextLordId() { return ++_lordId; }
+
+const LORD_NAMES = [
+    'Aldric', 'Brenna', 'Cedric', 'Dara', 'Edmund', 'Fiona', 'Gareth',
+    'Helena', 'Ivan', 'Jora', 'Kael', 'Lyra', 'Magnus', 'Nora', 'Orin',
+    'Petra', 'Quinn', 'Ragnar', 'Sable', 'Thorin', 'Ursa', 'Vex', 'Wren', 'Yara'
+];
+const CLASS_KEYS = Object.keys(LORD_CLASSES);
+
+/** Create a new lord. A class (archetype) is assigned at birth — it gives a
+ *  passive army bonus and a unique icon. */
+export function createLord(owner, x, z, name, classKey) {
+    const cls = classKey && LORD_CLASSES[classKey] ? classKey : CLASS_KEYS[Math.floor(Math.random() * CLASS_KEYS.length)];
+    return {
+        id: nextLordId(),
+        name: name || LORD_NAMES[Math.floor(Math.random() * LORD_NAMES.length)],
+        owner,
+        x, z,
+        level: 1,
+        xp: 0,
+        stats: { ...LORD_BASE_STATS },
+        abilities: [],
+        class: cls,
+        governingCity: null,   // tileKey of city being governed, or null
+        army: [],              // array of unit ids this lord commands
+        hasMovedThisTurn: false
+    };
+}
+
+/** Award XP to a lord; level up if threshold reached. Returns log messages. */
+export function awardXP(lord, amount) {
+    lord.xp += amount;
+    const messages = [];
+    while (lord.xp >= LORD_XP_PER_LEVEL * lord.level) {
+        lord.xp -= LORD_XP_PER_LEVEL * lord.level;
+        lord.level++;
+        // Stat increase: +1 to a random stat each level
+        const stats = ['command', 'combat', 'governance'];
+        const pick = stats[Math.floor(Math.random() * stats.length)];
+        lord.stats[pick]++;
+        messages.push(`${lord.name} reached level ${lord.level}! ${pick} +1`);
+        // Unlock abilities
+        for (const [key, ab] of Object.entries(LORD_ABILITIES)) {
+            if (lord.level >= ab.unlockLevel && !lord.abilities.includes(key)) {
+                lord.abilities.push(key);
+                messages.push(`${lord.name} unlocked ability: ${ab.name}!`);
+            }
+        }
+    }
+    return messages;
+}
+
+/** Check if lord can be recruited (resources). */
+export function canRecruitLord(resources) {
+    return resources.gold >= LORD_RECRUIT_COST.gold && resources.food >= LORD_RECRUIT_COST.food;
+}
+
+/** Max units a lord can command: base 2 + command stat + class bonus. */
+export function maxArmySize(lord) {
+    if (!lord) return 0;
+    const cls = LORD_CLASSES[lord.class] || {};
+    let size = 2 + (lord.stats.command || 0);
+    if (cls.bonus && cls.bonus.extraCommand) size += cls.bonus.extraCommand;
+    return size;
+}
+
+/** Can this lord take another unit into its army? */
+export function canCommand(lord) {
+    return lord && lord.army.length < maxArmySize(lord);
+}
+
+/** Assign a unit to a lord's army (replaces the old single armyId). */
+export function assignArmy(lord, unitId) {
+    if (!lord) return;
+    lord.armyId = unitId; // legacy field kept for UI compatibility
+    if (!lord.army.includes(unitId)) lord.army.push(unitId);
+    lord.governingCity = null;
+}
+
+/** Remove a unit from any lord's army (call on unit death/reassign). */
+export function removeUnitFromArmies(lords, unitId) {
+    if (!lords) return;
+    for (const l of lords) {
+        const i = l.army ? l.army.indexOf(unitId) : -1;
+        if (i !== -1) l.army.splice(i, 1);
+        if (l.armyId === unitId) l.armyId = null;
+    }
+}
+
+/** Find the lord commanding a unit (army membership), else a lord on its tile. */
+export function findCommandingLord(lords, unit) {
+    if (!unit || !lords) return null;
+    for (const l of lords) {
+        if (l.owner === unit.owner && l.army && l.army.includes(unit.id)) return l;
+    }
+    for (const l of lords) {
+        if (l.owner === unit.owner && l.x === unit.x && l.z === unit.z) return l;
+    }
+    return null;
+}
+
+/** Class bonus a lord grants to every unit in its army: { attack, defense, siege }. */
+export function getLordClassBonus(lord) {
+    if (!lord || !lord.class) return { attack: 0, defense: 0, siege: 0 };
+    const b = (LORD_CLASSES[lord.class] || {}).bonus || {};
+    return {
+        attack: b.attack || 0,
+        defense: b.defense || 0,
+        siege: b.siege || 0
+    };
+}
+
+/** Combat bonus a lord gives to its own unit (its command/combat stats). */
+export function getLordCombatBonus(lord) {
+    if (!lord) return { attack: 0, defense: 0 };
+    return { attack: lord.stats.combat, defense: lord.stats.command };
+}
+
+/** Adjacency auras (Chebyshev radius 1): a lord's CLASS bonus (Warlord +atk,
+ *  Guardian +def, Grand Commander +atk/+def) is an area-of-effect that boosts
+ *  every friendly unit within 1 tile — plus RALLY (+atk) / TACTICIAN (+def)
+ *  abilities for lords that have unlocked them. */
+export function getAdjacentLordBonuses(lords, unit) {
+    const out = { attack: 0, defense: 0 };
+    if (!lords || !unit) return out;
+    for (const l of lords) {
+        if (l.owner !== unit.owner) continue;
+        if (Math.max(Math.abs(l.x - unit.x), Math.abs(l.z - unit.z)) > 1) continue;
+        // Class aura (radius-1 AoE).
+        const cb = (LORD_CLASSES[l.class] || {}).bonus || {};
+        if (cb.attack) out.attack += cb.attack;
+        if (cb.defense) out.defense += cb.defense;
+        // Ability auras.
+        if (l.abilities.includes('RALLY')) out.attack += 2;
+        if (l.abilities.includes('TACTICIAN')) out.defense += 1;
+    }
+    return out;
+}
+
+/** Does this lord project a visible AoE aura (class grants atk or def)? Used by
+ *  the renderer to draw the radius-1 ring. */
+export function hasLordAura(lord) {
+    if (!lord || !lord.class) return false;
+    const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
+    return !!(cb.attack || cb.defense);
+}
+
+/** Get siege bonus for a lord attacking a city (SIEGE_MASTER ability). */
+export function getLordSiegeBonus(lord) {
+    if (!lord) return 0;
+    return lord.abilities.includes('SIEGE_MASTER') ? 3 : 0;
+}
+
+/** Get governance yield multiplier for a city governed by this lord. */
+export function getLordGovernanceMultiplier(lord) {
+    if (!lord || !lord.governingCity) return 1.0;
+    let mult = 1.0 + lord.stats.governance * 0.1;
+    if (lord.abilities.includes('ADMINISTRATOR')) mult += 0.5;
+    return mult;
+}
+
+/** Assign a lord to govern a city (it steps down from leading an army). */
+export function assignGovernance(lord, tileKey) {
+    lord.governingCity = tileKey;
+}

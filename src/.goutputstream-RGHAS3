@@ -1,0 +1,169 @@
+/** Economy system: resource production, upkeep, trade, market, taxation. */
+import { TERRAIN, MARKET_RATES, TRADE_ROUTE_GOLD, STARVATION_ATTRITION, BUILDING_TYPE } from './config.js';
+import { getLordGovernanceMultiplier } from './lords.js';
+
+/**
+ * Collect resources from all owned tiles for a faction.
+ * @param tiles - Map<key, tile>
+ * @param owner - faction id
+ * @param resources - the faction's resource pool (mutated)
+ * @param buildings - Map<tileKey, buildingType[]>
+ * @param lords - array of lords (for governance bonus)
+ * @returns messages array
+ */
+export function collectResources(tiles, owner, resources, buildings, lords) {
+    const messages = [];
+    const ownedTiles = [];
+
+    for (const tile of tiles.values()) {
+        if (tile.owner === owner) {
+            ownedTiles.push(tile);
+        }
+    }
+
+    for (const tile of ownedTiles) {
+        const tileKey = `${tile.x},${tile.z}`;
+        const terrainData = TERRAIN[tile.terrain] || TERRAIN.PLAINS;
+        let amount = terrainData.amount;
+        let resType = terrainData.resource;
+
+        // Building bonuses
+        const tileBuildings = buildings.get(tileKey) || [];
+        for (const bType of tileBuildings) {
+            const bData = BUILDING_TYPE[bType];
+            if (bData && bData.bonus) {
+                for (const [res, bonus] of Object.entries(bData.bonus)) {
+                    if (res === resType) {
+                        amount += bonus;
+                    } else {
+                        resources[res] = (resources[res] || 0) + bonus;
+                    }
+                }
+            }
+        }
+
+        // City governance bonus
+        if (tile.terrain === 'CITY') {
+            const governor = lords.find(l => l.owner === owner && l.governingCity === tileKey);
+            if (governor) {
+                amount = Math.floor(amount * getLordGovernanceMultiplier(governor));
+            }
+            // City taxation: extra gold
+            resources.gold = (resources.gold || 0) + 5;
+        }
+
+        resources[resType] = (resources[resType] || 0) + amount;
+    }
+
+    return messages;
+}
+
+/**
+ * Process unit upkeep: deduct food/gold for each unit.
+ * Returns { starved: boolean, messages: [] }
+ */
+export function processUpkeep(units, owner, resources) {
+    const messages = [];
+    let totalFoodUpkeep = 0;
+    let totalGoldUpkeep = 0;
+
+    for (const unit of units.values()) {
+        if (unit.owner !== owner) continue;
+        const upkeep = unit.upkeep || { food: 2, gold: 1 };
+        totalFoodUpkeep += upkeep.food || 0;
+        totalGoldUpkeep += upkeep.gold || 0;
+    }
+
+    resources.food = (resources.food || 0) - totalFoodUpkeep;
+    resources.gold = (resources.gold || 0) - totalGoldUpkeep;
+
+    // Starvation check
+    let starved = false;
+    if (resources.food < 0) {
+        starved = true;
+        const deficit = Math.abs(resources.food);
+        resources.food = 0;
+        // Apply attrition to units
+        let attritionApplied = 0;
+        for (const unit of units.values()) {
+            if (unit.owner !== owner) continue;
+            if (attritionApplied >= deficit) break;
+            unit.hp -= STARVATION_ATTRITION;
+            attritionApplied += STARVATION_ATTRITION;
+            messages.push(`${unit.type} unit suffered ${STARVATION_ATTRITION} attrition from starvation!`);
+        }
+    }
+
+    return { starved, messages };
+}
+
+/**
+ * Sell resources at the market: convert wood/iron/food to gold.
+ * @param resources - faction resource pool (mutated)
+ * @param sales - { wood: 10, iron: 5 } amounts to sell
+ */
+export function sellAtMarket(resources, sales) {
+    const messages = [];
+    let goldGained = 0;
+
+    for (const [res, amount] of Object.entries(sales)) {
+        if (!MARKET_RATES[res]) continue;
+        if ((resources[res] || 0) < amount) {
+            messages.push(`Not enough ${res} to sell ${amount}.`);
+            continue;
+        }
+        resources[res] -= amount;
+        const gold = Math.floor(amount * MARKET_RATES[res]);
+        goldGained += gold;
+        messages.push(`Sold ${amount} ${res} for ${gold} gold.`);
+    }
+
+    resources.gold = (resources.gold || 0) + goldGained;
+    return messages;
+}
+
+/**
+ * Establish a trade route between two owned cities.
+ * Each turn, generates TRADE_ROUTE_GOLD for the owner.
+ */
+export function getTradeRouteIncome(tiles, owner, tradeRoutes) {
+    let total = 0;
+    for (const route of tradeRoutes) {
+        if (route.owner !== owner) continue;
+        const t1 = tiles.get(route.from);
+        const t2 = tiles.get(route.to);
+        if (t1 && t2 && t1.owner === owner && t2.owner === owner) {
+            total += TRADE_ROUTE_GOLD;
+        }
+    }
+    return total;
+}
+
+/**
+ * Count owned cities for a faction.
+ */
+export function countCities(tiles, owner) {
+    let count = 0;
+    for (const tile of tiles.values()) {
+        if (tile.owner === owner && tile.terrain === 'CITY') count++;
+    }
+    return count;
+}
+
+/**
+ * Count owned tiles for a faction.
+ */
+export function countTiles(tiles, owner) {
+    let count = 0;
+    for (const tile of tiles.values()) {
+        if (tile.owner === owner) count++;
+    }
+    return count;
+}
+
+/**
+ * Calculate the unit cap for a faction (5 per city).
+ */
+export function getUnitCap(tiles, owner) {
+    return countCities(tiles, owner) * 5;
+}

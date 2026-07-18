@@ -1,0 +1,14 @@
+import './config.js';
+import './map.js';
+import './unit.js';
+import './path.js';
+import './ai.js';
+import './lords.js';
+import './battle.js';
+import './renderer.js';
+import './ui.js';
+import './menus.js';
+import './turnmanager.js';
+import './game.js';
+import './save.js';
+console.log('All local imports resolve.');

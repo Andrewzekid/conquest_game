@@ -1,0 +1,98 @@
+/** Start menu (choose faction + map) and pause menu. Overlays live in index.html. */
+import { FACTION_DEFS, FACTION_IDS } from './faction.js';
+import { MAP_SIZES, FACTIONS } from './config.js';
+import { sfx, unlockAudio } from './sound.js';
+import { loadSavedExists } from './save.js';
+
+let _selectedFaction = 'crimson';
+let _onStart = null;
+
+function el(id) { return document.getElementById(id); }
+
+function renderFactionCards() {
+    const wrap = el('start-factions');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    for (const id of FACTION_IDS) {
+        const d = FACTION_DEFS[id];
+        const card = document.createElement('div');
+        card.className = 'faction-card' + (id === _selectedFaction ? ' selected' : '');
+        card.dataset.fid = id;
+        const roster = d.roster.map(r => r[0] + r.toLowerCase().slice(1)).join(', ');
+        card.innerHTML = `
+            <div class="fc-emoji">${d.emoji}</div>
+            <div class="fc-name">${d.name}</div>
+            <div class="fc-line"><b>King:</b> ${d.king.name}</div>
+            <div class="fc-line"><b>Active:</b> ${d.king.active.name} — ${d.king.active.desc}</div>
+            <div class="fc-line"><b>Passive:</b> ${d.passive.desc}</div>
+            <div class="fc-line"><b>Roster:</b> ${roster}</div>
+        `;
+        card.onclick = () => {
+            _selectedFaction = id;
+            sfx.click();
+            renderFactionCards();
+        };
+        wrap.appendChild(card);
+    }
+}
+
+/** Show the start menu; calls onStart({ playerFactionId, aiFactionIds, mapSize }). */
+export function showStartMenu(onStart) {
+    _onStart = onStart;
+    unlockAudio();
+    const menu = el('start-menu');
+    if (!menu) { if (onStart) onStart({ playerFactionId: 'crimson', aiFactionIds: null, mapSize: 'medium' }); return; }
+
+    // Pre-fill size select.
+    const sizeSel = el('start-size');
+    if (sizeSel) sizeSel.value = 'medium';
+
+    const hasSave = loadSavedExists();
+    const cont = el('start-continue');
+    if (cont) cont.style.display = hasSave ? 'inline-block' : 'none';
+
+    renderFactionCards();
+    menu.style.display = 'flex';
+
+    const startBtn = el('start-go');
+    if (startBtn) startBtn.onclick = () => {
+        sfx.click();
+        const mapSize = (sizeSel && sizeSel.value) || 'medium';
+        menu.style.display = 'none';
+        // Build AI faction ids: the other factions, picked from the roster
+        // (3 opponents by default, or fewer if not enough remain).
+        const others = FACTION_IDS.filter(id => id !== _selectedFaction);
+        const aiFactionIds = others.slice(0, 3);
+        if (_onStart) _onStart({ playerFactionId: _selectedFaction, aiFactionIds, mapSize });
+    };
+    if (cont) cont.onclick = () => { sfx.click(); menu.style.display = 'none'; if (_onStart) _onStart({ load: true }); };
+}
+
+let _pauseState = { onResume: null, onSave: null, onLoad: null, onMenu: null, muted: false };
+
+export function showPauseMenu(handlers) {
+    _pauseState = { ...handlers };
+    const menu = el('pause-menu');
+    if (!menu) return;
+    const mutedBtn = el('pause-mute');
+    if (mutedBtn) mutedBtn.textContent = _pauseState.muted ? 'Unmute' : 'Mute';
+    menu.style.display = 'flex';
+}
+
+export function hidePauseMenu() {
+    const menu = el('pause-menu');
+    if (menu) menu.style.display = 'none';
+}
+
+export function bindPauseButtons(handlers) {
+    const wire = (id, fn) => { const b = el(id); if (b) b.onclick = fn; };
+    wire('pause-resume', () => { sfx.click(); handlers.onResume && handlers.onResume(); });
+    wire('pause-save', () => { sfx.click(); handlers.onSave && handlers.onSave(); });
+    wire('pause-load', () => { sfx.click(); handlers.onLoad && handlers.onLoad(); });
+    wire('pause-menu-btn', () => { sfx.click(); handlers.onMenu && handlers.onMenu(); });
+    wire('pause-mute', () => {
+        handlers.onToggleMute && handlers.onToggleMute();
+        const b = el('pause-mute');
+        if (b) b.textContent = handlers.isMuted ? 'Unmute' : 'Mute';
+    });
+}

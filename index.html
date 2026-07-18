@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project Conquest</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+        #ui-top {
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 60px;
+            background: rgba(0,0,0,0.85);
+            color: white;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px;
+            border-bottom: 2px solid #444;
+            z-index: 10;
+        }
+        .resource-bar { display: flex; gap: 20px; flex-wrap: wrap; }
+        .resource { font-weight: bold; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+        .res-gold { color: #ffd700; }
+        .res-food { color: #7cfc00; }
+        .res-wood { color: #228b22; }
+        .res-iron { color: #aaa; }
+        .res-prod { color: #4488ff; }
+
+        #btn-end-turn {
+            background: #b22222; color: white; border: none;
+            padding: 10px 20px; font-size: 16px; font-weight: bold;
+            cursor: pointer; border-radius: 4px; transition: background 0.2s;
+        }
+        #btn-end-turn:hover { background: #ff4500; }
+        #btn-end-turn:active { transform: translateY(2px); }
+
+        #ui-bottom {
+            position: absolute; bottom: 20px; left: 20px;
+            color: white; background: rgba(0,0,0,0.7);
+            padding: 15px; border-radius: 8px; pointer-events: none;
+            border-left: 4px solid #ffd700; max-width: 320px;
+        }
+        #ui-bottom h2 { margin: 0 0 10px 0; font-size: 18px; }
+        #unit-info { margin-top: 8px; font-size: 13px; color: #9cf; }
+
+        .side-panel {
+            position: absolute; top: 70px; width: 220px;
+            color: white; background: rgba(0,0,0,0.75);
+            padding: 0; border-radius: 8px; z-index: 10;
+            max-height: 80vh; display: flex; flex-direction: column;
+        }
+        .panel-drag-handle {
+            cursor: grab; padding: 6px 10px; font-weight: bold; font-size: 13px;
+            border-bottom: 1px solid #444; user-select: none; flex: 0 0 auto;
+        }
+        .panel-drag-handle:active { cursor: grabbing; }
+        .panel-body { padding: 10px; overflow-y: auto; }
+        #build-menu { right: 20px; border-left: 4px solid #4488ff; }
+        #diplomacy-panel { right: 250px; border-left: 4px solid #ffaa00; }
+        #lord-panel { right: 480px; border-left: 4px solid #ffd700; }
+        #combat-log {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 280px; max-height: 200px; overflow-y: auto;
+            color: white; background: rgba(0,0,0,0.75);
+            padding: 12px; border-radius: 8px; z-index: 10;
+            border-left: 4px solid #888; font-size: 12px;
+        }
+        .side-panel h3 { margin: 4px 0; font-size: 14px; }
+        canvas { display: block; }
+        #game-over {
+            display: none;
+            position: fixed; inset: 0;
+            align-items: center; justify-content: center;
+            flex-direction: column; gap: 16px;
+            color: white; font-size: 28px; font-weight: bold;
+            text-align: center; z-index: 100;
+        }
+        #game-over button {
+            font-size: 16px; padding: 10px 24px; cursor: pointer;
+            border: none; border-radius: 6px; background: #fff; color: #111;
+        }
+
+        /* --- Overlays: start menu + pause menu --- */
+        .overlay {
+            display: none;
+            position: fixed; inset: 0; z-index: 200;
+            background: rgba(8,10,18,0.94);
+            color: #fff; font-family: inherit;
+            align-items: center; justify-content: center; flex-direction: column;
+            gap: 18px; padding: 30px; overflow-y: auto;
+        }
+        .overlay h1 { margin: 0; font-size: 34px; letter-spacing: 2px; color: #ffd700; }
+        .overlay h2 { margin: 0; font-size: 18px; color: #9ab; font-weight: normal; }
+        .overlay .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
+        .overlay button.big {
+            font-size: 18px; padding: 12px 30px; cursor: pointer;
+            border: none; border-radius: 6px; background: #b22222; color: #fff;
+            font-weight: bold;
+        }
+        .overlay button.big:hover { background: #ff4500; }
+        .overlay button.sec {
+            font-size: 14px; padding: 8px 16px; cursor: pointer;
+            border: 1px solid #555; border-radius: 6px; background: #2a2f3a; color: #ddd;
+        }
+        .overlay select { font-size: 15px; padding: 6px 10px; background: #1c2230; color: #fff; border: 1px solid #444; border-radius: 4px; }
+        #start-factions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 1100px; }
+        .faction-card {
+            width: 200px; padding: 12px; border-radius: 8px; cursor: pointer;
+            background: #161a26; border: 2px solid #333; transition: border-color 0.15s, transform 0.1s;
+        }
+        .faction-card:hover { transform: translateY(-3px); }
+        .faction-card.selected { border-color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,0.4); }
+        .fc-emoji { font-size: 30px; }
+        .fc-name { font-size: 16px; font-weight: bold; margin: 4px 0 6px; }
+        .fc-line { font-size: 11px; color: #bcd; line-height: 1.4; }
+        .fc-line b { color: #ffd700; }
+        #pause-menu { background: rgba(8,10,18,0.88); }
+
+        #btn-mute {
+            background: #2a2f3a; color: #ddd; border: 1px solid #555;
+            padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 14px;
+        }
+        #btn-mute:hover { background: #3a4150; }
+    </style>
+</head>
+<body>
+    <div id="ui-top">
+        <div class="resource-bar">
+            <div class="resource res-gold">💰 Gold: <span id="res-gold">100</span></div>
+            <div class="resource res-food">🌾 Food: <span id="res-food">100</span></div>
+            <div class="resource res-wood">🪵 Wood: <span id="res-wood">0</span></div>
+            <div class="resource res-iron">⛓️ Iron: <span id="res-iron">0</span></div>
+            <div class="resource res-prod">⚙️ Prod: <span id="res-production">0</span></div>
+            <div class="resource" style="color: #fff; margin-left: 20px;">Turn: <span id="turn-count">1</span></div>
+            <div class="resource" style="color: #ffaa00;">Phase: <span id="phase-indicator">PLAYER</span></div>
+        </div>
+        <button id="btn-end-turn">End Turn</button>
+        <button id="btn-mute" title="Toggle sound">🔊</button>
+    </div>
+
+    <!-- Start menu overlay -->
+    <div id="start-menu" class="overlay">
+        <h1>PROJECT CONQUEST</h1>
+        <h2>Choose your faction and battlefield</h2>
+        <div id="start-factions"></div>
+        <div class="row">
+            <label style="font-size:14px; color:#9ab;">Map size:</label>
+            <select id="start-size">
+                <option value="small">Small (28×28)</option>
+                <option value="medium" selected>Medium (40×40)</option>
+                <option value="large">Large (52×52)</option>
+            </select>
+        </div>
+        <div class="row">
+            <button id="start-continue" class="sec" style="display:none;">Continue Last Save</button>
+            <button id="start-go" class="big">Start Game</button>
+        </div>
+    </div>
+
+    <!-- Pause menu overlay -->
+    <div id="pause-menu" class="overlay">
+        <h1>PAUSED</h1>
+        <button id="pause-resume" class="big">Resume</button>
+        <button id="pause-save" class="sec">Save Game</button>
+        <button id="pause-load" class="sec">Load Game</button>
+        <button id="pause-mute" class="sec">Mute</button>
+        <button id="pause-menu-btn" class="sec">Main Menu</button>
+    </div>
+
+    <div id="ui-bottom">
+        <h2 style="margin: 0 0 10px 0; font-size: 18px;">Province Intel</h2>
+        <div id="info">Hover over a tile</div>
+        <div id="ownership" style="margin-top: 5px; font-style: italic; color: #ccc;"></div>
+        <div id="unit-info"></div>
+    </div>
+
+    <div id="lord-panel" class="side-panel">
+        <div class="panel-drag-handle">lords ⠿</div>
+        <div id="lord-panel-body" class="panel-body"></div>
+    </div>
+    <div id="diplomacy-panel" class="side-panel">
+        <div class="panel-drag-handle">diplomacy ⠿</div>
+        <div id="diplomacy-panel-body" class="panel-body"></div>
+    </div>
+    <div id="build-menu" class="side-panel">
+        <div class="panel-drag-handle">build ⠿</div>
+        <div id="build-menu-body" class="panel-body"></div>
+    </div>
+    <div id="combat-log"></div>
+
+    <div id="game-over">
+        <div id="game-over-text"></div>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script>
+        // Make any element with a .panel-drag-handle draggable by its handle.
+        (function () {
+            document.addEventListener('mousedown', (e) => {
+                const handle = e.target.closest('.panel-drag-handle');
+                if (!handle) return;
+                const panel = handle.parentElement;
+                const rect = panel.getBoundingClientRect();
+                const offsetX = e.clientX - rect.left;
+                const offsetY = e.clientY - rect.top;
+                // Switch from right-anchored to left/top positioning so it follows the cursor.
+                panel.style.left = rect.left + 'px';
+                panel.style.top = rect.top + 'px';
+                panel.style.right = 'auto';
+                panel.style.opacity = '0.9';
+                function move(ev) {
+                    panel.style.left = (ev.clientX - offsetX) + 'px';
+                    panel.style.top = (ev.clientY - offsetY) + 'px';
+                }
+                function up() {
+                    panel.style.opacity = '1';
+                    document.removeEventListener('mousemove', move);
+                    document.removeEventListener('mouseup', up);
+                }
+                document.addEventListener('mousemove', move);
+                document.addEventListener('mouseup', up);
+                e.preventDefault();
+            });
+        })();
+    </script>
+
+    <script type="module">
+        import { Game } from './src/game.js';
+        import { showStartMenu, bindPauseButtons } from './src/menus.js';
+
+        let game = null;
+        // Wire pause-menu buttons once; the handlers route through the live game.
+        bindPauseButtons({
+            onResume: () => { if (game && game.resume) game.resume(); },
+            onSave:   () => { if (game && game.save) game.save(); },
+            onLoad:   () => { if (game && game.load) game.load(); },
+            onMenu:   () => { if (game && game.toMenu) game.toMenu(); },
+            onToggleMute: () => { if (game && game.toggleMute) game.toggleMute(); },
+            isMuted: false
+        });
+
+        function startGame(opts) {
+            game = new Game(opts, {
+                onPause: () => {},
+                onMuteChanged: (m) => {
+                    const btn = document.getElementById('btn-mute');
+                    if (btn) btn.textContent = m ? '🔇' : '🔊';
+                }
+            });
+        }
+
+        // Mute button in the top bar.
+        document.getElementById('btn-mute').addEventListener('click', () => {
+            if (game && game.toggleMute) game.toggleMute();
+        });
+
+        // Esc toggles the pause menu.
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && game && !game.gameState.gameOver) {
+                game.togglePause();
+            }
+        });
+
+        showStartMenu(startGame);
+    </script>
+</body>
+</html>
