@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -72,15 +72,19 @@ export function isEncircled(defender, units, tiles) {
  * @param structures - optional Map<tileKey, {type, owner}> of engineer-built
  *   structures; a friendly FORTIFICATION on the defender's tile grants its
  *   defenseBonus.
+ * @param defenderCityBreached - true when the defender stands on a CITY tile
+ *   whose fortification is 0: the city's terrain and building (walls) defense
+ *   bonuses no longer apply — the defenses are down.
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
     const atkStats = combatStats(attackerUnit);
     const defStats = combatStats(defenderUnit);
-    const terrainBonus = TERRAIN_BONUS[terrain] || TERRAIN_BONUS.PLAINS;
+    // A breached city gives no defensive terrain bonus — treat it as open ground.
+    const terrainBonus = defenderCityBreached ? TERRAIN_BONUS.PLAINS : (TERRAIN_BONUS[terrain] || TERRAIN_BONUS.PLAINS);
     // Naval units defending on water/river are in their element — no exposed-
     // crossing penalty (the -2 WATER/RIVER defense bonus doesn't apply to ships).
     const defTerrainBonus = (defStats.naval && (terrain === 'WATER' || terrain === 'RIVER'))
@@ -124,7 +128,10 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 
     // Defender defense: terrain + buildings + structures + lord stats + class + adjacent auras.
     const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
-    const buildingDef = buildings ? getBuildingDefenseBonus(tileKey, buildings) : 0;
+    // Walls/buildings only protect while the city stands — a breached city's
+    // building defense bonus is gone too.
+    const buildingDef = (buildings && !defenderCityBreached) ? getBuildingDefenseBonus(tileKey, buildings) : 0;
+    if (defenderCityBreached) messages.push(`The city is breached — its defenses are down!`);
     // Engineer-built FORTIFICATION on the defender's tile (must belong to the
     // defender's faction — structures of the attacker don't help the defender).
     const fort = (structures && structures.get(tileKey)) || null;
@@ -175,10 +182,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         return { messages, defenderDied: true, attackerDied: false, damageToDefender };
     }
 
-    // --- Defender counter-attack (only if melee, not encircled, and survived) ---
-    // Ranged units (and lords, who are melee) don't counter-attack when attacked at melee range.
-    // Encircled defenders cannot counter-attack (they are surrounded).
-    if (!defStats.ranged && !encircled) {
+    // --- Defender counter-attack ---
+    // Only a melee defender counter-attacks, and only against a melee attacker:
+    // a unit being shot from range cannot strike back, and ranged defenders
+    // don't counter at melee. Encircled defenders cannot counter-attack (they
+    // are surrounded). Counter-attacks are weaker than full attacks.
+    if (!defStats.ranged && !atkStats.ranged && !encircled) {
         let defMultiplier = 1.0;
         if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
             defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;
@@ -187,7 +196,7 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 
         const effectiveAttackDef = (defenderUnit.attack ?? defStats.attack) * defMultiplier + defLordBonus.attack;
         const effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
-        const damageToAttacker = Math.max(1, Math.floor(effectiveAttackDef - effectiveDefenseAtk * 0.3));
+        const damageToAttacker = Math.max(1, Math.floor((effectiveAttackDef - effectiveDefenseAtk * 0.3) * COUNTER_ATTACK_MULTIPLIER));
         attackerUnit.hp -= damageToAttacker;
         messages.push(`${combatName(defenderUnit)} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);
 
@@ -274,7 +283,7 @@ export function processLoyalty(tiles, owner) {
  *
  * Returns { defenderDied, attackerDied, damageToDefender, damageToAttacker }.
  */
-export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null) {
+export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false) {
     if (!attackerUnit || !defenderUnit) {
         return { defenderDied: false, attackerDied: false, damageToDefender: 0, damageToAttacker: 0 };
     }
@@ -290,7 +299,7 @@ export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord
     const cloneLord = (l) => l
         ? { ...l, stats: { ...(l.stats || {}) }, abilities: [...(l.abilities || [])], army: [...(l.army || [])] }
         : null;
-    const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled, structures);
+    const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled, structures, defenderCityBreached);
     return {
         defenderDied: result.defenderDied,
         attackerDied: result.attackerDied,

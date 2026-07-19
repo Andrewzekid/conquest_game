@@ -1007,7 +1007,8 @@ export class Game {
         const defenderLord = defender._isLord ? null : findCommandingLord(this.gameState.lords, defender);
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
         result.messages.forEach(m => this.log(m));
         sfx.attack();
 
@@ -1090,7 +1091,8 @@ export class Game {
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
         const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
         const result = resolveCombat(atk, def, terrain, null, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
         result.messages.forEach(m => this.log(m));
         sfx.attack();
         this._playAttackAnimation(atk, def);
@@ -1223,7 +1225,8 @@ export class Game {
         const attackerLord = findCommandingLord(this.gameState.lords, attacker);
         const defenderLord = findCommandingLord(this.gameState.lords, defender);
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
         result.messages.forEach(m => this.log(m));
         // Restore original attack
         attacker.attack = originalAttack;
@@ -2985,7 +2988,8 @@ export class Game {
         // adjacent at-war enemy (unit or exposed lord) if it has one.
         this._aiLordAttack(faction);
 
-        const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy);
+        const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy,
+            this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures);
 
         // AI king: activate when off cooldown (simple heuristic).
         if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && Math.random() < 0.5) {
@@ -3086,7 +3090,8 @@ export class Game {
                         const attackerLord = findCommandingLord(this.gameState.lords, attacker);
                         const defenderLord = findCommandingLord(this.gameState.lords, defender);
                         const result = resolveCombat(attacker, defender, terrain,
-                            attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+                            attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
+                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
                         result.messages.forEach(m => this.log(m));
                         attacker.hasAttackedThisTurn = true;
                         this._playAttackAnimation(attacker, defender);
@@ -3107,7 +3112,9 @@ export class Game {
                 case 'capture': {
                     const unit = this.gameState.units.get(action.unitId);
                     const tile = this.tiles.get(action.tileKey);
-                    if (unit && tile && tile.terrain === 'CITY' && pool.gold >= CAPTURE_COST) {
+                    // Ownership re-checked: another unit may have taken the city
+                    // earlier in this same action loop.
+                    if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction && pool.gold >= CAPTURE_COST) {
                         pool.gold -= CAPTURE_COST;
                         captureCityTerritory(this.tiles, tile, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
                         // Garrison the capturing unit on the city tile.
@@ -3199,6 +3206,55 @@ export class Game {
                     this.log(`${factionName}: engineer started ${sdef.name} at [${tile.x}, ${tile.z}].`);
                     break;
                 }
+                case 'board': {
+                    // An AI land unit boards an orthogonally-adjacent friendly
+                    // transport (mirrors the player's handleBoard, no UI).
+                    const unit = this.gameState.units.get(action.unitId);
+                    const transport = this.gameState.units.get(action.transportId);
+                    if (!unit || !transport || unit.owner !== faction || transport.owner !== faction) break;
+                    if (transport.type !== 'TRANSPORT' || unit.boarded) break;
+                    const ndef = UNIT_TYPE[unit.type];
+                    if (!ndef || ndef.naval) break;
+                    const cap = UNIT_TYPE.TRANSPORT.capacity || 2;
+                    if (((transport.cargo || []).length) >= cap) break;
+                    if (Math.abs(unit.x - transport.x) + Math.abs(unit.z - transport.z) !== 1) break;
+                    if (!transport.cargo) transport.cargo = [];
+                    transport.cargo.push(unit.id);
+                    unit.boarded = transport.id;
+                    unit.x = transport.x; unit.z = transport.z;
+                    unit.hasMovedThisTurn = true;
+                    unit.hasAttackedThisTurn = true;
+                    this.log(`${factionName}: ${UNIT_TYPE[unit.type].name} boarded a transport.`);
+                    break;
+                }
+                case 'disembark': {
+                    // An AI transport unloads one carried unit onto an adjacent
+                    // passable land tile (mirrors handleDisembark, no UI).
+                    const transport = this.gameState.units.get(action.unitId);
+                    if (!transport || transport.owner !== faction || transport.type !== 'TRANSPORT') break;
+                    if (!transport.cargo || transport.cargo.length === 0) break;
+                    let dest = null;
+                    for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                        const t = this.tiles.get(`${transport.x + dx},${transport.z + dz}`);
+                        if (!t || !isPassable(t)) continue;
+                        let blocked = false;
+                        for (const u of this.gameState.units.values()) {
+                            if (!u.boarded && u.x === t.x && u.z === t.z) { blocked = true; break; }
+                        }
+                        if (!blocked) { dest = t; break; }
+                    }
+                    if (!dest) break;
+                    const unitId = transport.cargo.shift();
+                    const unit = this.gameState.units.get(unitId);
+                    if (!unit) break;
+                    unit.boarded = false;
+                    unit.x = dest.x; unit.z = dest.z;
+                    unit.hasMovedThisTurn = true;
+                    unit.hasAttackedThisTurn = true;
+                    this._checkFallTrap(unit);
+                    this.log(`${factionName}: ${UNIT_TYPE[unit.type].name} disembarked at [${dest.x}, ${dest.z}].`);
+                    break;
+                }
                 case 'charge': {
                     // AI cavalry charge — mirrors handleCharge for an AI faction.
                     const attacker = this.gameState.units.get(action.fromId);
@@ -3220,7 +3276,8 @@ export class Game {
                     const attackerLord = findCommandingLord(this.gameState.lords, attacker);
                     const defenderLord = findCommandingLord(this.gameState.lords, defender);
                     const result = resolveCombat(attacker, defender, terrain,
-                        attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+                        attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
+                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
                     attacker.attack = originalAttack;
                     result.messages.forEach(m => this.log(m));
                     attacker.hasAttackedThisTurn = true;

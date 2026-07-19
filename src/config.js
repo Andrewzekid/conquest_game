@@ -191,6 +191,12 @@ export const AMBUSH_DEFENSE_BONUS = 2;    // bonus defense when ambushed unit co
 // positional mechanic (surround the enemy), symmetric for player and AI.
 export const ENCIRCLEMENT_DEFENSE_PENALTY = 2;
 
+// --- Counter-attacks ---
+// Only melee defenders counter-attack, and only against melee attackers — a
+// unit being shot from range cannot strike back. Counter-attacks are also
+// weaker than full attacks (the defender is reacting, not pressing).
+export const COUNTER_ATTACK_MULTIPLIER = 0.6;
+
 // --- Cavalry Charge ---
 // Cavalry (and Cataphract) units can charge an adjacent enemy, moving onto the
 // enemy's tile and attacking with a bonus. After charging, the unit cannot move
