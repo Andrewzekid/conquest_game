@@ -91,10 +91,14 @@ export function showStartMenu(onStart) {
         sfx.click();
         const mapSize = (sizeSel && sizeSel.value) || 'medium';
         menu.style.display = 'none';
-        // Build AI faction ids based on player count
-        const aiCount = _playerCount - 1;
+        // Build AI faction ids based on player count.
+        // In spectate mode there is no human player, so EVERY slot (including
+        // slot 0) is an AI and needs its own faction def. Using playerCount-1
+        // left the last slot with no faction → it fell back to 'crimson',
+        // giving Crimson (and the selected faction) two kings.
+        const aiCount = _spectateMode ? _playerCount : _playerCount - 1;
         // In spectate mode, the selected faction is irrelevant; use a stable
-        // list of factions so slot 0 is the observer slot.
+        // list of factions so every slot gets a distinct def.
         const others = _spectateMode
             ? FACTION_IDS.slice()
             : FACTION_IDS.filter(id => id !== _selectedFaction);

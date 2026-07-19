@@ -94,6 +94,15 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 unit.chargeExhausted -= 1;
             }
         }
+        // Fall-trap stun: a unit that triggered an enemy fall trap loses its
+        // next turn (cannot move or attack), then the stun clears.
+        for (const unit of gameState.units.values()) {
+            if (unit.stunnedTurns && unit.stunnedTurns > 0) {
+                unit.hasMovedThisTurn = true;
+                unit.hasAttackedThisTurn = true;
+                unit.stunnedTurns -= 1;
+            }
+        }
         // Reset lord per-turn flags (lords/kings can move and attack once per
         // turn, like units) and slowly regenerate their HP between battles.
         if (gameState.lords) {

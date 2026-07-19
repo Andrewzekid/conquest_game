@@ -59,6 +59,8 @@ export class GameRenderer {
         this.scene.add(this.auraGroup);
         this.bridgeGroup = new THREE.Group(); // bridges over rivers
         this.scene.add(this.bridgeGroup);
+        this.structureGroup = new THREE.Group(); // engineer-built structures (spikes/fortifications/traps)
+        this.scene.add(this.structureGroup);
         this.effectsGroup = new THREE.Group(); // transient VFX (AOE impact rings, projectiles)
         this.scene.add(this.effectsGroup);
         this._effects = [];   // active transient effects: { obj, born, life, kind }
@@ -1030,6 +1032,55 @@ export class GameRenderer {
             this.bridgeGroup.add(group);
         }
     }
+
+    /** A small prop marking an engineer-built structure on a tile. */
+    makeStructureProp(type) {
+        const g = new THREE.Group();
+        if (type === 'SPIKES') {
+            const mat = new THREE.MeshPhongMaterial({ color: 0x8a5a2b });
+            for (const [ox, oz] of [[-0.18, -0.18], [0.18, -0.18], [-0.18, 0.18], [0.18, 0.18], [0, 0]]) {
+                const spike = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.3, 5), mat);
+                spike.position.set(ox, 0.22, oz);
+                g.add(spike);
+            }
+            g.add(this.makeIconSprite('🦔', 0.4, 0.55));
+        } else if (type === 'FORTIFICATION') {
+            const mat = new THREE.MeshPhongMaterial({ color: 0x7a7a82 });
+            const wall = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.28, 0.16), mat);
+            wall.position.y = 0.2; g.add(wall);
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, 0.7), mat);
+            wall2.position.y = 0.2; g.add(wall2);
+            g.add(this.makeIconSprite('🧱', 0.4, 0.55));
+        } else { // FALL_TRAP
+            const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 10),
+                new THREE.MeshPhongMaterial({ color: 0x2a1f14 }));
+            pit.position.y = 0.12; g.add(pit);
+            g.add(this.makeIconSprite('🪤', 0.4, 0.5));
+        }
+        return g;
+    }
+
+    // --- Engineer structures (spikes / fortifications / fall traps). ---
+    // Fall traps are hidden from other factions (a trap you can see is useless);
+    // in spectate mode everything is shown.
+    renderStructures(gameState) {
+        if (!this.structureGroup) return;
+        this.structureGroup.clear();
+        const structures = gameState.structures;
+        if (!structures || !structures.size) return;
+        const visible = gameState.visible || null;
+        for (const [key, s] of structures) {
+            const tile = gameState.tiles.get(key);
+            if (!tile) continue;
+            if (s.type === 'FALL_TRAP' && s.owner !== PLAYER_FACTION && visible) continue;
+            if (tile.owner !== PLAYER_FACTION && visible && !visible.has(key)) continue;
+            const [bx, bz] = key.split(',').map(Number);
+            const baseY = (this.tileHeights.get(key) || 0) + 0.1;
+            const prop = this.makeStructureProp(s.type);
+            prop.position.set(bx - GRID_SIZE / 2, baseY, bz - GRID_SIZE / 2);
+            this.structureGroup.add(prop);
+        }
+    }
     renderAuras(gameState) {
         this.auraGroup.clear();
         const visible = gameState.visible || null;
@@ -1201,5 +1252,6 @@ export class GameRenderer {
         this.renderGoalMarkers(gameState);
         this.renderAuras(gameState);
         this.renderBridges(gameState);
+        this.renderStructures(gameState);
     }
 }

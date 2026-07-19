@@ -59,11 +59,14 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         resources.production = (resources.production || 0) + 2 * cl;
         // Cities are population centers: they produce a little food (hinterland
         // foraging), wood (timber yards), and iron (recycling/smelting scrap)
-        // by default, scaling weakly with level.
-        // Food is intentionally scarce — farms and fertile terrain matter.
+        // by default. Wood and iron scale with the city's INFLUENCE radius
+        // (grows as the city levels up), so a small outpost yields a trickle
+        // and a sprawling capital yields more. Food is intentionally scarce —
+        // farms and fertile terrain matter.
+        const influence = cityRadius(tile);
         resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
-        resources.wood = (resources.wood || 0) + 1 + cl;
-        resources.iron = (resources.iron || 0) + Math.floor(cl / 2);
+        resources.wood = (resources.wood || 0) + 1 + influence;
+        resources.iron = (resources.iron || 0) + influence;
         // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
         applyBuildingBonuses(tileKey, tile, buildings, resources);
     }

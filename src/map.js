@@ -437,8 +437,11 @@ export function getAdjacentTiles(tiles, x, z) {
  * capturer. Unowned tiles and tiles of the city's previous owner are flipped;
  * tiles of other factions are left untouched. Returns messages array.
  * Only logs major news (city conquest) to global chat.
+ * `structures` (optional Map<tileKey, {type, owner}>): engineer-built
+ * structures on flipped tiles are destroyed — the enemy dismantles the old
+ * owner's traps/fortifications when taking the tile.
  */
-export function captureCityTerritory(tiles, cityTile, newOwner) {
+export function captureCityTerritory(tiles, cityTile, newOwner, structures = null) {
     const messages = [];
     const oldOwner = cityTile.owner;
     cityTile.owner = newOwner;
@@ -466,6 +469,16 @@ export function captureCityTerritory(tiles, cityTile, newOwner) {
                 t.owner = newOwner;
                 t.loyalty = 3;
                 claimed++;
+            }
+        }
+    }
+    // The conqueror dismantles any defensive structures left by the old owner.
+    if (structures && structures.size) {
+        for (const [skey, s] of [...structures]) {
+            const st = tiles.get(skey);
+            if (st && st.owner === newOwner && s.owner !== newOwner) {
+                structures.delete(skey);
+                messages.push(`The enemy ${s.type === 'FALL_TRAP' ? 'fall trap' : s.type === 'SPIKES' ? 'spikes' : 'fortification'} at [${st.x}, ${st.z}] was dismantled.`);
             }
         }
     }

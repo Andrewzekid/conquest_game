@@ -1,7 +1,8 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
          SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
-         GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS } from './config.js';
+         GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
+         EXTRA_UNITS, STRUCTURE_COST } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { canAttack } from './diplomacy.js';
@@ -37,13 +38,17 @@ import { findCommandingLord } from './lords.js';
  * @param diploState - diplomacy state (used to respect peace/trade/alliance:
  *                     the AI only attacks factions it is at war with)
  */
-export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null) {
+export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null) {
     const actions = [];
-    const myUnits = [...units.values()].filter(u => u.owner === owner);
+    const myUnits = [...units.values()].filter(u => u.owner === owner && !u.boarded);
     let res = { ...resources };
     buildings = buildings || new Map();
     influence = influence || null;
+    structures = structures || new Map();
     const roster = (factionDef && factionDef.roster) || ['INFANTRY', 'ARCHER', 'CAVALRY', 'ARTILLERY'];
+    // Every faction can also train the shared EXTRA_UNITS (cavalry, longbowmen,
+    // medics, …) — without them most factions never field any cavalry.
+    const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
 
     /** Only factions at war with `owner` are valid targets. */
     const isAtWar = (other) => !diploState || canAttack(diploState, owner, other);
@@ -56,6 +61,52 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const hasBarracks = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('BARRACKS'));
     const trainCount = () => actions.filter(a => a.type === 'train').length;
     const capRoom = () => myUnits.length + trainCount() < AI_MAX_UNITS;
+
+    // `moved` tracks tiles claimed this turn (avoids two units stacking on the
+    // same destination); `acted` tracks unit ids that already have an action.
+    const moved = new Set();
+    const acted = new Set();
+
+    // Landmass labeling (continents/islands separated by WATER). Drives island
+    // logic: harbor priority, transport ferrying, settler found-spot filtering.
+    const land = computeLandmasses(tiles);
+    const firstCity = owned.find(t => t.terrain === 'CITY');
+    const homeMass = firstCity ? land.idOf.get(`${firstCity.x},${firstCity.z}`) : null;
+    const homeMassSize = homeMass != null ? (land.sizes.get(homeMass) || 0) : 9999;
+    const isIslandFaction = homeMassSize < 30;
+
+    // 0. CAPTURE FIRST. Any unit already adjacent to a breached (fortification 0)
+    //    capturable city takes it NOW — before gold is spent on training or
+    //    buildings. Without this, the training spree below drains the treasury
+    //    under CAPTURE_COST every turn and the AI breaches cities it can never
+    //    afford to take (the "breach but never capture" bug). Capture actions
+    //    are emitted first so they execute before any spending.
+    const claimedCityKeys = new Set();
+    for (const unit of myUnits) {
+        if (unit.hasMovedThisTurn) continue;
+        const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar);
+        if (cap && !claimedCityKeys.has(`${cap.x},${cap.z}`)) {
+            claimedCityKeys.add(`${cap.x},${cap.z}`);
+            actions.push({ type: 'capture', unitId: unit.id, tileKey: `${cap.x},${cap.z}` });
+            res = subtractCost(res, { gold: CAPTURE_COST });
+            acted.add(unit.id);
+        }
+    }
+    // Keep a gold buffer when a capturable city is within 2 of any unit, so the
+    // training loop can't drain the treasury before a unit walks in next turn.
+    let captureClose = claimedCityKeys.size > 0;
+    if (!captureClose) {
+        outer:
+        for (const unit of myUnits) {
+            for (let dx = -2; dx <= 2; dx++) {
+                for (let dz = -2; dz <= 2; dz++) {
+                    const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+                    if (t && t.terrain === 'CITY' && t.owner !== owner && (t.fortification || 0) <= 0 &&
+                        (!t.owner || !isAtWar || isAtWar(t.owner))) { captureClose = true; break outer; }
+                }
+            }
+        }
+    }
 
     // 1. Build a Barracks first (unlocks production + veteran training).
     if (!hasBarracks) {
@@ -133,15 +184,50 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             // so the siege fund accumulates toward next turn.
             res = subtractCost(res, sc);
         }
-    } else if (!siegeOptions.length && engineerCount < 2) {
-        // No direct siege in roster -> train engineers to build towers.
-        // Increased cap from 1 to 2 for faster siege tower production.
+    } else if (!siegeOptions.length && engineerCount < 1) {
+        // No direct siege in roster -> engineers are the siege path (towers).
         const ec = getUnitCostFor('ENGINEER', factionDef);
         if (capRoom() && canAfford('ENGINEER', res, ec)) {
             const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
             if (spawnTile) {
                 actions.push({ type: 'train', unitType: 'ENGINEER', tileKey: `${spawnTile.x},${spawnTile.z}` });
                 res = spendCost('ENGINEER', res, ec);
+            }
+        }
+    }
+
+    // 1c. ENGINEERS. Every faction keeps engineers on hand: they build Siege
+    //     Towers against enemy cities and defensive structures (traps,
+    //     fortifications) at home. The cap rises while at war so tower
+    //     production keeps pace with conquest.
+    {
+        const engCap = atWar ? 3 : 1;
+        const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
+            actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
+        if (engNow < engCap && capRoom()) {
+            const ec = getUnitCostFor('ENGINEER', factionDef);
+            if (canAfford('ENGINEER', res, ec)) {
+                const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
+                if (spawnTile) {
+                    actions.push({ type: 'train', unitType: 'ENGINEER', tileKey: `${spawnTile.x},${spawnTile.z}` });
+                    res = spendCost('ENGINEER', res, ec);
+                }
+            }
+        }
+    }
+
+    // 1d. HARBOR. Build one in a coastal city (adjacent to water/river) so the
+    //     faction can field ships. Island factions (small home landmass)
+    //     prioritize it — ships are their only way off the rock.
+    {
+        const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+        if (!hasHarbor) {
+            const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
+                !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
+            if (coastal && canAffordBuilding('HARBOR', res) &&
+                (isIslandFaction || myCityCount >= 2 || hasBarracks)) {
+                actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
+                res = payBuilding('HARBOR', res);
             }
         }
     }
@@ -188,13 +274,39 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 2c. Train units from this faction's roster if affordable and below cap.
+    //     Keeps a gold buffer when a capture is imminent so the walk-in capture
+    //     isn't starved (see step 0).
     while (myUnits.length + trainCount() < AI_MAX_UNITS) {
-        const trainable = findAffordableUnit(res, roster, factionDef, myUnits, actions, owner);
+        if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
         actions.push({ type: 'train', unitType: trainable, tileKey: `${spawnTile.x},${spawnTile.z}` });
         res = spendCost(trainable, res, getUnitCostFor(trainable, factionDef));
+    }
+
+    // 2d. SHIPS. With a Harbor, field a small fleet: island factions need a
+    //     Transport first (their only way to settle new landmasses), then
+    //     warships. Continental factions keep at most a couple of warships.
+    {
+        const harborCity = owned.find(t => t.terrain === 'CITY' &&
+            (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+        if (harborCity && capRoom()) {
+            const navalNow = myUnits.filter(u => isNaval(u)).length +
+                actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
+            const navalCap = isIslandFaction ? 4 : 2;
+            if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
+                const hasTransport = myUnits.some(u => u.type === 'TRANSPORT') ||
+                    actions.some(a => a.type === 'train' && a.unitType === 'TRANSPORT');
+                const pick = (isIslandFaction && !hasTransport) ? 'TRANSPORT' : 'GALLEY';
+                const pc = getUnitCostFor(pick, factionDef);
+                if (canAfford(pick, res, pc)) {
+                    actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
+                    res = spendCost(pick, res, pc);
+                }
+            }
+        }
     }
 
     // 2c. Workers: train a few if there are improvable owned tiles within a
@@ -226,22 +338,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 4. Per-unit support actions: settlers found/move, workers build/move,
-    //    engineers build siege towers, scouts explore. Military units are NOT
+    //    engineers build siege towers & structures, siege towers beeline to
+    //    their target city, scouts explore, ships sail. Military units are NOT
     //    handled here — they go through army-group coordination (step 5) so
     //    they fight as a coordinated group rather than each picking targets
-    //    independently. `moved` tracks tiles claimed this turn (avoids two
-    //    units stacking on the same destination); `acted` tracks unit ids
-    //    that already have an action so a unit can't be double-acted by
-    //    group planning.
-    const moved = new Set();
-    const acted = new Set();
-
-    // Find the king for this faction (for king safety logic)
-    const myKing = lords ? lords.find(l => l.owner === owner && l.isKing) : null;
+    //    independently. (`moved`/`acted` were declared at the top, before the
+    //    capture-first pre-pass.)
 
     for (const unit of myUnits) {
         // a) Settlers found a city where they stand (if valid) or head toward
-        //    the nearest unowned land tile to do so.
+        //    a found spot ON THEIR OWN LANDMASS. If the home landmass is full,
+        //    they wait at the shore for a Transport to ferry them elsewhere.
         if (unit.type === 'SETTLER') {
             const here = tiles.get(`${unit.x},${unit.z}`);
             if (here && canFoundOn(here, owner)) {
@@ -249,7 +356,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 acted.add(unit.id);
                 continue;
             }
-            const spot = findFoundSpot(unit, tiles, owner);
+            const myMass = land.idOf.get(`${unit.x},${unit.z}`);
+            const spot = findFoundSpot(unit, tiles, owner, land, myMass);
             if (spot) {
                 const step = stepToward(unit, spot, tiles, owner, units, moved, isAtWar);
                 if (step) {
@@ -259,7 +367,24 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
-            acted.add(unit.id); // nowhere to settle — idle.
+            // No land-reachable found spot: try to leave the landmass by sea.
+            // Board an adjacent friendly Transport with free capacity…
+            const tr = adjacentTransport(unit, units, owner);
+            if (tr) {
+                actions.push({ type: 'board', unitId: unit.id, transportId: tr.id });
+                acted.add(unit.id);
+                continue;
+            }
+            // …otherwise wait at the nearest shore tile for pickup.
+            const shore = nearestShoreTile(unit, tiles, land, myMass);
+            if (shore && (shore.x !== unit.x || shore.z !== unit.z) && !unit.hasMovedThisTurn) {
+                const step = stepToward(unit, shore, tiles, owner, units, moved, isAtWar);
+                if (step) {
+                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+            acted.add(unit.id); // nowhere to settle on this landmass — wait for a ship.
             continue;
         }
 
@@ -291,30 +416,97 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             continue;
         }
 
-        // a2) Engineers build a Siege Tower when within range of an at-war
-        //     enemy city (and the AI can afford it). This is how factions with
-        //     no direct siege in their roster breach fortifications. Engineers
-        //     that can't build yet (too far from an enemy city) step toward the
-        //     nearest enemy city so they can build on subsequent turns.
-        if (unit.type === 'ENGINEER' && atWar && !unit.hasAttackedThisTurn) {
-            const target = findEnemyCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS);
-            if (target && canAffordCost(res, SIEGE_TOWER_COST)) {
-                actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${target.x},${target.z}` });
-                res = subtractCost(res, SIEGE_TOWER_COST);
-                acted.add(unit.id);
-                continue;
-            }
-            // Not in range yet — step toward the nearest enemy city.
-            const nearest = findNearestEnemyCity(unit, tiles, owner, isAtWar);
-            if (nearest) {
-                const step = stepToward(unit, nearest, tiles, owner, units, moved, isAtWar);
-                if (step) {
-                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
-                    moved.add(`${step.x},${step.z}`);
+        // a2) Engineers. Offense: build a Siege Tower when within range of an
+        //     at-war enemy city (and step toward one when out of range).
+        //     Defense: when an own city is threatened (enemy units closing
+        //     in), build traps/fortifications on owned tiles around it.
+        if (unit.type === 'ENGINEER' && !unit.hasAttackedThisTurn) {
+            if (atWar) {
+                const target = findEnemyCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS);
+                if (target && canAffordCost(res, SIEGE_TOWER_COST)) {
+                    actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${target.x},${target.z}` });
+                    res = subtractCost(res, SIEGE_TOWER_COST);
                     acted.add(unit.id);
                     continue;
                 }
             }
+            // Defensive structures: fortify the approach to a threatened city.
+            const homeCity = nearestFriendlyCity(unit, tiles, owner);
+            const threat = homeCity ? cityThreatLevel(homeCity, units, tiles, owner, isAtWar) : null;
+            if (homeCity && threat && threat.enemies > 0) {
+                const distCity = manhattan(unit.x, unit.z, homeCity.x, homeCity.z);
+                const here = tiles.get(`${unit.x},${unit.z}`);
+                const canSite = here && here.owner === owner &&
+                    here.terrain !== 'CITY' && here.terrain !== 'WATER' && here.terrain !== 'RIVER' &&
+                    !structures.has(`${unit.x},${unit.z}`) &&
+                    (!influence || influence.has(`${unit.x},${unit.z}`));
+                if (canSite && distCity >= 1 && distCity <= 3) {
+                    // Inner ring (adjacent to the city): fortify the defenders.
+                    // Outer ring: traps — spikes if the enemy brings cavalry,
+                    // fall traps otherwise.
+                    let sType;
+                    if (distCity === 1) sType = 'FORTIFICATION';
+                    else sType = threat.cavalry >= 2 ? 'SPIKES' : 'FALL_TRAP';
+                    const sCost = STRUCTURE_COST[sType] || {};
+                    if (canAffordCost(res, sCost)) {
+                        actions.push({ type: 'buildStructure', unitId: unit.id, structureType: sType });
+                        res = subtractCost(res, sCost);
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
+                // Not in position yet — hurry toward the threatened city.
+                if (distCity > 3 && !unit.hasMovedThisTurn) {
+                    const step = stepToward(unit, homeCity, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
+            }
+            // Offense move: no threatened home — step toward the nearest enemy
+            // city so the engineer can build towers on subsequent turns.
+            if (atWar) {
+                const nearest = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+                if (nearest && !unit.hasMovedThisTurn) {
+                    const step = stepToward(unit, nearest, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // a2b) Siege Towers beeline to the nearest fortified non-friendly city
+        //      and besiege it. Without this they drift with their army group's
+        //      objective and mill around near (but never adjacent to) the city
+        //      they were built to crack. Neutral cities count — a tower is how
+        //      the AI cracks unclaimed fortified cities at peace.
+        if (unit.type === 'SIEGE_TOWER') {
+            const ec = findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
+            if (ec && (ec.fortification || 0) > 0) {
+                actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
+                acted.add(unit.id);
+                continue;
+            }
+            const target = findNearestBesiegeableCity(unit, tiles, owner, isAtWar);
+            if (target) {
+                if (!unit.hasMovedThisTurn) {
+                    const step = stepToward(unit, target, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                    }
+                }
+                acted.add(unit.id);
+                continue;
+            }
+            // No besiegeable city anywhere — fall through to the army groups.
         }
 
         // a3) Scouts explore: move toward unexplored tiles or enemy territory.
@@ -323,8 +515,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         //     enemy-owned tiles to gather intelligence.
         if (unit.type === 'SCOUT' && !unit.hasAttackedThisTurn) {
             // Priority 1: Find nearest unexplored tile (tiles not owned by anyone
-            // and not adjacent to any owned tile — likely unexplored frontier)
-            const unexploredTarget = findNearestUnexploredTile(unit, tiles, owner);
+            // and not adjacent to any owned tile — likely unexplored frontier).
+            // Scouts spread out: tiles already near another scout are skipped.
+            const unexploredTarget = findNearestUnexploredTile(unit, tiles, owner, units);
             if (unexploredTarget) {
                 const step = stepToward(unit, unexploredTarget, tiles, owner, units, moved, isAtWar);
                 if (step) {
@@ -347,35 +540,110 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
             // Priority 3: If no exploration targets, fall through to army group
         }
-    }
 
-    // 4b. King safety check: if the king is threatened, adjust army group behavior.
-    //     A king is "threatened" if enemy units are within Chebyshev 3 and the
-    //     king has fewer than 2 friendly units nearby. When threatened, all army
-    //     groups shift to defensive stance and move toward the king.
-    let kingThreatened = false;
-    let kingSafeTile = null;
-    if (myKing) {
-        const kingSafety = evaluateKingSafety(myKing, units, owner, isAtWar);
-        if (!kingSafety.isSafe) {
-            kingThreatened = true;
-            // Find a safe tile for the king (nearest friendly city with escort)
-            kingSafeTile = findSafeTileForKing(myKing, tiles, units, owner);
+        // a4) Ships. Transports ferry waiting settlers to settleable land on
+        //     other landmasses; warships hunt enemy ships, besiege coastal
+        //     cities, and scout foreign shores. Naval units never join the
+        //     land army groups.
+        if (isNaval(unit)) {
+            if (unit.type === 'TRANSPORT') {
+                if ((unit.cargo || []).length > 0) {
+                    // Carrying settlers: sail to the nearest foundable tile on a
+                    // landmass without a friendly city; unload when alongside.
+                    const dest = nearestFoundableBySea(unit, tiles, owner, land);
+                    if (dest && Math.abs(unit.x - dest.x) + Math.abs(unit.z - dest.z) === 1) {
+                        actions.push({ type: 'disembark', unitId: unit.id });
+                    } else if (dest && !unit.hasMovedThisTurn) {
+                        const step = stepToward(unit, dest, tiles, owner, units, moved, isAtWar);
+                        if (step) {
+                            actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                        }
+                    }
+                    acted.add(unit.id);
+                    continue;
+                }
+                // Empty: pick up the nearest settler waiting at a shore.
+                const waiting = nearestWaitingSettler(unit, units, tiles, owner, land);
+                if (waiting && !unit.hasMovedThisTurn) {
+                    const step = stepToward(unit, waiting, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                    }
+                }
+                acted.add(unit.id);
+                continue;
+            }
+            // Warships (GALLEY/FRIGATE/GALLEON): attack a target in range…
+            if (atWar && !unit.hasAttackedThisTurn) {
+                const tgt = findAttackTarget(unit, units, isAtWar);
+                if (tgt) {
+                    actions.push({ type: 'attack', fromId: unit.id, toId: tgt.id });
+                    acted.add(unit.id);
+                    continue;
+                }
+            }
+            // …besiege an adjacent fortified enemy city (GALLEON can)…
+            if (UNIT_TYPE[unit.type].besiege && !unit.hasAttackedThisTurn) {
+                const ec = findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
+                if (ec && (ec.fortification || 0) > 0) {
+                    actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
+                    acted.add(unit.id);
+                    continue;
+                }
+            }
+            // …or sail toward an enemy city / an unsettled foreign landmass.
+            if (!unit.hasMovedThisTurn) {
+                let dest = null;
+                if (atWar) dest = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+                if (!dest) dest = nearestForeignLandmass(unit, tiles, owner, land);
+                if (dest) {
+                    const step = stepToward(unit, dest, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                    }
+                }
+            }
+            acted.add(unit.id);
+            continue;
         }
     }
 
     // 5. Army-group coordination: military units (everything that wasn't a
-    //    settler/worker and didn't already act — including engineers that
-    //    didn't build a tower) are grouped, given a shared objective + stance,
-    //    and planned together. See planGroup for the per-group action order.
+    //    settler/worker/ship and didn't already act — including engineers that
+    //    didn't build anything) are grouped, then split into two roles:
+    //      - CONQUEST: the strongest 1-3 groups campaign outward (enemy cities,
+    //        neutral cities, expansion). Kings/lords attached to these groups
+    //        ride along with the main army.
+    //      - PATROL: the rest hold a defensive ring near their nearest friendly
+    //        city, guarding territory instead of wandering the map.
     const militaryPool = myUnits.filter(u =>
-        !acted.has(u.id) && u.type !== 'SETTLER' && u.type !== 'WORKER');
+        !acted.has(u.id) && u.type !== 'SETTLER' && u.type !== 'WORKER' && !isNaval(u));
     const groups = buildArmyGroups(militaryPool, lords, owner);
+    const hasConquestTargets = atWar ||
+        [...tiles.values()].some(t => t.terrain === 'CITY' && !t.owner);
+    const ranked = groups.map(g => ({
+        g, power: g.units.reduce((s, u) => s + unitValue(u), 0)
+    })).sort((a, b) => b.power - a.power);
+    const conquestCount = hasConquestTargets
+        ? Math.min(3, Math.max(1, Math.ceil(ranked.length / 2)))
+        : 0;
+    const conquest = new Set(ranked.slice(0, conquestCount).map(r => r.g));
     for (const g of groups) {
-        const stance = computeStance(g, units, owner, atWar, isAtWar);
-        const objective = pickGroupObjective(g, tiles, owner, isAtWar, stance);
-        actions.push(...planGroup(g, objective, stance, units, tiles, owner,
-            lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res));
+        if (conquest.has(g)) {
+            const stance = computeStance(g, units, owner, atWar, isAtWar);
+            const objective = pickGroupObjective(g, tiles, owner, isAtWar, stance);
+            actions.push(...planGroup(g, objective, stance, units, tiles, owner,
+                lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures));
+        } else {
+            // Patrol: hold near the nearest friendly city; fight what's close.
+            const c = groupCentroid(g);
+            const home = nearestFriendlyCity(c, tiles, owner);
+            actions.push(...planGroup(g, home, 'hold', units, tiles, owner,
+                lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures));
+        }
     }
 
     return actions;
@@ -494,7 +762,7 @@ function canFoundOn(tile, owner) {
  *  - Safety (fewer nearby enemies is better)
  *  This makes the AI prioritize settling in resource-rich frontier areas,
  *  spreading into different map regions instead of clustering near home. */
-function findFoundSpot(unit, tiles, owner) {
+function findFoundSpot(unit, tiles, owner, land = null, massId = null) {
     // Find the nearest friendly city distance for frontier scoring
     let nearestFriendlyCityDist = Infinity;
     for (const t of tiles.values()) {
@@ -507,6 +775,9 @@ function findFoundSpot(unit, tiles, owner) {
     let best = null, bestScore = -Infinity;
     for (const t of tiles.values()) {
         if (!canFoundOn(t, owner)) continue;
+        // Only spots on the settler's own landmass are reachable on foot —
+        // cross-sea settling is the Transport's job (see the settler block).
+        if (land && massId != null && land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
         const dist = manhattan(unit.x, unit.z, t.x, t.z);
         
         // Calculate resource density in surrounding area (radius 2)
@@ -645,6 +916,7 @@ const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN']);
 const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT']);
 const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER']);
 const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
+const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON']);
 
 function unitRole(type) {
     if (MELEE_TYPES.has(type)) return 'melee';
@@ -652,11 +924,12 @@ function unitRole(type) {
     if (CAVALRY_TYPES.has(type)) return 'cavalry';
     if (SIEGE_TYPES.has(type)) return 'siege';
     if (SUPPORT_TYPES.has(type)) return 'support';
+    if (NAVAL_TYPES.has(type)) return 'naval';
     return 'other';
 }
 
 function countByRole(units, actions, owner) {
-    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0 };
+    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0, naval: 0 };
     for (const u of units) {
         if (u.owner !== owner) continue;
         const r = unitRole(u.type);
@@ -673,8 +946,42 @@ function countByRole(units, actions, owner) {
     return counts;
 }
 
-function roleDeficit(roster, counts, total) {
-    const target = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05 };
+/** Per-faction army composition targets (fractions of the army). Each faction
+ *  leans into its specialty: Golden Horde & Crimson favor cavalry, Iron Empire
+ *  leans siege, Storm Kingdom builds a naval fleet, etc. SCOUTS are never a
+ *  composition target — they're exploration units capped separately at 2.
+ *  Roles whose units aren't in the faction's roster are zeroed out so the AI
+ *  doesn't chase a role it can't fill. */
+function factionComposition(def, roster) {
+    const has = (role) => roster.some(t => unitRole(t) === role);
+    const id = def && def.id;
+    let t;
+    switch (id) {
+        case 'crimson':  t = { melee: 0.35, ranged: 0.10, cavalry: 0.35, siege: 0.15, support: 0.05, naval: 0.00 }; break;
+        case 'golden':   t = { melee: 0.20, ranged: 0.15, cavalry: 0.45, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.25, siege: 0.20, support: 0.10, naval: 0.00 }; break;
+        case 'verdant':  t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
+        case 'violet':   t = { melee: 0.30, ranged: 0.25, cavalry: 0.00, siege: 0.35, support: 0.10, naval: 0.00 }; break;
+        case 'azure':    t = { melee: 0.40, ranged: 0.25, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
+        case 'iron':     t = { melee: 0.30, ranged: 0.00, cavalry: 0.00, siege: 0.55, support: 0.15, naval: 0.00 }; break;
+        case 'shadow':   t = { melee: 0.35, ranged: 0.45, cavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
+        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.10, siege: 0.10, support: 0.05, naval: 0.40 }; break;
+        default:         t = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05, naval: 0.00 };
+    }
+    // Zero out (and renormalize) roles the roster can't fill.
+    let sum = 0;
+    for (const r of Object.keys(t)) {
+        if ((r === 'support') || r === 'naval' || r === 'cavalry' || r === 'ranged' || r === 'siege' || r === 'melee') {
+            if (!has(r)) t[r] = 0;
+        }
+        sum += t[r];
+    }
+    if (sum > 0) for (const r of Object.keys(t)) t[r] = t[r] / sum;
+    return t;
+}
+
+function roleDeficit(roster, counts, total, target) {
     const available = new Set();
     for (const t of roster) available.add(unitRole(t));
     // Don't chase support units until the army has some mass.
@@ -683,19 +990,21 @@ function roleDeficit(roster, counts, total) {
     for (const r of Object.keys(target)) {
         if (!available.has(r)) continue;
         const current = counts[r] || 0;
-        const desired = total * target[r];
+        const desired = total * (target[r] || 0);
         const deficit = desired - current;
         if (deficit > worstDeficit) { worstDeficit = deficit; worstRole = r; }
     }
     return worstRole;
 }
-/** Pick an affordable unit from this faction's roster, biased toward a balanced
- *  army composition. Early on it secures melee screens, then fills the biggest
- *  role deficit (melee/ranged/cavalry/siege/support). Falls back to the
- *  strongest affordable unit if no composition pick is available. */
+/** Pick an affordable unit from this faction's roster, biased toward a
+ *  faction-specialized army composition. Early on it secures melee screens,
+ *  then fills the biggest role deficit. Falls back to the strongest affordable
+ *  *combat* unit (never SCOUT — scouts are exploration units capped at 2 by the
+ *  dedicated scout block, so they don't crowd out the army). */
 function findAffordableUnit(resources, roster, factionDef, units, actions, owner) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const target = factionComposition(factionDef, roster);
     // Defense floor: first few units must be melee so expansion/siege don't
     // strip the army bare.
     if (total < 4 && roster.some(t => MELEE_TYPES.has(t))) {
@@ -704,19 +1013,22 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
         }
     }
     if (total >= 4) {
-        const role = roleDeficit(roster, counts, total);
+        const role = roleDeficit(roster, counts, total, target);
         const order = [];
         if (role === 'melee') order.push('INFANTRY', 'PIKEMAN');
         else if (role === 'ranged') order.push('ARCHER', 'LONGBOWMAN');
-        else if (role === 'cavalry') order.push('CAVALRY', 'CATAPHRACT');
+        else if (role === 'cavalry') order.push('CATAPHRACT', 'CAVALRY');
         else if (role === 'siege') order.push('SIEGE', 'ARTILLERY');
-        else if (role === 'support') order.push('MEDIC', 'ENGINEER');
+        else if (role === 'support') order.push('ENGINEER', 'MEDIC');
+        else if (role === 'naval') order.push('GALLEON', 'FRIGATE', 'GALLEY', 'TRANSPORT');
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }
     }
-    // Fallback: strongest affordable.
-    const order = ['SIEGE', 'ARTILLERY', 'CAVALRY', 'PIKEMAN', 'ARCHER', 'INFANTRY', 'SCOUT'];
+    // Fallback: strongest affordable combat unit (no SCOUT — prevents the
+    // Shadow Court "20 spies" spam where a poor faction trains nothing but the
+    // cheapest unit).
+    const order = ['SIEGE', 'ARTILLERY', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     for (const t of order) {
         if (!roster.includes(t)) continue;
         if (canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
@@ -956,14 +1268,15 @@ function unitValue(u) {
  *  Favorable = clean kill; profitable trade (both die but defender worth more);
  *  a free hit (we take 0 damage); or a winning chip (we deal >= 1.5x what we
  *  take). Type advantage is already folded in by resolveCombat's multiplier. */
-function isFavorableAttack(attacker, defender, units, tiles, lords, buildings, tempBonuses) {
+function isFavorableAttack(attacker, defender, units, tiles, lords, buildings, tempBonuses, structures = null) {
     if (!attacker || !defender) return false;
     const defTile = tiles.get(`${defender.x},${defender.z}`);
     const terrain = defTile ? defTile.terrain : 'PLAINS';
+    const breached = !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0);
     const atkLord = findCommandingLord(lords, attacker);
     const defLord = defender._isLord ? null : findCommandingLord(lords, defender);
     const enc = isEncircled(defender, units, tiles);
-    const sim = simulateCombat(attacker, defender, terrain, atkLord, defLord, buildings, lords, tempBonuses, enc);
+    const sim = simulateCombat(attacker, defender, terrain, atkLord, defLord, buildings, lords, tempBonuses, enc, structures, breached);
     if (sim.defenderDied && !sim.attackerDied) return true;                 // clean kill
     if (sim.defenderDied && sim.attackerDied) {                              // mutual death
         return unitValue(defender) > unitValue(attacker) + 2;               // profitable trade
@@ -1091,25 +1404,31 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance) {
     }
     
     // Hold or Engage: seek out targets aggressively
-    // Priority 1: Nearest enemy city (at-war)
+    // Priority 1: at-war enemy cities — prefer already-breached or weakly
+    // fortified ones nearby (easy kills) over distant strongholds.
     if (isAtWar) {
-        let best = null, bestDist = Infinity;
+        let best = null, bestScore = -Infinity;
         for (const t of tiles.values()) {
             if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
             if (!isAtWar(t.owner)) continue;
             const d = manhattan(c.x, c.z, t.x, t.z);
-            if (d < bestDist) { bestDist = d; best = t; }
+            const fort = t.fortification || 0;
+            const score = 1000 - d - fort * 15 + (fort <= 0 ? 300 : 0);
+            if (score > bestScore) { bestScore = score; best = t; }
         }
         if (best) return best;
     }
     
-    // Priority 2: Nearest neutral city (unowned, from eliminated factions)
+    // Priority 2: Nearest neutral city (unclaimed / from eliminated factions —
+    // the AI can besiege and take these even at peace). Prefer weak ones.
     {
-        let best = null, bestDist = Infinity;
+        let best = null, bestScore = -Infinity;
         for (const t of tiles.values()) {
             if (t.terrain !== 'CITY' || t.owner) continue; // unowned only
             const d = manhattan(c.x, c.z, t.x, t.z);
-            if (d < bestDist) { bestDist = d; best = t; }
+            const fort = t.fortification || 0;
+            const score = 800 - d - fort * 10 + (fort <= 0 ? 200 : 0);
+            if (score > bestScore) { bestScore = score; best = t; }
         }
         if (best) return best;
     }
@@ -1277,7 +1596,7 @@ function flankingStep(unit, target, units, tiles, owner, moved, isAtWar) {
  *   6. Advance: remaining units move toward the objective in formation (melee
  *      screens first; fragile units only advance behind a screen).
  */
-function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res) {
+function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures = null) {
     const out = [];
     const members = group.units.filter(u => !acted.has(u.id));
     if (!members.length) return out;
@@ -1315,7 +1634,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 if (e.owner === owner) continue;
                 if (isAtWar && !isAtWar(e.owner)) continue;
                 if (Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z)) > 1) continue;
-                if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses)) continue;
+                if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses, structures)) continue;
                 let score = unitValue(e);
                 if (groupTarget && e.id === groupTarget.id) score += 20;
                 if (typeMatch(u.type, e.type)) score += 10;
@@ -1330,9 +1649,15 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
 
     // 3) Conceal (ambush setup) for any military unit on conceal terrain near
     //    the front, out of enemy vision, with no adjacent enemy to fight.
+    //    A unit that is ALREADY concealing/concealed is skipped (don't reset its
+    //    progress every turn — that left units stuck in 'concealing' forever and
+    //    marked `acted` so they never advanced). A unit on a post-reveal cooldown
+    //    is also skipped so it advances instead of re-hiding immediately.
     if (atWar && (stance === 'hold' || stance === 'engage')) {
         for (const u of members) {
             if (acted.has(u.id) || u.hasMovedThisTurn || u.hasAttackedThisTurn) continue;
+            if (u.concealState === 'concealing' || u.concealState === 'concealed') continue;
+            if (u.concealCooldown && u.concealCooldown > 0) continue;
             const tile = tiles.get(`${u.x},${u.z}`);
             if (!tile || !CONCEAL_TERRAINS.includes(tile.terrain)) continue;
             const ut = UNIT_TYPE[u.type];
@@ -1353,7 +1678,10 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     }
 
     // 4) Besiege / capture / pillage (strategic city + improvement actions).
-    if (atWar) {
+    //    Runs even at peace: NEUTRAL (unclaimed) cities are always valid
+    //    targets — the diplomacy filters inside the finders skip enemy-owned
+    //    cities we're not at war with.
+    {
         for (const u of members) {
             if (acted.has(u.id) || u.hasAttackedThisTurn) continue;
             // Besiege an adjacent fortified enemy city (siege units only).
@@ -1395,7 +1723,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
             if (!targets.length) continue;
             let best = null, bestScore = -Infinity;
             for (const e of targets) {
-                if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses)) continue;
+                if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses, structures)) continue;
                 let score = unitValue(e);
                 if (groupTarget && e.id === groupTarget.id) score += 20;
                 if (typeMatch(u.type, e.type)) score += 10;
@@ -1417,7 +1745,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
             if (acted.has(u.id)) continue;
             const adjacent = Math.max(Math.abs(u.x - groupTarget.x), Math.abs(u.z - groupTarget.z)) <= 1;
             if (adjacent && !u.hasAttackedThisTurn) {
-                if (isFavorableAttack(u, groupTarget, units, tiles, lords, buildings, tempBonuses)) {
+                if (isFavorableAttack(u, groupTarget, units, tiles, lords, buildings, tempBonuses, structures)) {
                     out.push({ type: 'attack', fromId: u.id, toId: groupTarget.id });
                     acted.add(u.id);
                     continue;
@@ -1436,9 +1764,17 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
 
     // 7) Advance toward the objective in formation. Melee screeners go first;
     //    fragile units only advance if a friendly screen stays in front of them.
+    //    Units that are concealing/concealed hold position (they're setting an
+    //    ambush); the conceal timeout in _tickConcealment eventually releases
+    //    them (sets concealState=null + a cooldown) so a stalemate where both
+    //    sides hide forever can't persist.
     const advance = (u) => {
         if (acted.has(u.id) || u.hasMovedThisTurn) return;
+        if (u.concealState === 'concealing' || u.concealState === 'concealed') return;
         if (!objective) return;
+        // Patrols hold the ring: already close enough to the home city.
+        if (stance === 'hold' && objective.owner === owner &&
+            manhattan(u.x, u.z, objective.x, objective.z) <= 2) return;
         if (isFragile(u) && !hasScreen(u, units, owner)) return; // hold behind the screen
         const step = stepToward(u, objective, tiles, owner, units, moved, isAtWar);
         if (step && !moved.has(`${step.x},${step.z}`)) {
@@ -1461,7 +1797,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
  *  adjacent to any owned tile). This is a heuristic — the AI doesn't have a
  *  true "explored" set, so it uses ownership as a proxy. Tiles far from any
  *  owner are likely unexplored frontier. */
-function findNearestUnexploredTile(unit, tiles, owner) {
+function findNearestUnexploredTile(unit, tiles, owner, units = null) {
     let best = null, bestDist = Infinity;
     for (const t of tiles.values()) {
         // Skip owned tiles (we've seen these)
@@ -1478,6 +1814,16 @@ function findNearestUnexploredTile(unit, tiles, owner) {
             }
         }
         if (isKnown) continue;
+        // Spread scouts out: skip frontier tiles another friendly scout is
+        // already covering, so multiple scouts map different regions.
+        if (units) {
+            let covered = false;
+            for (const o of units.values()) {
+                if (o.owner !== owner || o.type !== 'SCOUT' || o.id === unit.id) continue;
+                if (Math.max(Math.abs(o.x - t.x), Math.abs(o.z - t.z)) <= 5) { covered = true; break; }
+            }
+            if (covered) continue;
+        }
         // This tile is unowned and not adjacent to owned — likely unexplored
         const dist = manhattan(unit.x, unit.z, t.x, t.z);
         if (dist < bestDist) { bestDist = dist; best = t; }
@@ -1499,66 +1845,165 @@ function findNearestEnemyTileForScout(unit, tiles, owner, isAtWar) {
 }
 
 // ============================================================
-// King safety helpers
+// Landmass / naval / siege-target helpers
 // ============================================================
 
-/** Evaluate the safety of the king. Returns { isSafe, nearbyEnemies, nearbyFriends }.
- *  A king is safe if:
- *  - No enemies within Chebyshev 2
- *  - OR has at least 2 friendly units nearby and HP > 50%
- */
-function evaluateKingSafety(king, units, owner, isAtWar) {
-    let nearbyEnemies = 0;
-    let nearbyFriends = 0;
-    
-    for (const u of units.values()) {
-        const dist = Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z));
-        if (dist > 3) continue;
-        
-        if (u.owner === owner) {
-            if (dist <= 2) nearbyFriends++;
-        } else {
-            if (isAtWar && isAtWar(u.owner) && dist <= 3) nearbyEnemies++;
+/** Label every non-WATER tile with a landmass id (flood fill over land,
+ *  treating RIVER as land — rivers are bridgeable, they don't isolate an
+ *  island). Returns { idOf: Map(tileKey->id), sizes: Map(id->tileCount) }. */
+function computeLandmasses(tiles) {
+    const idOf = new Map();
+    const sizes = new Map();
+    let nextId = 0;
+    for (const t of tiles.values()) {
+        if (t.terrain === 'WATER') continue;
+        const startKey = `${t.x},${t.z}`;
+        if (idOf.has(startKey)) continue;
+        const id = nextId++;
+        let count = 0;
+        const queue = [t];
+        idOf.set(startKey, id);
+        while (queue.length) {
+            const cur = queue.pop();
+            count++;
+            for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                const nk = `${cur.x + dx},${cur.z + dz}`;
+                if (idOf.has(nk)) continue;
+                const nt = tiles.get(nk);
+                if (!nt || nt.terrain === 'WATER') continue;
+                idOf.set(nk, id);
+                queue.push(nt);
+            }
         }
+        sizes.set(id, count);
     }
-    
-    // King is safe if no nearby enemies, or if well-protected
-    const isSafe = nearbyEnemies === 0 || 
-                   (nearbyFriends >= 2 && king.hp > king.maxHp * 0.5);
-    
-    return { isSafe, nearbyEnemies, nearbyFriends };
+    return { idOf, sizes };
 }
 
-/** Find a safe tile for the king to retreat to. Prefers:
- *  1. Nearest friendly city with escort
- *  2. Tile with most friendly units nearby
- */
-function findSafeTileForKing(king, tiles, units, owner) {
-    let best = null, bestScore = -Infinity;
-    
-    for (const t of tiles.values()) {
-        if (t.owner !== owner) continue;
-        if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
-        
-        // Count friendly units near this tile
-        let friends = 0;
-        let enemies = 0;
-        for (const u of units.values()) {
-            const dist = Math.max(Math.abs(u.x - t.x), Math.abs(u.z - t.z));
-            if (dist > 3) continue;
-            if (u.owner === owner) friends++;
-            else enemies++;
-        }
-        
-        // Score: prefer cities, prefer more friends, prefer fewer enemies
-        let score = 0;
-        if (t.terrain === 'CITY') score += 50;
-        score += friends * 10;
-        score -= enemies * 15;
-        score -= manhattan(king.x, king.z, t.x, t.z);
-        
-        if (score > bestScore) { bestScore = score; best = t; }
+/** True if a city tile touches water or river (can host a Harbor / launch ships). */
+function isCoastalCity(tile, tiles) {
+    for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const nt = tiles.get(`${tile.x + dx},${tile.z + dz}`);
+        if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) return true;
     }
-    
+    return false;
+}
+
+/** An orthogonally-adjacent friendly Transport with free cargo space, or null. */
+function adjacentTransport(unit, units, owner) {
+    for (const u of units.values()) {
+        if (u.owner !== owner || u.type !== 'TRANSPORT' || u.boarded) continue;
+        const cap = (UNIT_TYPE.TRANSPORT && UNIT_TYPE.TRANSPORT.capacity) || 2;
+        if (((u.cargo || []).length) >= cap) continue;
+        if (Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) === 1) return u;
+    }
+    return null;
+}
+
+/** Nearest land tile on `massId` that is orthogonally adjacent to water — the
+ *  pickup point where a settler waits for a Transport. */
+function nearestShoreTile(unit, tiles, land, massId) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
+        if (massId != null && land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
+        let shore = false;
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+            if (nt && nt.terrain === 'WATER') { shore = true; break; }
+        }
+        if (!shore) continue;
+        const d = manhattan(unit.x, unit.z, t.x, t.z);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
     return best;
+}
+
+/** Nearest settleable land tile that a Transport can unload onto: foundable,
+ *  touches water, and on a landmass with no friendly city (fresh territory). */
+function nearestFoundableBySea(transport, tiles, owner, land) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (!canFoundOn(t, owner)) continue;
+        const mass = land.idOf.get(`${t.x},${t.z}`);
+        if (mass == null) continue;
+        let hasFriendlyCity = false;
+        let touchesWater = false;
+        for (const ct of tiles.values()) {
+            if (ct.terrain === 'CITY' && ct.owner === owner &&
+                land.idOf.get(`${ct.x},${ct.z}`) === mass) { hasFriendlyCity = true; break; }
+        }
+        if (hasFriendlyCity) continue;
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+            if (nt && nt.terrain === 'WATER') { touchesWater = true; break; }
+        }
+        if (!touchesWater) continue;
+        const d = manhattan(transport.x, transport.z, t.x, t.z);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    return best;
+}
+
+/** Nearest friendly settler with no settleable spot left on its own landmass
+ *  (it's waiting at a shore for a ferry). */
+function nearestWaitingSettler(transport, units, tiles, owner, land) {
+    let best = null, bestDist = Infinity;
+    for (const u of units.values()) {
+        if (u.owner !== owner || u.type !== 'SETTLER' || u.boarded) continue;
+        const mass = land.idOf.get(`${u.x},${u.z}`);
+        if (findFoundSpot(u, tiles, owner, land, mass)) continue; // still has land options
+        const d = manhattan(transport.x, transport.z, u.x, u.z);
+        if (d < bestDist) { bestDist = d; best = u; }
+    }
+    return best;
+}
+
+/** Nearest land tile on a landmass with no friendly city — a scouting target
+ *  for warships with nothing to shoot at. */
+function nearestForeignLandmass(unit, tiles, owner, land) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain === 'WATER' || t.terrain === 'RIVER') continue;
+        const mass = land.idOf.get(`${t.x},${t.z}`);
+        if (mass == null) continue;
+        let hasFriendlyCity = false;
+        for (const ct of tiles.values()) {
+            if (ct.terrain === 'CITY' && ct.owner === owner &&
+                land.idOf.get(`${ct.x},${ct.z}`) === mass) { hasFriendlyCity = true; break; }
+        }
+        if (hasFriendlyCity) continue;
+        const d = manhattan(unit.x, unit.z, t.x, t.z);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    return best;
+}
+
+/** Nearest city a Siege Tower can still crack: fortification > 0, and either
+ *  neutral (unclaimed — always besiegeable) or owned by an at-war faction. */
+function findNearestBesiegeableCity(unit, tiles, owner, isAtWar) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY' || t.owner === owner) continue;
+        if ((t.fortification || 0) <= 0) continue;
+        if (t.owner && isAtWar && !isAtWar(t.owner)) continue;
+        const d = manhattan(unit.x, unit.z, t.x, t.z);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    return best;
+}
+
+/** How threatened is an own city? Counts at-war enemy units within 5 (and how
+ *  many are cavalry — drives the spikes-vs-fall-trap choice). */
+function cityThreatLevel(city, units, tiles, owner, isAtWar) {
+    let enemies = 0, cavalry = 0;
+    for (const u of units.values()) {
+        if (u.owner === owner) continue;
+        if (isAtWar && !isAtWar(u.owner)) continue;
+        const d = manhattan(u.x, u.z, city.x, city.z);
+        if (d > 5) continue;
+        enemies++;
+        if (u.type === 'CAVALRY' || u.type === 'CATAPHRACT') cavalry++;
+    }
+    return { enemies, cavalry };
 }
