@@ -1,7 +1,7 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
          SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
-         GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE } from './config.js';
+         GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { canAttack } from './diplomacy.js';
@@ -16,6 +16,7 @@ import { findCommandingLord } from './lords.js';
  *   { type: 'build',         buildingType, tileKey }
  *   { type: 'move',          unitId, tx, tz }
  *   { type: 'attack',        fromId, toId }
+ *   { type: 'charge',        fromId, toId }
  *   { type: 'capture',       unitId, tileKey }
  *   { type: 'besiege',        unitId, tileKey }
  *   { type: 'foundCity',     unitId, tileKey }
@@ -83,58 +84,57 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 1b. SIEGE PRIORITY. Without siege the AI can never breach a fortified city
-    //     and therefore can never conquer anyone — so it must build siege units
+    //     and therefore can never conquer anyone -- so it must build siege units
     //     as soon as it's at war. Direct siege types (SIEGE/ARTILLERY) are
     //     trained if affordable; otherwise their cost is RESERVED so the AI
     //     saves up across turns instead of frittering gold on cheap units.
     //     Factions with no roster siege train an ENGINEER, which builds a
     //     Siege Tower near an enemy city (see the per-unit loop below).
     //     If a Siege Workshop exists, long-range AOE engines (CATAPULT/TREBUCHET)
-    //     are added to the options — they're gated per-city by the workshop.
-    //     Increased siege cap from 4 to 6 for more aggressive siege.
-    //     When workshop exists, explicitly prioritize CATAPULT/TREBUCHET.
+    //     are added to the options -- they're gated per-city by the workshop.
+    //     Siege cap scales with the unit cap to maintain ~15% siege composition.
     const siegeCount = myUnits.filter(u => u.type === 'SIEGE' || u.type === 'ARTILLERY' ||
         u.type === 'CATAPULT' || u.type === 'TREBUCHET').length;
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
-    // Always try to build siege units (not just when at war) to prepare for
-    // future conflicts. Increased cap from 4 to 6 for more aggressive siege.
-    if (siegeOptions.length && siegeCount < 6) {
-            // When siege workshop exists, prioritize artillery (CATAPULT/TREBUCHET)
-            // over basic siege units for their AOE capabilities.
-            let pick;
-            if (hasSiegeWorkshop && (siegeOptions.includes('CATAPULT') || siegeOptions.includes('TREBUCHET'))) {
-                // Prefer TREBUCHET (stronger) if affordable, else CATAPULT
-                const trebCost = getUnitCostFor('TREBUCHET', factionDef);
-                const catCost = getUnitCostFor('CATAPULT', factionDef);
-                if (siegeOptions.includes('TREBUCHET') && canAfford('TREBUCHET', res, trebCost)) {
-                    pick = 'TREBUCHET';
-                } else if (siegeOptions.includes('CATAPULT') && canAfford('CATAPULT', res, catCost)) {
-                    pick = 'CATAPULT';
-                } else {
-                    pick = cheapestSiege(siegeOptions, factionDef);
-                }
+    // Composition-aware siege cap: aim for ~15% siege in the total army.
+    const siegeCap = Math.max(2, Math.round(AI_MAX_UNITS * 0.15));
+    if (siegeOptions.length && siegeCount < siegeCap) {
+        // When siege workshop exists, prioritize artillery (CATAPULT/TREBUCHET)
+        // over basic siege units for their AOE capabilities.
+        let pick;
+        if (hasSiegeWorkshop && (siegeOptions.includes('CATAPULT') || siegeOptions.includes('TREBUCHET'))) {
+            // Prefer TREBUCHET (stronger) if affordable, else CATAPULT
+            const trebCost = getUnitCostFor('TREBUCHET', factionDef);
+            const catCost = getUnitCostFor('CATAPULT', factionDef);
+            if (siegeOptions.includes('TREBUCHET') && canAfford('TREBUCHET', res, trebCost)) {
+                pick = 'TREBUCHET';
+            } else if (siegeOptions.includes('CATAPULT') && canAfford('CATAPULT', res, catCost)) {
+                pick = 'CATAPULT';
             } else {
                 pick = cheapestSiege(siegeOptions, factionDef);
             }
-            const sc = getUnitCostFor(pick, factionDef);
-            if (capRoom() && canAfford(pick, res, sc)) {
-                // Siege engines must spawn in a city that has the workshop.
-                const spawnTile = findOwnedTile(myUnits, tiles, actions, owner) ||
-                    (hasSiegeWorkshop && owned.find(t => t.terrain === 'CITY' &&
-                        (buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP')));
-                if (spawnTile) {
-                    actions.push({ type: 'train', unitType: pick, tileKey: `${spawnTile.x},${spawnTile.z}` });
-                    res = spendCost(pick, res, sc);
-                }
-            } else if (capRoom()) {
-                // Can't afford one yet — guard the rest of this turn's spending
-                // so the siege fund accumulates toward next turn.
-                res = subtractCost(res, sc);
+        } else {
+            pick = cheapestSiege(siegeOptions, factionDef);
+        }
+        const sc = getUnitCostFor(pick, factionDef);
+        if (capRoom() && canAfford(pick, res, sc)) {
+            // Siege engines must spawn in a city that has the workshop.
+            const workshopCity = hasSiegeWorkshop && owned.find(t => t.terrain === 'CITY' &&
+                (buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
+            const spawnTile = workshopCity || findOwnedTile(myUnits, tiles, actions, owner);
+            if (spawnTile) {
+                actions.push({ type: 'train', unitType: pick, tileKey: `${spawnTile.x},${spawnTile.z}` });
+                res = spendCost(pick, res, sc);
             }
+        } else if (capRoom()) {
+            // Can't afford one yet -- guard the rest of this turn's spending
+            // so the siege fund accumulates toward next turn.
+            res = subtractCost(res, sc);
+        }
     } else if (!siegeOptions.length && engineerCount < 2) {
-        // No direct siege in roster → train engineers to build towers.
+        // No direct siege in roster -> train engineers to build towers.
         // Increased cap from 1 to 2 for faster siege tower production.
         const ec = getUnitCostFor('ENGINEER', factionDef);
         if (capRoom() && canAfford('ENGINEER', res, ec)) {
@@ -147,18 +147,27 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 2. Civ6 expansion: with no per-tile capture, the AI must FOUND cities to
-    //     grow. Train settlers aggressively — they are the primary expansion
-    //     mechanism. Allow multiple settlers (up to half the city count + 1).
-    //     The target scales with map size so AI empires keep spreading.
+    //     grow. Train settlers aggressively -- they are the primary expansion
+    //     mechanism. Keep 1-2 settlers queued while under the unit cap, but
+    //     never strip defenses to do so.
     const settlerTarget = Math.max(4, Math.round(GRID_SIZE / 5));
-    const settlerCount = myUnits.filter(u => u.type === 'SETTLER').length;
     const settlerCap = Math.max(1, Math.ceil(myCityCount / 2) + 1);
-    if (settlerCount < settlerCap && myCityCount < settlerTarget && capRoom() && roster.includes('SETTLER')) {
-        const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
-        if (spawnTile && canAfford('SETTLER', res, getUnitCostFor('SETTLER', factionDef))) {
-            actions.push({ type: 'train', unitType: 'SETTLER', tileKey: `${spawnTile.x},${spawnTile.z}` });
-            res = spendCost('SETTLER', res, getUnitCostFor('SETTLER', factionDef));
+    let queuedSettlers = 0;
+    const maxSettlersThisTurn = 2;
+    while (queuedSettlers < maxSettlersThisTurn && myCityCount < settlerTarget && capRoom() && roster.includes('SETTLER')) {
+        const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
+        if (liveSettlers + queuedSettlers >= settlerCap) break;
+        // A second queued settler requires a defensive floor so the army isn't stripped.
+        if (queuedSettlers > 0) {
+            const meleeCount = myUnits.filter(u => u.type === 'INFANTRY' || u.type === 'PIKEMAN').length;
+            const militaryCount = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT').length;
+            if (militaryCount < 5 || meleeCount < 2) break;
         }
+        const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
+        if (!spawnTile || !canAfford('SETTLER', res, getUnitCostFor('SETTLER', factionDef))) break;
+        actions.push({ type: 'train', unitType: 'SETTLER', tileKey: `${spawnTile.x},${spawnTile.z}` });
+        res = spendCost('SETTLER', res, getUnitCostFor('SETTLER', factionDef));
+        queuedSettlers++;
     }
 
     // 2b. SCOUT TRAINING. Train a small number of scouts (1-2 max) for exploration.
@@ -180,7 +189,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
     // 2c. Train units from this faction's roster if affordable and below cap.
     while (myUnits.length + trainCount() < AI_MAX_UNITS) {
-        const trainable = findAffordableUnit(res, roster, factionDef);
+        const trainable = findAffordableUnit(res, roster, factionDef, myUnits, actions, owner);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
@@ -630,8 +639,83 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence) {
     return best;
 }
 
-function findAffordableUnit(resources, roster, factionDef) {
-    // Pick the strongest affordable unit from this faction's roster.
+/** Composition role buckets for the AI army. */
+const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN']);
+const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN']);
+const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT']);
+const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER']);
+const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
+
+function unitRole(type) {
+    if (MELEE_TYPES.has(type)) return 'melee';
+    if (RANGED_TYPES.has(type)) return 'ranged';
+    if (CAVALRY_TYPES.has(type)) return 'cavalry';
+    if (SIEGE_TYPES.has(type)) return 'siege';
+    if (SUPPORT_TYPES.has(type)) return 'support';
+    return 'other';
+}
+
+function countByRole(units, actions, owner) {
+    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0 };
+    for (const u of units) {
+        if (u.owner !== owner) continue;
+        const r = unitRole(u.type);
+        if (counts[r] !== undefined) counts[r]++;
+    }
+    if (actions) {
+        for (const a of actions) {
+            if (a.type === 'train') {
+                const r = unitRole(a.unitType);
+                if (counts[r] !== undefined) counts[r]++;
+            }
+        }
+    }
+    return counts;
+}
+
+function roleDeficit(roster, counts, total) {
+    const target = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05 };
+    const available = new Set();
+    for (const t of roster) available.add(unitRole(t));
+    // Don't chase support units until the army has some mass.
+    if (total < 8) available.delete('support');
+    let worstRole = 'melee', worstDeficit = -Infinity;
+    for (const r of Object.keys(target)) {
+        if (!available.has(r)) continue;
+        const current = counts[r] || 0;
+        const desired = total * target[r];
+        const deficit = desired - current;
+        if (deficit > worstDeficit) { worstDeficit = deficit; worstRole = r; }
+    }
+    return worstRole;
+}
+/** Pick an affordable unit from this faction's roster, biased toward a balanced
+ *  army composition. Early on it secures melee screens, then fills the biggest
+ *  role deficit (melee/ranged/cavalry/siege/support). Falls back to the
+ *  strongest affordable unit if no composition pick is available. */
+function findAffordableUnit(resources, roster, factionDef, units, actions, owner) {
+    const counts = countByRole(units, actions, owner);
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    // Defense floor: first few units must be melee so expansion/siege don't
+    // strip the army bare.
+    if (total < 4 && roster.some(t => MELEE_TYPES.has(t))) {
+        for (const t of ['INFANTRY', 'PIKEMAN']) {
+            if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
+        }
+    }
+    if (total >= 4) {
+        const role = roleDeficit(roster, counts, total);
+        const order = [];
+        if (role === 'melee') order.push('INFANTRY', 'PIKEMAN');
+        else if (role === 'ranged') order.push('ARCHER', 'LONGBOWMAN');
+        else if (role === 'cavalry') order.push('CAVALRY', 'CATAPHRACT');
+        else if (role === 'siege') order.push('SIEGE', 'ARTILLERY');
+        else if (role === 'support') order.push('MEDIC', 'ENGINEER');
+        for (const t of order) {
+            if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
+        }
+    }
+    // Fallback: strongest affordable.
     const order = ['SIEGE', 'ARTILLERY', 'CAVALRY', 'PIKEMAN', 'ARCHER', 'INFANTRY', 'SCOUT'];
     for (const t of order) {
         if (!roster.includes(t)) continue;
@@ -931,6 +1015,23 @@ function isProbablyHidden(u, units, owner, isAtWar) {
     return true;
 }
 
+/** True if a tile is near the front: within 6 tiles of an at-war enemy unit or
+ *  enemy city. Used to avoid concealing units that are far behind the lines. */
+function isNearFront(u, units, tiles, owner, isAtWar) {
+    const frontRadius = 6;
+    for (const e of units.values()) {
+        if (e.owner === owner) continue;
+        if (isAtWar && !isAtWar(e.owner)) continue;
+        if (Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z)) <= frontRadius) return true;
+    }
+    for (const t of tiles.values()) {
+        if (!t.owner || t.owner === owner) continue;
+        if (isAtWar && !isAtWar(t.owner)) continue;
+        if (t.terrain === 'CITY' && manhattan(u.x, u.z, t.x, t.z) <= frontRadius + 1) return true;
+    }
+    return false;
+}
+
 /** Group military units into army groups: by commanding lord's army first,
  *  then spatially cluster the rest (nearest existing group within Chebyshev 2,
  *  else a new single-unit group). Returns [{ id, lord, units: [...] }]. */
@@ -1203,14 +1304,40 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
-    // 2) Conceal (ambush setup) for fragile/ranged units on conceal terrain,
-    //    probably out of enemy vision, with no adjacent enemy to fight.
+    // 2) Cavalry charge: opening strike for adjacent cavalry before any other action.
+    if (atWar) {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasAttackedThisTurn || u.hasMovedThisTurn) continue;
+            if (!CHARGE_UNITS.includes(u.type)) continue;
+            if (u.chargeExhausted && u.chargeExhausted > 0) continue;
+            let best = null, bestScore = -Infinity;
+            for (const e of units.values()) {
+                if (e.owner === owner) continue;
+                if (isAtWar && !isAtWar(e.owner)) continue;
+                if (Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z)) > 1) continue;
+                if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses)) continue;
+                let score = unitValue(e);
+                if (groupTarget && e.id === groupTarget.id) score += 20;
+                if (typeMatch(u.type, e.type)) score += 10;
+                if (score > bestScore) { bestScore = score; best = e; }
+            }
+            if (best) {
+                out.push({ type: 'charge', fromId: u.id, toId: best.id });
+                acted.add(u.id);
+            }
+        }
+    }
+
+    // 3) Conceal (ambush setup) for any military unit on conceal terrain near
+    //    the front, out of enemy vision, with no adjacent enemy to fight.
     if (atWar && (stance === 'hold' || stance === 'engage')) {
         for (const u of members) {
             if (acted.has(u.id) || u.hasMovedThisTurn || u.hasAttackedThisTurn) continue;
-            if (!isFragile(u) && !isRanged(u)) continue;
             const tile = tiles.get(`${u.x},${u.z}`);
             if (!tile || !CONCEAL_TERRAINS.includes(tile.terrain)) continue;
+            const ut = UNIT_TYPE[u.type];
+            // Non-combat and dedicated siege units have better things to do.
+            if (u.type === 'SETTLER' || u.type === 'WORKER' || (ut && ut.besiege)) continue;
             let adjEnemy = false;
             for (const e of units.values()) {
                 if (e.owner === owner) continue;
@@ -1219,12 +1346,13 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
             }
             if (adjEnemy) continue;
             if (!isProbablyHidden(u, units, owner, isAtWar)) continue;
+            if (!isNearFront(u, units, tiles, owner, isAtWar)) continue;
             out.push({ type: 'conceal', unitId: u.id });
             acted.add(u.id);
         }
     }
 
-    // 3) Besiege / capture / pillage (strategic city + improvement actions).
+    // 4) Besiege / capture / pillage (strategic city + improvement actions).
     if (atWar) {
         for (const u of members) {
             if (acted.has(u.id) || u.hasAttackedThisTurn) continue;
@@ -1256,7 +1384,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
-    // 4) Ranged fire: ranged units attack only on favorable terms. Prefer the
+    // 5) Ranged fire: ranged units attack only on favorable terms. Prefer the
     //    group's focused target, then type-matched targets, then highest value.
     if (atWar) {
         for (const u of members) {
@@ -1280,8 +1408,8 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
-    // 5) Melee engage + encircle: attack the group target when adjacent and
-    //    favorable (in any stance — a clean kill is always worth taking); only
+    // 6) Melee engage + encircle: attack the group target when adjacent and
+    //    favorable (in any stance -- a clean kill is always worth taking); only
     //    flank-step toward it to surround it when the group is actually engaging
     //    (holding/retreating units don't close into a stronger enemy).
     if (atWar && groupTarget) {
@@ -1306,7 +1434,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
-    // 6) Advance toward the objective in formation. Melee screeners go first;
+    // 7) Advance toward the objective in formation. Melee screeners go first;
     //    fragile units only advance if a friendly screen stays in front of them.
     const advance = (u) => {
         if (acted.has(u.id) || u.hasMovedThisTurn) return;

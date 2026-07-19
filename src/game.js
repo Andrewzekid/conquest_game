@@ -1,5 +1,5 @@
 /** Main game orchestrator: wires all systems together. */
-import { GRID_SIZE, MAP_SIZES, setGridSize, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
+import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
          DIPLOMACY_STATES, LORD_RECRUIT_COST, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
          SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
@@ -41,6 +41,7 @@ export class Game {
      */
     constructor(options = {}, hooks = {}) {
         this.hooks = hooks || {};
+        this.spectateMode = !!options.spectate;
         unlockAudio();
 
         if (options && options.load) {
@@ -56,13 +57,21 @@ export class Game {
         }
 
         // Resolve faction binding + map size.
-        const playerFactionId = options.playerFactionId || 'crimson';
+        // In spectate mode there is no human player; slot 0 is just another AI.
+        const playerFactionId = this.spectateMode ? null : (options.playerFactionId || 'crimson');
+        const maxAi = Math.max(0, FACTIONS.length - 1);
         const others = (options.aiFactionIds && options.aiFactionIds.length)
-            ? options.aiFactionIds.slice(0, 3)
-            : ['crimson', 'verdant', 'violet', 'azure', 'obsidian'].filter(id => id !== playerFactionId).slice(0, 3);
+            ? options.aiFactionIds.slice(0, maxAi)
+            : ['crimson', 'verdant', 'violet', 'azure', 'obsidian']
+                  .filter(id => id !== (playerFactionId || '_none_'))
+                  .slice(0, maxAi);
         this._buildFactionBindings(playerFactionId, others);
+
+        // Spectate UI controls.
+        if (this.spectateMode) this._initSpectateUI();
         const sizeKey = options.mapSize || 'medium';
-        setGridSize(MAP_SIZES[sizeKey] || MAP_SIZES.medium);
+        const { width, height } = calculateMapDimensions(sizeKey);
+        setGridDimensions(width, height);
 
         this.initState();
         this.initRenderer();
@@ -73,8 +82,11 @@ export class Game {
 
     /** Bind slots player/ai1/ai2/ai3 to chosen faction defs; build colors + def map. */
     _buildFactionBindings(playerFactionId, aiFactionIds) {
-        const slots = FACTIONS; // ['player','ai1','ai2','ai3']
-        const ids = [playerFactionId, ...aiFactionIds];
+        const slots = FACTIONS; // ['player','ai1','ai2','ai3'] or more
+        // In spectate mode slot 0 is also AI, so no human faction is assigned there.
+        const ids = this.spectateMode
+            ? aiFactionIds.slice(0, slots.length)
+            : [playerFactionId, ...aiFactionIds];
         this.factionAssignments = {};
         this.factionDefs = {};
         this.factionColors = {};
@@ -86,6 +98,50 @@ export class Game {
             this.factionDefs[slot] = def;
             this.factionColors[slot] = def.color;
         }
+    }
+
+    /** Spectate mode UI: show fast-forward / auto controls, hide end turn. */
+    _initSpectateUI() {
+        const endBtn = document.getElementById('btn-end-turn');
+        const spectateControls = document.getElementById('spectate-controls');
+        if (endBtn) endBtn.style.display = 'none';
+        if (spectateControls) {
+            spectateControls.style.display = 'flex';
+        }
+    }
+
+    /** Run N full rounds in spectate mode automatically. */
+    fastForwardTurns(n) {
+        if (!this.spectateMode || this.gameState.gameOver) return;
+        const status = document.getElementById('ff-status');
+        if (status) status.textContent = `Fast-forwarding ${n} turns...`;
+        let done = 0;
+        const step = () => {
+            if (done >= n || this.gameState.gameOver || this.gameState.paused) {
+                if (status) status.textContent = '';
+                return;
+            }
+            this.gameState.turnManager.endPlayerTurn();
+            done++;
+            if (status) status.textContent = `Fast-forwarding ${n - done} turns...`;
+            setTimeout(step, 120);
+        };
+        step();
+    }
+
+    /** Toggle continuous auto-advance in spectate mode. */
+    toggleAutoFastForward() {
+        if (!this.spectateMode) return;
+        this._autoFF = !this._autoFF;
+        const status = document.getElementById('ff-status');
+        if (status) status.textContent = this._autoFF ? 'Auto: ON' : 'Auto: OFF';
+        if (this._autoFF) this._autoFFLoop();
+    }
+
+    _autoFFLoop() {
+        if (!this._autoFF || this.gameState.gameOver || this.gameState.paused) return;
+        this.gameState.turnManager.endPlayerTurn();
+        setTimeout(() => this._autoFFLoop(), 250);
     }
 
     initState() {
@@ -178,7 +234,8 @@ export class Game {
             FACTIONS,
             (phase) => this.onPhaseChange(phase),
             (faction) => this.runAITurn(faction),
-            () => this.renderAll()
+            () => this.renderAll(),
+            this.spectateMode
         );
         this.gameState.turnManager.setRecalcFog(() => this.updateFog());
         this.gameState.turnManager.setAutosave(() => saveGame(this.gameState));
@@ -280,13 +337,26 @@ export class Game {
             onCancelGoal: (unit) => this.handleCancelGoal(unit),
             onFoundCity: (unit) => this.handleFoundCity(unit),
             onBuildSiegeTower: (unit) => this.handleBuildSiegeTower(unit),
+            onBuildSiegeEngine: (unit, engineType) => this.handleBuildSiegeEngine(unit, engineType),
             onBoard: (unit, transport) => this.handleBoard(unit, transport),
             onDisembark: (transport) => this.handleDisembark(transport),
             onWorkerBuild: (unit, buildingType) => this.handleWorkerBuild(unit, buildingType),
+            onJoinArmy: (unit, lord) => this.handleJoinArmy(unit, lord),
             onDisband: (unit) => this.handleDisband(unit),
             onPillage: (unit, tile) => this.handlePillage(unit, tile),
+            onConceal: (unit) => this.handleConceal(unit),
+            onReveal: (unit, dir) => this.handleReveal(unit, dir),
+            onCharge: (unit, targetId) => this.handleChargeById(unit, targetId),
+            onAmbushConfirm: () => this.handleAmbushConfirm(),
+            onAmbushDecline: () => this.handleAmbushDecline(),
             onEndTurn: () => this.endPlayerTurn()
         });
+    }
+
+    /** In spectate mode the viewer may pan/zoom but cannot command units. */
+    _canPlayerAct() {
+        if (this.spectateMode) return false;
+        return this.gameState.turnManager.phase === PLAYER_FACTION;
     }
 
     initInput() {
@@ -353,6 +423,7 @@ export class Game {
             if (wasDrag) return;            // a drag, not a click
             if (this.gameState.paused) return;
             if (isUIEvent(event)) return;
+            if (this.spectateMode) return;  // no commands in spectate mode
 
             if (btn === 2) {
                 this._handleRightClick();
@@ -465,11 +536,33 @@ export class Game {
     }
 
     _handleLeftClick() {
+        if (this.spectateMode) return;
         if (this.gameState.turnManager.phase !== PLAYER_FACTION) return;
         const { tile, unit: clickedUnit, lord: clickedLord, top } = this._resolveHit();
         if (!tile && !clickedUnit && !clickedLord) { this.deselect(); return; }
 
         const sel = this.gameState.selectedUnit;
+
+        // Units that are concealed or setting up concealment cannot act normally
+        // (move, attack, charge, bridge, besiege, etc.). They can only be selected
+        // and then use the UI Reveal button.
+        const selConcealed = sel && (sel.concealState === 'concealed' || sel.concealState === 'concealing');
+        if (selConcealed) {
+            // Still allow re-selecting another own unit / lord or deselecting,
+            // but ignore map commands for this unit.
+            let topIsLord = false;
+            if (top) { let c = top; while (c) { if (c.userData && c.userData.lordId !== undefined) { topIsLord = true; break; } c = c.parent; } }
+            if (topIsLord && clickedLord && clickedLord.owner === PLAYER_FACTION) {
+                this.selectLord(clickedLord);
+            } else if (clickedUnit && clickedUnit.owner === PLAYER_FACTION) {
+                this.selectUnit(clickedUnit);
+            } else if (clickedLord && clickedLord.owner === PLAYER_FACTION) {
+                this.selectLord(clickedLord);
+            } else if (sel && (!clickedUnit || clickedUnit.owner !== PLAYER_FACTION) && (!clickedLord || clickedLord.owner !== PLAYER_FACTION)) {
+                this.deselect();
+            }
+            return;
+        }
 
         // 0) Lord/King move: a selected, still-movable player lord clicks a reachable tile.
         const selLord = this.gameState.selectedLord;
@@ -575,6 +668,7 @@ export class Game {
     /** Right-click: set an auto-move goal for the selected player unit OR lord
      *  onto the hovered tile, or clear the goal if the selection is right-clicked. */
     _handleRightClick() {
+        if (this.spectateMode) return;
         const sel = this.gameState.selectedUnit;
         const selLord = this.gameState.selectedLord;
         const target = sel || selLord;
@@ -618,7 +712,11 @@ export class Game {
         this.gameState.selectedLord = null;
         this.renderer.clearHighlights();
 
-        if (!unit.hasMovedThisTurn) {
+        // Concealed units are ambushers-in-waiting: they cannot move or act
+        // normally until they reveal themselves via handleReveal.
+        const isConcealed = unit.concealState === 'concealed' || unit.concealState === 'concealing';
+
+        if (!unit.hasMovedThisTurn && !isConcealed) {
             const reach = getReachableTiles(unit, this.tiles);
             for (const other of this.gameState.units.values()) {
                 if (other.id === unit.id) continue;
@@ -847,6 +945,7 @@ export class Game {
         result.messages.forEach(m => this.log(m));
         sfx.attack();
 
+        this._playAttackAnimation(attacker, defender);
         attacker.hasAttackedThisTurn = true;
 
         const nameOf = (c) => c._isLord ? c.name : (UNIT_TYPE[c.type] && UNIT_TYPE[c.type].name) || c.type;
@@ -880,6 +979,25 @@ export class Game {
         this.checkVictory();
     }
 
+    /**
+     * Play the right attack animation for an attacker vs defender pair.
+     * Used for player attacks, AI attacks, lord attacks, charges, and ambushes.
+     */
+    _playAttackAnimation(attacker, defender) {
+        if (!this.renderer) return;
+        // Lord combatants don't have a rendered unit model, so skip animation.
+        if (attacker._isLord) return;
+        const def = UNIT_TYPE[attacker.type];
+        const fx = this.renderer;
+        if (def && def.ranged && ['ARCHER', 'LONGBOWMAN'].includes(attacker.type)) {
+            fx.addArrowShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        } else if (CHARGE_UNITS.includes(attacker.type)) {
+            fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        } else {
+            fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        }
+    }
+
     /** Normalize a clicked target (a unit, a lord object, or an already-built
      *  lord combatant) into something resolveCombat can fight. Units are their
      *  own combatant; lord objects are wrapped via lordCombatant. */
@@ -909,6 +1027,7 @@ export class Game {
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+        this._playAttackAnimation(atk, def);
         lord.hasAttackedThisTurn = true;
         syncLordHp(atk); // resolveCombat already syncs, but be safe.
 
@@ -1009,6 +1128,7 @@ export class Game {
         attacker.z = defender.z;
         this.log(`🐎 ${UNIT_TYPE[attacker.type].name} charges ${UNIT_TYPE[defender.type].name}!`);
         sfx.attack();
+        this._playAttackAnimation(attacker, defender);
         // Apply charge bonus temporarily
         const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
         attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
@@ -1074,11 +1194,13 @@ export class Game {
 
     /**
      * A unit begins concealing itself in the current tile's terrain.
+     * When isAI is true, the player-owner guard and UI feedback are skipped
+     * so the AI can use the same logic.
      */
-    handleConceal(unit) {
-        if (!unit || unit.owner !== PLAYER_FACTION) return;
+    handleConceal(unit, isAI = false) {
+        if (!unit || (!isAI && unit.owner !== PLAYER_FACTION)) return;
         if (unit.hasMovedThisTurn || unit.hasAttackedThisTurn) {
-            this.log('Unit must not have acted this turn to conceal.');
+            if (!isAI) this.log('Unit must not have acted this turn to conceal.');
             return;
         }
         const tile = this.tiles.get(`${unit.x},${unit.z}`);
@@ -1199,6 +1321,74 @@ export class Game {
     handleAmbushDecline() {
         this.gameState.pendingAmbush = null;
         this.log('Ambush opportunity passed.');
+    }
+
+    /**
+     * A concealed player unit reveals itself to make a single surprise attack
+     * on an adjacent enemy. Revealing uses the unit's action and move for the turn.
+     */
+    handleReveal(unit, dir) {
+        if (!unit || unit.owner !== PLAYER_FACTION) return;
+        if (unit.concealState !== 'concealed') {
+            this.log('Unit is not concealed.');
+            return;
+        }
+        // dir is one of: 'n','s','e','w' or a {dx,dz} object from the UI.
+        let dx = 0, dz = 0;
+        if (typeof dir === 'string') {
+            if (dir === 'n') dz = -1;
+            else if (dir === 's') dz = 1;
+            else if (dir === 'e') dx = 1;
+            else if (dir === 'w') dx = -1;
+        } else if (dir && typeof dir.dx === 'number' && typeof dir.dz === 'number') {
+            dx = dir.dx; dz = dir.dz;
+        }
+        if (dx === 0 && dz === 0) {
+            this.log('Choose an adjacent direction to reveal and attack.');
+            return;
+        }
+        const targetX = unit.x + dx, targetZ = unit.z + dz;
+        const targetTile = this.tiles.get(`${targetX},${targetZ}`);
+        if (!targetTile) {
+            this.log('Target tile is off the map.');
+            return;
+        }
+        // Find an at-war enemy unit or exposed lord on that tile.
+        let target = null;
+        for (const u of this.gameState.units.values()) {
+            if (u.x === targetX && u.z === targetZ && u.owner !== PLAYER_FACTION &&
+                canAttack(this.gameState.diplomacy, PLAYER_FACTION, u.owner)) {
+                target = u; break;
+            }
+        }
+        if (!target) {
+            for (const l of this.gameState.lords) {
+                if (l.x === targetX && l.z === targetZ && l.owner !== PLAYER_FACTION &&
+                    canAttack(this.gameState.diplomacy, PLAYER_FACTION, l.owner)) {
+                    const guarded = [...this.gameState.units.values()].some(
+                        u => u.owner === l.owner && u.x === l.x && u.z === l.z);
+                    if (!guarded) { target = lordCombatant(l); break; }
+                }
+            }
+        }
+        if (!target) {
+            this.log('No enemy target in that direction.');
+            return;
+        }
+        this._executeAmbush(unit, target);
+        unit.hasMovedThisTurn = true;
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
+    /**
+     * UI wrapper for charge: look up the target by id and perform the charge.
+     */
+    handleChargeById(attacker, targetId) {
+        if (!attacker || !targetId) return;
+        const defender = this.gameState.units.get(targetId);
+        if (!defender) return;
+        this.handleCharge(attacker, defender);
     }
 
     /** Record a fallen unit in the graveyard for Raise Dead. */
@@ -1432,6 +1622,61 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
+    /** An Engineer starts constructing a field Catapult or Trebuchet.
+     *  Pays the unit cost up front; the engine spawns after its buildTurns.
+     *  This is the player-side handler for the UI siege-engine buttons. */
+    handleBuildSiegeEngine(unit, engineType) {
+        if (!unit || unit.type !== 'ENGINEER' || unit.owner !== PLAYER_FACTION) return;
+        if (!SIEGE_ENGINES.includes(engineType)) { this.log('Invalid siege engine type.'); return; }
+        if (unit.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
+        if (this.gameState.construction && this.gameState.construction.has(unit.id)) {
+            this.log('This engineer is already building something.'); return;
+        }
+        const def = this.factionDefs[PLAYER_FACTION];
+        const cost = getUnitCostFor(engineType, def);
+        const pool = this.gameState.resources.player;
+        if (!canAfford(engineType, pool, cost)) { this.log('Not enough resources to build this siege engine.'); return; }
+        this.gameState.resources.player = spendCost(engineType, pool, cost);
+        const buildTurns = UNIT_TYPE[engineType].buildTurns || 2;
+        this.gameState.construction.set(unit.id, {
+            type: 'SIEGE_ENGINE', engineType,
+            turnsLeft: buildTurns,
+            x: unit.x, z: unit.z, faction: PLAYER_FACTION
+        });
+        unit.hasAttackedThisTurn = true;
+        sfx.besiege();
+        this.log(`🔨 Engineer #${unit.id} started building a ${UNIT_TYPE[engineType].name} — ready in ${buildTurns} turns.`);
+        this.ui.showUnitInfo(unit);
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
+    /** A unit joins a lord's army if the lord has command capacity. */
+    handleJoinArmy(unit, lord) {
+        if (!unit || !lord) return;
+        if (unit.owner !== PLAYER_FACTION || lord.owner !== PLAYER_FACTION) {
+            this.log('Only your own units can join your lords.'); return;
+        }
+        if (unit.type === 'SETTLER' || unit.type === 'WORKER') {
+            this.log('Settlers and workers cannot join armies.'); return;
+        }
+        if (unit.x !== lord.x || unit.z !== lord.z) {
+            this.log('Unit must be on the same tile as the lord.'); return;
+        }
+        if (!canCommand(lord)) {
+            this.log(`${lord.name} cannot command more units.`); return;
+        }
+        if ((lord.army || []).includes(unit.id)) {
+            this.log('This unit is already in the lord\'s army.'); return;
+        }
+        assignArmy(lord, unit.id);
+        unit.lordId = lord.id;
+        this.log(`${UNIT_TYPE[unit.type].name} #${unit.id} joined ${lord.name}'s army (${lord.army.length}/${maxArmySize(lord)}).`);
+        sfx.click();
+        this.ui.showUnitInfo(unit);
+        this.renderAll();
+    }
+
     /** An Engineer starts constructing Ladders near an enemy city.
      *  Pays LADDER_COST up front; ladders complete after LADDER_BUILD_TURNS.
      *  Ladders allow infantry to assault fortified cities (cheaper alternative to siege tower). */
@@ -1552,9 +1797,9 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
-    /** Tick one faction's in-progress Siege Tower builds: decrement the
-     *  counter and spawn the tower when it finishes. Used for both the player
-     *  (at player turn start) and each AI (at the start of its turn). */
+    /** Tick one faction's in-progress construction projects: decrement the
+     *  counter and spawn the unit when it finishes. Handles Siege Towers and
+     *  field-built siege engines (Catapult/Trebuchet). */
     _tickConstructionFor(faction) {
         if (!this.gameState.construction || this.gameState.construction.size === 0) return;
         const def = this.factionDefs[faction];
@@ -1565,17 +1810,26 @@ export class Game {
             if (proj.turnsLeft <= 0) {
                 const tile = this.tiles.get(`${proj.x},${proj.z}`);
                 if (tile) {
-                    const unit = createUnit('SIEGE_TOWER', faction, proj.x, proj.z, { factionDef: def });
+                    let unit;
+                    if (proj.type === 'SIEGE_ENGINE') {
+                        unit = createUnit(proj.engineType, faction, proj.x, proj.z, { factionDef: def });
+                        this.log(`${factionName}: ${UNIT_TYPE[proj.engineType].name} completed at [${proj.x}, ${proj.z}]!`);
+                    } else {
+                        unit = createUnit('SIEGE_TOWER', faction, proj.x, proj.z, { factionDef: def });
+                        this.log(`${factionName}: Siege Tower completed at [${proj.x}, ${proj.z}]! Adjacent units can now assault fortified cities.`);
+                    }
                     this.gameState.units.set(unit.id, unit);
                     const lordHere = this.gameState.lords.find(l =>
                         l.owner === faction && l.x === proj.x && l.z === proj.z && canCommand(l));
                     if (lordHere) { assignArmy(lordHere, unit.id); unit.lordId = lordHere.id; }
-                    this.log(`${factionName}: Siege Tower completed at [${proj.x}, ${proj.z}]! Adjacent units can now assault fortified cities.`);
                     sfx.levelUp();
                 }
                 this.gameState.construction.delete(engId);
             } else if (faction === PLAYER_FACTION) {
-                this.log(`Siege Tower at [${proj.x}, ${proj.z}]: ${proj.turnsLeft} turn(s) left.`);
+                const label = proj.type === 'SIEGE_ENGINE'
+                    ? UNIT_TYPE[proj.engineType].name
+                    : 'Siege Tower';
+                this.log(`${label} at [${proj.x}, ${proj.z}]: ${proj.turnsLeft} turn(s) left.`);
             }
         }
     }
@@ -2564,6 +2818,7 @@ export class Game {
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
                         result.messages.forEach(m => this.log(m));
                         attacker.hasAttackedThisTurn = true;
+                        this._playAttackAnimation(attacker, defender);
                         if (result.defenderDied) {
                             this._onUnitDeath(defender);
                             this._maybeRespawnOnKill(faction);
@@ -2621,8 +2876,7 @@ export class Game {
                 case 'buildSiegeTower': {
                     // An AI engineer starts a siege tower vs an adjacent enemy
                     // city. Mirrors the player's handleBuildSiegeTower but for
-                    // an AI faction (ticks down via _tickConstruction only for
-                    // the player; AI towers complete via _aiTickConstruction).
+                    // an AI faction (ticks down via _tickConstructionFor).
                     const unit = this.gameState.units.get(action.unitId);
                     const tile = this.tiles.get(action.tileKey);
                     if (!unit || unit.type !== 'ENGINEER' || unit.owner !== faction) break;
@@ -2645,6 +2899,11 @@ export class Game {
                     this.log(`${factionName}: engineer started a Siege Tower near [${tile.x}, ${tile.z}].`);
                     break;
                 }
+                case 'conceal': {
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (unit && unit.owner === faction) this.handleConceal(unit, true);
+                    break;
+                }
             }
         }
         // Mop-up: any AI unit that still has its action and is adjacent to an
@@ -2657,6 +2916,17 @@ export class Game {
     }
 
     updateFog() {
+        // In spectate mode, reveal the entire map so the viewer can watch all factions.
+        if (this.spectateMode) {
+            this.gameState.visible = new Set();
+            this.gameState.explored = new Set();
+            for (const t of this.tiles.values()) {
+                const k = `${t.x},${t.z}`;
+                this.gameState.visible.add(k);
+                this.gameState.explored.add(k);
+            }
+            return;
+        }
         const playerDef = this.factionDefs[PLAYER_FACTION];
         const baseVision = getFactionVision(playerDef);
         const sources = [];

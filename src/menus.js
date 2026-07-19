@@ -1,7 +1,7 @@
 /** Start menu (choose faction + map) and pause menu. Overlays live in index.html.
  *  Phase F: Added player count slider and spectate mode. */
 import { FACTION_DEFS, FACTION_IDS } from './faction.js';
-import { MAP_SIZES, FACTIONS, MAX_FACTIONS } from './config.js';
+import { MAP_SIZES, FACTIONS, MAX_FACTIONS, setFactionSlots } from './config.js';
 import { sfx, unlockAudio } from './sound.js';
 import { loadSavedExists } from './save.js';
 
@@ -93,11 +93,17 @@ export function showStartMenu(onStart) {
         menu.style.display = 'none';
         // Build AI faction ids based on player count
         const aiCount = _playerCount - 1;
-        const others = FACTION_IDS.filter(id => id !== _selectedFaction);
+        // In spectate mode, the selected faction is irrelevant; use a stable
+        // list of factions so slot 0 is the observer slot.
+        const others = _spectateMode
+            ? FACTION_IDS.slice()
+            : FACTION_IDS.filter(id => id !== _selectedFaction);
         const aiFactionIds = others.slice(0, aiCount);
-        if (_onStart) _onStart({ 
-            playerFactionId: _spectateMode ? null : _selectedFaction, 
-            aiFactionIds, 
+        // Configure the global FACTIONS array before the game initializes.
+        setFactionSlots(_playerCount);
+        if (_onStart) _onStart({
+            playerFactionId: _spectateMode ? null : _selectedFaction,
+            aiFactionIds,
             mapSize,
             playerCount: _playerCount,
             spectate: _spectateMode

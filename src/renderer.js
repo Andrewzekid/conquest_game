@@ -288,6 +288,80 @@ export class GameRenderer {
     /** Spawn a transient AOE impact effect at a tile: an expanding ring on the
      *  ground plus a lobbed rock. Lives ~700ms. Called when a CATAPULT/TREBUCHET
      *  attacks. */
+    /**
+     * Animate a unit model to show an attack. The model is looked up in the
+     * current unit group by unitId; if it isn't rendered this frame we skip.
+     */
+    _animateModel(unitId, animFn, duration = 300) {
+        let mesh = null;
+        this.unitGroup.traverse(o => {
+            if (o.userData && o.userData.unitId === unitId && !mesh) mesh = o;
+        });
+        if (!mesh) return;
+        const startPos = mesh.position.clone();
+        const startRot = mesh.rotation.clone();
+        const startTime = performance.now();
+        const loop = () => {
+            const t = Math.min(1, (performance.now() - startTime) / duration);
+            animFn(mesh, t, startPos, startRot);
+            if (t < 1) requestAnimationFrame(loop);
+            else { mesh.position.copy(startPos); mesh.rotation.copy(startRot); }
+        };
+        loop();
+    }
+
+    addArrowShot(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.55;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.55;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const arrow = new THREE.Group();
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.45, 6), new THREE.MeshBasicMaterial({ color: 0x6a4220 }));
+        shaft.rotation.z = Math.PI / 2; shaft.position.x = 0.22; arrow.add(shaft);
+        const head = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 6), new THREE.MeshBasicMaterial({ color: 0xc0c4cc }));
+        head.rotation.z = -Math.PI / 2; head.position.x = 0.5; arrow.add(head);
+        arrow.position.set(x0, y0, z0);
+        arrow.lookAt(x1, y1, z1);
+        this.effectsGroup.add(arrow);
+        const start = performance.now();
+        const life = 320;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !arrow.parent) { if (arrow.parent) this.effectsGroup.remove(arrow); return; }
+            arrow.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
+            requestAnimationFrame(step);
+        };
+        step();
+        // Archer body recoil.
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const recoil = Math.sin(t * Math.PI) * 0.12;
+            m.position.set(p.x - (x1 - x0) * recoil * 0.5, p.y, p.z - (z1 - z0) * recoil * 0.5);
+            m.rotation.y = r.y + Math.sin(t * Math.PI) * 0.15;
+        }, 320);
+    }
+
+    addSwordLunge(attackerId, fromX, fromZ, toX, toZ) {
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const forward = Math.sin(t * Math.PI) * 0.45;
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
+            m.rotation.z = r.z + Math.sin(t * Math.PI) * 0.25;
+        }, 300);
+    }
+
+    addCavalryCharge(attackerId, fromX, fromZ, toX, toZ) {
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const forward = Math.sin(t * Math.PI) * 0.85;
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            // Slight rear-up peak at mid-animation.
+            const rear = Math.sin(t * Math.PI) * 0.18;
+            m.position.set(p.x + (dx / len) * forward, p.y + rear, p.z + (dz / len) * forward);
+            m.rotation.x = r.x - rear * 0.8;
+        }, 380);
+    }
+
     addImpact(x, z, fromX, fromZ) {
         const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
         const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;

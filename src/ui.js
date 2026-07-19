@@ -1,7 +1,8 @@
 /** UI: resource bar, tile/unit info, build menu, diplomacy panel, lord panel, combat log. */
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
-         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
+         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CONCEAL_TERRAINS,
+         cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
@@ -345,6 +346,43 @@ export function bindUI(gameState, callbacks) {
             html += `<span style="font-size:11px; color:#9cf;">🚢 Aboard a transport (disembark to act).</span><br>`;
         }
         if (unit.owner === PLAYER_FACTION) {
+            // Conceal / Reveal controls for forest/mountain ambush mechanic.
+            const tile = gameState.tiles.get(`${unit.x},${unit.z}`);
+            const canConceal = tile && CONCEAL_TERRAINS.includes(tile.terrain) &&
+                !unit.hasMovedThisTurn && !unit.hasAttackedThisTurn &&
+                unit.concealState !== 'concealing' && unit.concealState !== 'concealed';
+            if (canConceal) {
+                const turns = tile.terrain === 'MOUNTAIN' ? 2 : 1;
+                html += `<button id="conceal-btn" style="font-size:11px; padding:2px 6px; margin-top:2px; color:#7cf;" title="Conceal this unit in the ${tile.terrain.toLowerCase()} (${turns} turn${turns === 1 ? '' : 's'}). Concealed units cannot move.">🌲 Conceal in ${tile.terrain} (${turns}t)</button><br>`;
+            }
+            if (unit.concealState === 'concealing') {
+                html += `<span style="font-size:11px; color:#7cf;">🌲 Concealing: ${unit.concealTurnsLeft} turn${unit.concealTurnsLeft === 1 ? '' : 's'} left.</span><br>`;
+            }
+            if (unit.concealState === 'concealed') {
+                html += `<div style="font-size:11px; color:#7cfc00; margin-top:4px;">🌲 Concealed — cannot move.</div>`;
+                html += `<div style="font-size:10px; color:#9ab;">Reveal to ambush an adjacent square:</div>`;
+                const dirs = [
+                    { key: 'n', dx: 0, dz: -1, label: '⬆ N' },
+                    { key: 's', dx: 0, dz: 1, label: '⬇ S' },
+                    { key: 'e', dx: 1, dz: 0, label: '➡ E' },
+                    { key: 'w', dx: -1, dz: 0, label: '⬅ W' }
+                ];
+                html += `<div style="display:flex; gap:2px; flex-wrap:wrap; margin:2px 0;">`;
+                for (const d of dirs) {
+                    html += `<button class="reveal-dir-btn" data-dx="${d.dx}" data-dz="${d.dz}" style="font-size:10px; padding:2px 6px;" title="Reveal and ambush the tile to the ${d.key.toUpperCase()}">${d.label}</button>`;
+                }
+                html += `</div>`;
+            }
+            // Cavalry charge hint/button when adjacent to an enemy.
+            if (CHARGE_UNITS.includes(unit.type) && !unit.hasAttackedThisTurn && !unit.hasMovedThisTurn) {
+                const chargeTargets = (gameState.chargeTargets || []).filter(u => u && u.owner !== PLAYER_FACTION);
+                if (chargeTargets.length) {
+                    html += `<div style="font-size:11px; color:#ffd35a; margin-top:4px;">🐎 Charge adjacent enemy:</div>`;
+                    for (const tgt of chargeTargets) {
+                        html += `<button class="charge-btn" data-target-id="${tgt.id}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id} for +${2} attack (exhausts cavalry).">⚔️ Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id}</button>`;
+                    }
+                }
+            }
             if (unit.type === 'SETTLER') {
                 html += `<button id="found-city-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Found a new city on this tile (consumes the settler).">🏠 Found City Here</button><br>`;
             }
@@ -484,6 +522,16 @@ export function bindUI(gameState, callbacks) {
         const sebtns = document.querySelectorAll('.build-siege-engine-btn');
         sebtns.forEach(b => {
             b.onclick = () => callbacks.onBuildSiegeEngine && callbacks.onBuildSiegeEngine(unit, b.dataset.engine);
+        });
+        const concealBtn = document.getElementById('conceal-btn');
+        if (concealBtn) concealBtn.onclick = () => callbacks.onConceal && callbacks.onConceal(unit);
+        const revealBtns = document.querySelectorAll('.reveal-dir-btn');
+        revealBtns.forEach(b => {
+            b.onclick = () => callbacks.onReveal && callbacks.onReveal(unit, { dx: Number(b.dataset.dx), dz: Number(b.dataset.dz) });
+        });
+        const chargeBtns = document.querySelectorAll('.charge-btn');
+        chargeBtns.forEach(b => {
+            b.onclick = () => callbacks.onCharge && callbacks.onCharge(unit, Number(b.dataset.targetId));
         });
     }
 

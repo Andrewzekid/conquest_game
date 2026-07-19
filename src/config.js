@@ -322,6 +322,11 @@ export function generateFactionSlots(playerCount) {
 // Default faction slots (4 players)
 export let FACTIONS = ['player', 'ai1', 'ai2', 'ai3'];
 
+// Dynamically set FACTIONS based on player count. Call before Game init.
+export function setFactionSlots(playerCount) {
+    FACTIONS = generateFactionSlots(Math.max(2, Math.min(MAX_FACTIONS, playerCount)));
+}
+
 // Per-faction colors. `tile` is the emissive tint shown on owned tiles;
 // `unit` is the marker color for that faction's units.
 // Extended to support up to 10 factions
