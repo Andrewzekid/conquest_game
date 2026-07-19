@@ -56,7 +56,7 @@ export const UNIT_TYPE = {
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
     SIEGE:       { name: 'Siege',        hp: 14, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 4, wood: 2, iron: 1 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 2 },
     SETTLER:     { name: 'Settler',      hp: 6,  attack: 1, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 2 }, canFoundCity: true, buildTurns: 2, ranged: false, attackRange: 1 },
-    ENGINEER:    { name: 'Engineer',     hp: 8,  attack: 2, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 2, wood: 1 }, canBuildBridge: true, canBuildSiegeTower: true, ranged: false, attackRange: 1 },
+    ENGINEER:    { name: 'Engineer',     hp: 8,  attack: 2, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 2, wood: 1 }, canBuildBridge: true, canBuildSiegeTower: true, canBuildStructure: true, ranged: false, attackRange: 1 },
     // Worker: a Civ-style improvement builder. It travels the map and constructs
     // terrain improvements (FARM/LUMBERMILL/MINE) on owned tiles within a city's
     // influence radius, spending its action to do so.
@@ -74,20 +74,14 @@ export const UNIT_TYPE = {
     // Naval units (unlocked by a Harbor building in a coastal/river city).
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
-    TRIREME:     { name: 'Trireme',      hp: 16, attack: 7, defense: 3, moveRange: 5, upkeep: { food: 3, gold: 6, wood: 3 }, naval: true, ranged: false, attackRange: 1, vision: 4 },
     FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
-    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 },
-    CARAVEL:     { name: 'Caravel',      hp: 14, attack: 4, defense: 3, moveRange: 6, upkeep: { food: 3, gold: 5, wood: 3 }, naval: true, ranged: false, attackRange: 1, vision: 7 },
-    BATTLESHIP:  { name: 'Battleship',   hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 4, vision: 5, aoe: true, canSetFire: true },
-    SUBMARINE:   { name: 'Submarine',    hp: 18, attack: 14, defense: 2, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 2, iron: 3 }, naval: true, ranged: false, attackRange: 1, vision: 3, stealth: true },
-    DESTROYER:   { name: 'Destroyer',    hp: 25, attack: 9, defense: 5, moveRange: 5, upkeep: { food: 4, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 6, antiSub: true },
-    IRONCLAD:    { name: 'Ironclad',     hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 3, iron: 3 }, naval: true, ranged: true, attackRange: 2, vision: 4 }
+    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
 // (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
 export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
-export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'TRIREME', 'FRIGATE', 'GALLEON', 'CARAVEL', 'BATTLESHIP', 'SUBMARINE', 'DESTROYER', 'IRONCLAD'];
+export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
 export const SIEGE_ENGINES = ['CATAPULT', 'TREBUCHET'];
@@ -125,14 +119,8 @@ export const UNIT_COST = {
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
     GALLEY:      { gold: 70, food: 10, wood: 40, iron: 0,  production: 20 },
     TRANSPORT:   { gold: 60, food: 5,  wood: 30, iron: 0,  production: 25 },
-    TRIREME:     { gold: 80, food: 10, wood: 45, iron: 0,  production: 22 },
     FRIGATE:     { gold: 100, food: 15, wood: 50, iron: 10, production: 28 },
-    GALLEON:     { gold: 150, food: 20, wood: 60, iron: 20, production: 35 },
-    CARAVEL:     { gold: 70, food: 10, wood: 50, iron: 0,  production: 18 },
-    BATTLESHIP:  { gold: 200, food: 25, wood: 60, iron: 30, production: 45 },
-    SUBMARINE:   { gold: 120, food: 10, wood: 30, iron: 25, production: 30 },
-    DESTROYER:   { gold: 140, food: 15, wood: 45, iron: 20, production: 32 },
-    IRONCLAD:    { gold: 180, food: 20, wood: 50, iron: 25, production: 38 }
+    GALLEON:     { gold: 150, food: 20, wood: 60, iron: 20, production: 35 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -164,12 +152,7 @@ export const TYPE_ADVANTAGE = {
     CATAPHRACT:  { strongAgainst: 'INFANTRY',  multiplier: 1.5 },
     // Naval type advantages
     FRIGATE:     { strongAgainst: 'GALLEY',    multiplier: 1.5 },
-    GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 },
-    BATTLESHIP:  { strongAgainst: 'GALLEON',   multiplier: 1.5 },
-    SUBMARINE:   { strongAgainst: 'TRANSPORT', multiplier: 1.8 },
-    DESTROYER:   { strongAgainst: 'SUBMARINE', multiplier: 1.6 },
-    TRIREME:     { strongAgainst: 'GALLEY',    multiplier: 1.3 },
-    IRONCLAD:    { strongAgainst: 'FRIGATE',   multiplier: 1.4 }
+    GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 }
 };
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
@@ -282,6 +265,21 @@ export const BUILDING_TYPE = {
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }
+};
+
+// --- Engineer Structures (traps / defensive structures) ---
+// Engineers can build one of three structure types on owned tiles within city
+// influence. Structures are removed when an enemy captures the tile.
+export const STRUCTURE_TYPE = {
+    SPIKES:       { name: 'Spikes',       desc: 'Damages charging cavalry that moves onto/adjacent to this tile.', damageVsCavalry: 4, buildTurns: 2 },
+    FORTIFICATION:{ name: 'Fortification',desc: '+3 defense to friendly units on this tile. Protects against infantry/artillery.', defenseBonus: 3, buildTurns: 2 },
+    FALL_TRAP:    { name: 'Fall Trap',    desc: 'Damages and stuns (skip next turn) any enemy that walks onto this tile.', damage: 3, stun: true, buildTurns: 2 }
+};
+
+export const STRUCTURE_COST = {
+    SPIKES:        { gold: 30, wood: 20, iron: 0 },
+    FORTIFICATION: { gold: 50, wood: 30, iron: 10 },
+    FALL_TRAP:     { gold: 40, wood: 10, iron: 5 }
 };
 
 // --- Natural Wonders ---

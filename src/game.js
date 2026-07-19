@@ -10,6 +10,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
          RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
          LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
+         STRUCTURE_TYPE, STRUCTURE_COST,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
@@ -198,6 +199,10 @@ export class Game {
             // Engineer construction projects: engineerId -> { type, turnsLeft, x, z, faction }.
             // Currently used for Siege Towers built near enemy cities.
             construction: new Map(),
+            // Engineer-built defensive structures: tileKey -> { type, owner }.
+            // Structures are placed on owned tiles within city influence and removed
+            // when an enemy captures the tile.
+            structures: new Map(),
             // Bridge tile keys (rivers bridged by Siege/Engineer). Also mirrored on tile.bridge.
             bridges: new Set(),
             // Concealment system: tileKey -> [unitId, ...] for units hidden in terrain.
@@ -2730,6 +2735,9 @@ export class Game {
                 if (lord.x === target.x && lord.z === target.z) break;
                 const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
                 if (!step || (step.x === lord.x && step.z === lord.z)) break;
+                // Don't step onto an enemy city tile (lords can't enter enemy cities)
+                const destTile = this.tiles.get(`${step.x},${step.z}`);
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction) break;
                 lord.x = step.x; lord.z = step.z;
             }
             lord.hasMovedThisTurn = true;
@@ -3126,6 +3134,7 @@ export class Game {
     }
 
     checkVictory() {
+        if (this.spectateMode) return; // no victory/defeat in spectate mode
         if (this.gameState.gameOver) return;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
         for (const f of FACTIONS) {
