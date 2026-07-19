@@ -110,20 +110,36 @@ export class Game {
         }
     }
 
-    /** Run N full rounds in spectate mode automatically. */
+    /** Run N full rounds in spectate mode automatically. A monotonically
+     *  increasing token cancels any previously scheduled fast-forward loop so
+     *  pressing FF5 then FF10 (or FF5 twice) never runs two loops at once —
+     *  the newest request wins and the old one stops itself on the next tick. */
     fastForwardTurns(n) {
         if (!this.spectateMode || this.gameState.gameOver) return;
+        // Stop auto-FF when the user asks for a fixed fast-forward.
+        if (this._autoFF) {
+            this._autoFF = false;
+            const status = document.getElementById('ff-status');
+            if (status) status.textContent = '';
+        }
+        // Cancel any in-progress fast-forward loop by bumping the token.
+        this._ffToken = (this._ffToken || 0) + 1;
+        const myToken = this._ffToken;
         const status = document.getElementById('ff-status');
         if (status) status.textContent = `Fast-forwarding ${n} turns...`;
         let done = 0;
         const step = () => {
+            // If a newer FF/auto request superseded this one, stop silently.
+            if (myToken !== this._ffToken) return;
             if (done >= n || this.gameState.gameOver || this.gameState.paused) {
                 if (status) status.textContent = '';
                 return;
             }
+            this._rebuildDiploCache();
             this.gameState.turnManager.endPlayerTurn();
             done++;
-            if (status) status.textContent = `Fast-forwarding ${n - done} turns...`;
+            if (myToken === this._ffToken && status)
+                status.textContent = `Fast-forwarding ${n - done} turns...`;
             setTimeout(step, 120);
         };
         step();
@@ -133,6 +149,8 @@ export class Game {
     toggleAutoFastForward() {
         if (!this.spectateMode) return;
         this._autoFF = !this._autoFF;
+        // Bump the FF token so any in-progress fixed fast-forward stops.
+        this._ffToken = (this._ffToken || 0) + 1;
         const status = document.getElementById('ff-status');
         if (status) status.textContent = this._autoFF ? 'Auto: ON' : 'Auto: OFF';
         if (this._autoFF) this._autoFFLoop();
@@ -140,6 +158,7 @@ export class Game {
 
     _autoFFLoop() {
         if (!this._autoFF || this.gameState.gameOver || this.gameState.paused) return;
+        this._rebuildDiploCache();
         this.gameState.turnManager.endPlayerTurn();
         setTimeout(() => this._autoFFLoop(), 250);
     }
@@ -211,6 +230,10 @@ export class Game {
             const king = createLord(slot, start.x, start.z, def.king.name, def.king.class);
             king.isKing = true;
             king.active = def.king.active;
+            // createLord computed maxHp with isKing=false (12 HP). Now that the
+            // king flag is set, recompute so the king gets its full HP (>=50).
+            king.maxHp = lordMaxHp(king);
+            king.hp = king.maxHp;
             this.gameState.lords.push(king);
             assignArmy(king, unit.id);
             unit.lordId = king.id;
@@ -404,6 +427,18 @@ export class Game {
             else { this.ui.showLordInfo(null); this.ui.showUnitInfo(null); }
         });
 
+        // When the cursor leaves the map canvas, clear the hover info panel —
+        // but only if nothing is selected (a selected unit/lord keeps its panel
+        // pinned so its action buttons stay usable). Without this the panel
+        // could stay stuck on the last hovered unit when the mouse moves off the
+        // map onto the surrounding page chrome.
+        dom.addEventListener('mouseleave', () => {
+            const hasSelection = this.gameState.selectedUnit || this.gameState.selectedLord;
+            if (hasSelection) return;
+            this.ui.showLordInfo(null);
+            this.ui.showUnitInfo(null);
+        });
+
         dom.addEventListener('mousedown', (event) => {
             if (this.gameState.gameOver) return;
             if (isUIEvent(event)) return;
@@ -448,6 +483,14 @@ export class Game {
             // Don't hijack typing in inputs/selects.
             const t = e.target;
             if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
+            // Escape unpins (deselects) the current unit/lord, which also clears
+            // the hover info panel — a quick way to dismiss a stuck menu.
+            if (e.key === 'Escape' && !this.spectateMode) {
+                if (this.gameState.selectedUnit || this.gameState.selectedLord) {
+                    this.deselect();
+                }
+                return;
+            }
             if (!panKey(e)) return;
             if (e.key.startsWith('Arrow')) e.preventDefault();
             this._keys.add(e.key.toLowerCase());
@@ -2339,10 +2382,58 @@ export class Game {
         this.checkVictory();
     }
 
+    /** Rebuild the per-turn diplomacy cache: each faction's power, its city
+     *  list, and pairwise nearest-city distances. Called once at the start of
+     *  endPlayerTurn (and invalidated whenever a city changes hands mid-turn via
+     *  _invalidateDiploCache). This turns the AI diplomacy phase from
+     *  O(factions × tiles²) into O(factions × tiles) + O(factions² × cities²). */
+    _rebuildDiploCache() {
+        const power = {};
+        const cities = {};
+        for (const f of FACTIONS) { power[f] = 0; cities[f] = []; }
+        for (const u of this.gameState.units.values()) {
+            if (!u.boarded && power[u.owner] !== undefined) power[u.owner]++;
+        }
+        for (const t of this.tiles.values()) {
+            if (t.terrain === 'CITY' && t.owner && cities[t.owner] !== undefined) {
+                cities[t.owner].push(t);
+                power[t.owner] += 2;
+            }
+        }
+        for (const f of FACTIONS) {
+            const gold = (this.gameState.resources[f] && this.gameState.resources[f].gold) || 0;
+            power[f] += Math.floor(gold / 100);
+        }
+        // Pairwise nearest-city Manhattan distance (O(cities_a × cities_b) per
+        // pair — tiny compared to the old O(tiles²) scan).
+        const dist = {};
+        for (let i = 0; i < FACTIONS.length; i++) {
+            for (let j = i + 1; j < FACTIONS.length; j++) {
+                const a = FACTIONS[i], b = FACTIONS[j];
+                const ca = cities[a] || [], cb = cities[b] || [];
+                let minDist = Infinity;
+                for (const ta of ca) {
+                    for (const tb of cb) {
+                        const d = Math.abs(ta.x - tb.x) + Math.abs(ta.z - tb.z);
+                        if (d < minDist) minDist = d;
+                    }
+                }
+                dist[`${a}:${b}`] = minDist === Infinity ? 50 : minDist;
+            }
+        }
+        this._diploCache = { power, cities, dist, turn: this.gameState.turn };
+    }
+
+    /** Invalidate the diplomacy cache (e.g. after a city capture mid-turn). */
+    _invalidateDiploCache() { this._diploCache = null; }
+
     /** Rough military/economic power of a faction: units + cities (weighted) +
      *  a gold contribution. Used by the AI to judge whether it has the advantage
-     *  to declare war. */
+     *  to declare war. Uses the per-turn cache when available. */
     _factionPower(faction) {
+        if (this._diploCache && this._diploCache.turn === this.gameState.turn) {
+            return this._diploCache.power[faction] || 0;
+        }
         let units = 0, cities = 0;
         for (const u of this.gameState.units.values()) {
             if (u.owner === faction && !u.boarded) units++;
@@ -2374,8 +2465,15 @@ export class Game {
         return strategies[personality] || strategies.DEFENSIVE;
     }
 
-    /** Calculate distance between two factions' nearest cities. */
+    /** Calculate distance between two factions' nearest cities. Uses the
+     *  per-turn cache (O(cities²) once) instead of an O(tiles²) scan per call. */
     _factionDistance(factionA, factionB) {
+        if (this._diploCache && this._diploCache.turn === this.gameState.turn) {
+            const k = `${factionA}:${factionB}`;
+            return this._diploCache.dist[k] != null ? this._diploCache.dist[k]
+                : (this._diploCache.dist[`${factionB}:${factionA}`] != null
+                    ? this._diploCache.dist[`${factionB}:${factionA}`] : 50);
+        }
         let minDist = Infinity;
         for (const t of this.tiles.values()) {
             if (t.terrain !== 'CITY' || t.owner !== factionA) continue;
@@ -2525,14 +2623,14 @@ export class Game {
                 if (rel.state === DIPLOMACY_STATES.TRADE_PACT) tradeScore = -Infinity; // already have it
             }
 
-            candidates.push({ other, ratio, distance, sharedEnemy, isNeighbor, isDistant, allianceScore, tradeScore, peaceScore, rel });
+            candidates.push({ other, ratio, theirPower, distance, sharedEnemy, isNeighbor, isDistant, allianceScore, tradeScore, peaceScore, rel });
         }
 
         // Sort by best opportunity
         candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore));
 
         for (const c of candidates) {
-            const { other, ratio, rel, allianceScore, tradeScore, peaceScore, sharedEnemy, isDistant } = c;
+            const { other, ratio, theirPower, rel, allianceScore, tradeScore, peaceScore, sharedEnemy, isDistant } = c;
             let type = null;
 
             // Pick best treaty type based on strategic scores
@@ -3017,6 +3115,9 @@ export class Game {
         this._endingTurn = true;
         try {
             sfx.endTurn();
+            // Rebuild the diplomacy cache once per round so the AI diplomacy
+            // phase (power/distance scoring) is O(cities²) instead of O(tiles²).
+            this._rebuildDiploCache();
             this.gameState.turnManager.endPlayerTurn();
             this.ui.updateAll();
         } finally {
