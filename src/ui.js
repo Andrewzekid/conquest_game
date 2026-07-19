@@ -2,6 +2,7 @@
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
          EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CONCEAL_TERRAINS,
+         STRUCTURE_TYPE, STRUCTURE_COST,
          cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
@@ -394,7 +395,9 @@ export function bindUI(gameState, callbacks) {
                 if (constructing) {
                     const label = constructing.type === 'SIEGE_ENGINE'
                         ? `Building ${UNIT_TYPE[constructing.engineType] ? UNIT_TYPE[constructing.engineType].name : 'Siege Engine'}`
-                        : 'Building Siege Tower';
+                        : constructing.type === 'STRUCTURE'
+                            ? `Building ${(STRUCTURE_TYPE[constructing.structureType] || {}).name || 'Structure'}`
+                            : 'Building Siege Tower';
                     html += `<span style="font-size:11px; color:#ffd700;">🔨 ${label} — ready in ${constructing.turnsLeft} turn${constructing.turnsLeft === 1 ? '' : 's'}.</span><br>`;
                 } else if (!unit.hasAttackedThisTurn) {
                     // Siege Tower button (if near an enemy city).
@@ -409,6 +412,20 @@ export function bindUI(gameState, callbacks) {
                     html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
                     html += `<button class="build-siege-engine-btn" data-engine="CATAPULT" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">💣 Build Catapult (2t)</button>`;
                     html += `<button class="build-siege-engine-btn" data-engine="TREBUCHET" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">💣 Build Trebuchet (2t)</button>`;
+                    // Defensive structures (traps/fortifications) on the
+                    // engineer's current tile: must be owned land within a
+                    // city's influence, free of an existing structure.
+                    const stile = gameState.tiles.get(`${unit.x},${unit.z}`);
+                    const canSite = stile && stile.owner === PLAYER_FACTION &&
+                        stile.terrain !== 'CITY' && stile.terrain !== 'WATER' && stile.terrain !== 'RIVER' &&
+                        !(gameState.structures && gameState.structures.has(`${unit.x},${unit.z}`));
+                    if (canSite) {
+                        html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
+                        for (const sType of Object.keys(STRUCTURE_TYPE)) {
+                            const s = STRUCTURE_TYPE[sType];
+                            html += `<button class="build-structure-btn" data-structure="${sType}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="${s.desc} (${s.buildTurns || 2} turns)">🚧 ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
+                        }
+                    }
                 }
             }
             // Navy: a land unit adjacent to a friendly Transport with free cargo
@@ -522,6 +539,10 @@ export function bindUI(gameState, callbacks) {
         const sebtns = document.querySelectorAll('.build-siege-engine-btn');
         sebtns.forEach(b => {
             b.onclick = () => callbacks.onBuildSiegeEngine && callbacks.onBuildSiegeEngine(unit, b.dataset.engine);
+        });
+        const stbtns = document.querySelectorAll('.build-structure-btn');
+        stbtns.forEach(b => {
+            b.onclick = () => callbacks.onBuildStructure && callbacks.onBuildStructure(unit, b.dataset.structure);
         });
         const concealBtn = document.getElementById('conceal-btn');
         if (concealBtn) concealBtn.onclick = () => callbacks.onConceal && callbacks.onConceal(unit);

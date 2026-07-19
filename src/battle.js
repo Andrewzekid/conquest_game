@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -69,9 +69,12 @@ export function isEncircled(defender, units, tiles) {
  * @param buildings - Map<tileKey, buildingType[]> for building defense bonuses
  * @param lords - full lords array (for adjacency aura bonuses)
  * @param tempBonuses - optional map faction->{attack,defense} from king actives (Bloodlust/Bulwark)
+ * @param structures - optional Map<tileKey, {type, owner}> of engineer-built
+ *   structures; a friendly FORTIFICATION on the defender's tile grants its
+ *   defenseBonus.
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
@@ -119,17 +122,25 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         }
     }
 
-    // Defender defense: terrain + buildings + lord stats + class + adjacent auras.
+    // Defender defense: terrain + buildings + structures + lord stats + class + adjacent auras.
     const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
     const buildingDef = buildings ? getBuildingDefenseBonus(tileKey, buildings) : 0;
+    // Engineer-built FORTIFICATION on the defender's tile (must belong to the
+    // defender's faction — structures of the attacker don't help the defender).
+    const fort = (structures && structures.get(tileKey)) || null;
+    const structureDef = (fort && fort.owner === defenderUnit.owner && STRUCTURE_TYPE[fort.type])
+        ? (STRUCTURE_TYPE[fort.type].defenseBonus || 0) : 0;
     const defLordBonus = getLordCombatBonus(defenderLord);
     const defClass = getLordClassBonus(defenderLord);
     const defAdj = getAdjacentLordBonuses(lords, defenderUnit);
     const defTemp = (tempBonuses && tempBonuses[defenderUnit.owner]) || { attack: 0, defense: 0 };
     const defPower = defenderUnit.defense ?? defStats.defense;
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
-    let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef
+    let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense;
+    if (structureDef > 0) {
+        messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
+    }
     // Encircled defenders fight at a disadvantage (no room to maneuver).
     if (encircled) {
         effectiveDefense -= ENCIRCLEMENT_DEFENSE_PENALTY;
@@ -263,7 +274,7 @@ export function processLoyalty(tiles, owner) {
  *
  * Returns { defenderDied, attackerDied, damageToDefender, damageToAttacker }.
  */
-export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false) {
+export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null) {
     if (!attackerUnit || !defenderUnit) {
         return { defenderDied: false, attackerDied: false, damageToDefender: 0, damageToAttacker: 0 };
     }
@@ -279,7 +290,7 @@ export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord
     const cloneLord = (l) => l
         ? { ...l, stats: { ...(l.stats || {}) }, abilities: [...(l.abilities || [])], army: [...(l.army || [])] }
         : null;
-    const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled);
+    const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled, structures);
     return {
         defenderDied: result.defenderDied,
         attackerDied: result.attackerDied,

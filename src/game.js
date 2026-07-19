@@ -294,6 +294,7 @@ export class Game {
         this.gameState.bridgeTargets = [];
         if (!this.gameState.production) this.gameState.production = new Map();
         if (!this.gameState.construction) this.gameState.construction = new Map();
+        if (!this.gameState.structures) this.gameState.structures = new Map();
         if (!this.gameState.bridges) this.gameState.bridges = new Set();
         if (!this.gameState.scryRevealed) this.gameState.scryRevealed = new Set();
         if (!this.gameState.concealedUnits) this.gameState.concealedUnits = new Map();
@@ -380,6 +381,7 @@ export class Game {
             onFoundCity: (unit) => this.handleFoundCity(unit),
             onBuildSiegeTower: (unit) => this.handleBuildSiegeTower(unit),
             onBuildSiegeEngine: (unit, engineType) => this.handleBuildSiegeEngine(unit, engineType),
+            onBuildStructure: (unit, structureType) => this.handleBuildStructure(unit, structureType),
             onBoard: (unit, transport) => this.handleBoard(unit, transport),
             onDisembark: (transport) => this.handleDisembark(transport),
             onWorkerBuild: (unit, buildingType) => this.handleWorkerBuild(unit, buildingType),
@@ -944,7 +946,7 @@ export class Game {
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner &&
             (canCaptureTile(lord.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
             pool.gold -= CAPTURE_COST;
-            captureCityTerritory(this.tiles, destTile, lord.owner).forEach(m => this.log(m));
+            captureCityTerritory(this.tiles, destTile, lord.owner, this.gameState.structures).forEach(m => this.log(m));
             sfx.capture();
         }
         sfx.move();
@@ -971,7 +973,7 @@ export class Game {
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner &&
             (canCaptureTile(unit.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
             pool.gold -= CAPTURE_COST;
-            captureCityTerritory(this.tiles, destTile, unit.owner).forEach(m => this.log(m));
+            captureCityTerritory(this.tiles, destTile, unit.owner, this.gameState.structures).forEach(m => this.log(m));
             sfx.capture();
         }
         // Arrived at goal → clear it.
@@ -979,6 +981,8 @@ export class Game {
 
         // Check for ambush trigger from concealed enemies.
         this._checkAmbushTrigger(unit, x, z);
+        // Check for an enemy fall trap on the destination tile.
+        this._checkFallTrap(unit);
 
         this.gameState.selectedUnit = null;
         this.gameState.moveTargets.clear();
@@ -1003,7 +1007,7 @@ export class Game {
         const defenderLord = defender._isLord ? null : findCommandingLord(this.gameState.lords, defender);
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
 
@@ -1086,7 +1090,7 @@ export class Game {
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
         const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
         const result = resolveCombat(atk, def, terrain, null, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
         this._playAttackAnimation(atk, def);
@@ -1155,6 +1159,12 @@ export class Game {
         for (const t of this.tiles.values()) {
             if (t.owner === f) { t.owner = null; t.loyalty = 0; }
         }
+        // Its defensive structures collapse with the faction.
+        if (this.gameState.structures) {
+            for (const [skey, s] of [...this.gameState.structures]) {
+                if (s.owner === f) this.gameState.structures.delete(skey);
+            }
+        }
         sfx.defeat();
         this.checkVictory();
     }
@@ -1189,6 +1199,19 @@ export class Game {
         attacker.x = defender.x;
         attacker.z = defender.z;
         this.log(`🐎 ${UNIT_TYPE[attacker.type].name} charges ${UNIT_TYPE[defender.type].name}!`);
+        // Traps and spiked defenses punish the charge before the blow lands.
+        this._checkFallTrap(attacker);
+        const survivedCharge = this.gameState.units.has(attacker.id) && this._applySpikesOnCharge(attacker);
+        if (!survivedCharge) {
+            this.gameState.moveTargets.clear();
+            this.gameState.attackTargets = [];
+            this.gameState.chargeTargets = [];
+            this.renderer.clearHighlights();
+            this.renderAll();
+            this.ui.updateResourceBar();
+            this.checkVictory();
+            return;
+        }
         sfx.attack();
         this._playAttackAnimation(attacker, defender);
         // Apply charge bonus temporarily
@@ -1200,7 +1223,7 @@ export class Game {
         const attackerLord = findCommandingLord(this.gameState.lords, attacker);
         const defenderLord = findCommandingLord(this.gameState.lords, defender);
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
-            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+            this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
         result.messages.forEach(m => this.log(m));
         // Restore original attack
         attacker.attack = originalAttack;
@@ -1734,6 +1757,90 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
+    /** An Engineer starts constructing a defensive structure (SPIKES,
+     *  FORTIFICATION, or FALL_TRAP) on its current tile. The tile must be owned,
+     *  within a city's influence, and free of an existing structure. Pays
+     *  STRUCTURE_COST up front; the structure completes after buildTurns. */
+    handleBuildStructure(engineer, structureType) {
+        if (!engineer || engineer.type !== 'ENGINEER' || engineer.owner !== PLAYER_FACTION) return;
+        const sdef = STRUCTURE_TYPE[structureType];
+        if (!sdef) { this.log('Invalid structure type.'); return; }
+        if (engineer.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
+        if (this.gameState.construction && this.gameState.construction.has(engineer.id)) {
+            this.log('This engineer is already building something.'); return;
+        }
+        const tile = this.tiles.get(`${engineer.x},${engineer.z}`);
+        if (!tile) return;
+        if (tile.owner !== PLAYER_FACTION) { this.log('Structures can only be built on your own tiles.'); return; }
+        if (tile.terrain === 'WATER' || tile.terrain === 'RIVER') { this.log('Cannot build a structure on water.'); return; }
+        if (tile.terrain === 'CITY') { this.log('Cities are already fortified — build structures on the surrounding land.'); return; }
+        const skey = `${tile.x},${tile.z}`;
+        if (this.gameState.structures && this.gameState.structures.has(skey)) {
+            this.log('There is already a structure on this tile.'); return;
+        }
+        const influence = getInfluencedTiles(this.tiles, PLAYER_FACTION, CITY_INFLUENCE_RADIUS);
+        if (influence && !influence.has(skey)) {
+            this.log('Structures must be built within a city\'s influence.'); return;
+        }
+        const cost = STRUCTURE_COST[structureType] || {};
+        const pool = this.gameState.resources.player;
+        for (const [res, amt] of Object.entries(cost)) {
+            if ((pool[res] || 0) < amt) { this.log(`Not enough resources to build ${sdef.name}.`); return; }
+        }
+        for (const [res, amt] of Object.entries(cost)) pool[res] = (pool[res] || 0) - amt;
+        this.gameState.construction.set(engineer.id, {
+            type: 'STRUCTURE', structureType,
+            turnsLeft: sdef.buildTurns || 2,
+            x: tile.x, z: tile.z, faction: PLAYER_FACTION
+        });
+        engineer.hasAttackedThisTurn = true; // starting construction uses the action
+        sfx.besiege();
+        this.log(`🔨 Engineer #${engineer.id} started building ${sdef.name} at [${tile.x}, ${tile.z}] — ready in ${sdef.buildTurns || 2} turns.`);
+        this.ui.showUnitInfo(engineer);
+        this.renderAll();
+        this.ui.updateResourceBar();
+    }
+
+    /** Fall-trap check after a unit enters a tile by any means (move, goal
+     *  auto-step, charge). An enemy FALL_TRAP on the tile springs: the unit
+     *  takes damage and is stunned (skips its next turn), and the trap is
+     *  consumed. Friendly structures do nothing. */
+    _checkFallTrap(unit) {
+        if (!unit || !this.gameState.structures) return;
+        const skey = `${unit.x},${unit.z}`;
+        const s = this.gameState.structures.get(skey);
+        if (!s || s.type !== 'FALL_TRAP' || s.owner === unit.owner) return;
+        const dmg = (STRUCTURE_TYPE.FALL_TRAP && STRUCTURE_TYPE.FALL_TRAP.damage) || 3;
+        unit.hp -= dmg;
+        unit.stunnedTurns = Math.max(unit.stunnedTurns || 0, 1);
+        this.gameState.structures.delete(skey); // a fall trap is one-shot
+        const name = UNIT_TYPE[unit.type] ? UNIT_TYPE[unit.type].name : unit.type;
+        this.log(`🪤 ${name} #${unit.id} triggered a fall trap at [${unit.x}, ${unit.z}] — ${dmg} damage and stunned for a turn!`);
+        if (unit.hp <= 0) {
+            this._onUnitDeath(unit);
+            this.log(`${name} #${unit.id} was killed by the fall trap!`);
+        }
+    }
+
+    /** Spikes check for a cavalry charge: if the tile the charger storms onto
+     *  has enemy SPIKES, the charger is impaled before its blow lands.
+     *  Returns true if the charger survives (false if the spikes killed it). */
+    _applySpikesOnCharge(attacker) {
+        if (!attacker || !this.gameState.structures) return true;
+        const s = this.gameState.structures.get(`${attacker.x},${attacker.z}`);
+        if (!s || s.type !== 'SPIKES' || s.owner === attacker.owner) return true;
+        const dmg = (STRUCTURE_TYPE.SPIKES && STRUCTURE_TYPE.SPIKES.damageVsCavalry) || 4;
+        attacker.hp -= dmg;
+        const name = UNIT_TYPE[attacker.type] ? UNIT_TYPE[attacker.type].name : attacker.type;
+        this.log(`🦔 ${name} #${attacker.id} charges into spiked defenses — takes ${dmg} damage! (HP ${Math.max(0, attacker.hp)}/${attacker.maxHp})`);
+        if (attacker.hp <= 0) {
+            this._onUnitDeath(attacker);
+            this.log(`${name} #${attacker.id} was impaled on the spikes!`);
+            return false;
+        }
+        return true;
+    }
+
     /** A unit joins a lord's army if the lord has command capacity. */
     handleJoinArmy(unit, lord) {
         if (!unit || !lord) return;
@@ -1892,6 +1999,22 @@ export class Game {
             proj.turnsLeft--;
             if (proj.turnsLeft <= 0) {
                 const tile = this.tiles.get(`${proj.x},${proj.z}`);
+                if (proj.type === 'STRUCTURE') {
+                    // Engineer defensive structure completes on its tile — only
+                    // if the tile is still friendly and structure-free (an enemy
+                    // taking the tile mid-build interrupts the project).
+                    const skey = `${proj.x},${proj.z}`;
+                    if (tile && tile.owner === faction &&
+                        !(this.gameState.structures && this.gameState.structures.has(skey))) {
+                        if (!this.gameState.structures) this.gameState.structures = new Map();
+                        const sName = (STRUCTURE_TYPE[proj.structureType] || {}).name || proj.structureType;
+                        this.gameState.structures.set(skey, { type: proj.structureType, owner: faction });
+                        this.log(`${factionName}: ${sName} completed at [${proj.x}, ${proj.z}]!`);
+                        sfx.levelUp();
+                    }
+                    this.gameState.construction.delete(engId);
+                    continue;
+                }
                 if (tile) {
                     let unit;
                     if (proj.type === 'SIEGE_ENGINE') {
@@ -1909,9 +2032,11 @@ export class Game {
                 }
                 this.gameState.construction.delete(engId);
             } else if (faction === PLAYER_FACTION) {
-                const label = proj.type === 'SIEGE_ENGINE'
-                    ? UNIT_TYPE[proj.engineType].name
-                    : 'Siege Tower';
+                const label = proj.type === 'STRUCTURE'
+                    ? ((STRUCTURE_TYPE[proj.structureType] || {}).name || 'Structure')
+                    : proj.type === 'SIEGE_ENGINE'
+                        ? UNIT_TYPE[proj.engineType].name
+                        : 'Siege Tower';
                 this.log(`${label} at [${proj.x}, ${proj.z}]: ${proj.turnsLeft} turn(s) left.`);
             }
         }
@@ -2356,11 +2481,14 @@ export class Game {
                 }
                 // Perform a plain move (no capture cost for friendly tiles; capture if possible).
                 unit.x = step.x; unit.z = step.z; unit.hasMovedThisTurn = true; moved = true;
+                // An enemy fall trap on the destination springs now.
+                this._checkFallTrap(unit);
+                if (!this.gameState.units.has(unit.id)) break; // the trap killed it
                 const pool = this.gameState.resources[PLAYER_FACTION];
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION &&
                     (canCaptureTile(PLAYER_FACTION, dest, pool) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
                     pool.gold -= CAPTURE_COST;
-                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
+                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures).forEach(m => this.log(m));
                     sfx.capture();
                     unit.goal = null; // captured the target city — done
                     break;
@@ -2406,7 +2534,7 @@ export class Game {
                 // Capture a breached enemy city on arrival (like units do).
                 if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION])) {
                     this.gameState.resources[PLAYER_FACTION].gold -= CAPTURE_COST;
-                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION).forEach(m => this.log(m));
+                    captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures).forEach(m => this.log(m));
                     sfx.capture();
                     lord.goal = null;
                     break;
@@ -2941,8 +3069,10 @@ export class Game {
                         if (dest && dest.terrain === 'CITY' && dest.owner !== faction &&
                             (canCaptureTile(faction, dest, pool) || this.siegeTowerAdjacentTo(dest, faction))) {
                             pool.gold -= CAPTURE_COST;
-                            captureCityTerritory(this.tiles, dest, faction).forEach(m => this.log(`${factionName}: ${m}`));
+                            captureCityTerritory(this.tiles, dest, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
                         }
+                        // An enemy fall trap on the destination springs now.
+                        this._checkFallTrap(unit);
                     }
                     break;
                 }
@@ -2956,7 +3086,7 @@ export class Game {
                         const attackerLord = findCommandingLord(this.gameState.lords, attacker);
                         const defenderLord = findCommandingLord(this.gameState.lords, defender);
                         const result = resolveCombat(attacker, defender, terrain,
-                            attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses);
+                            attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
                         result.messages.forEach(m => this.log(m));
                         attacker.hasAttackedThisTurn = true;
                         this._playAttackAnimation(attacker, defender);
@@ -2979,7 +3109,7 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     if (unit && tile && tile.terrain === 'CITY' && pool.gold >= CAPTURE_COST) {
                         pool.gold -= CAPTURE_COST;
-                        captureCityTerritory(this.tiles, tile, faction).forEach(m => this.log(`${factionName}: ${m}`));
+                        captureCityTerritory(this.tiles, tile, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
                         // Garrison the capturing unit on the city tile.
                         unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
                         this.renderer.updateTileTerrain(tile);
@@ -3038,6 +3168,70 @@ export class Game {
                     unit.hasAttackedThisTurn = true;
                     sfx.besiege();
                     this.log(`${factionName}: engineer started a Siege Tower near [${tile.x}, ${tile.z}].`);
+                    break;
+                }
+                case 'buildStructure': {
+                    // An AI engineer starts a defensive structure (SPIKES /
+                    // FORTIFICATION / FALL_TRAP) on its current tile. Mirrors the
+                    // player's handleBuildStructure; ticks via _tickConstructionFor.
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (!unit || unit.type !== 'ENGINEER' || unit.owner !== faction) break;
+                    if (unit.hasAttackedThisTurn) break;
+                    if (this.gameState.construction && this.gameState.construction.has(unit.id)) break;
+                    const sdef = STRUCTURE_TYPE[action.structureType];
+                    if (!sdef) break;
+                    const tile = this.tiles.get(`${unit.x},${unit.z}`);
+                    if (!tile || tile.owner !== faction || tile.terrain === 'CITY' ||
+                        tile.terrain === 'WATER' || tile.terrain === 'RIVER') break;
+                    if (this.gameState.structures && this.gameState.structures.has(`${tile.x},${tile.z}`)) break;
+                    const sCost = STRUCTURE_COST[action.structureType] || {};
+                    let canPayS = true;
+                    for (const [res, amt] of Object.entries(sCost)) {
+                        if ((pool[res] || 0) < amt) { canPayS = false; break; }
+                    }
+                    if (!canPayS) break;
+                    for (const [res, amt] of Object.entries(sCost)) pool[res] = (pool[res] || 0) - amt;
+                    this.gameState.construction.set(unit.id, {
+                        type: 'STRUCTURE', structureType: action.structureType,
+                        turnsLeft: sdef.buildTurns || 2, x: tile.x, z: tile.z, faction
+                    });
+                    unit.hasAttackedThisTurn = true;
+                    this.log(`${factionName}: engineer started ${sdef.name} at [${tile.x}, ${tile.z}].`);
+                    break;
+                }
+                case 'charge': {
+                    // AI cavalry charge — mirrors handleCharge for an AI faction.
+                    const attacker = this.gameState.units.get(action.fromId);
+                    const defender = this.gameState.units.get(action.toId);
+                    if (!attacker || !defender) break;
+                    if (!CHARGE_UNITS.includes(attacker.type)) break;
+                    if (attacker.hasAttackedThisTurn) break;
+                    if (!canAttack(this.gameState.diplomacy, attacker.owner, defender.owner)) break;
+                    if (Math.max(Math.abs(attacker.x - defender.x), Math.abs(attacker.z - defender.z)) > CHARGE_RANGE) break;
+                    attacker.x = defender.x; attacker.z = defender.z;
+                    // Traps and spiked defenses punish the charge before the blow.
+                    this._checkFallTrap(attacker);
+                    if (!this.gameState.units.has(attacker.id)) break; // died to a trap
+                    if (!this._applySpikesOnCharge(attacker)) break;   // impaled on spikes
+                    const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
+                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+                    const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
+                    const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
+                    const attackerLord = findCommandingLord(this.gameState.lords, attacker);
+                    const defenderLord = findCommandingLord(this.gameState.lords, defender);
+                    const result = resolveCombat(attacker, defender, terrain,
+                        attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures);
+                    attacker.attack = originalAttack;
+                    result.messages.forEach(m => this.log(m));
+                    attacker.hasAttackedThisTurn = true;
+                    attacker.hasMovedThisTurn = true;
+                    attacker.chargeExhausted = CHARGE_EXHAUST_TURNS;
+                    this._playAttackAnimation(attacker, defender);
+                    if (result.defenderDied) {
+                        this._onUnitDeath(defender);
+                        this._maybeRespawnOnKill(faction);
+                    }
+                    if (result.attackerDied) this._onUnitDeath(attacker);
                     break;
                 }
                 case 'conceal': {
