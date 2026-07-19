@@ -5,6 +5,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
          CONCEAL_TERRAINS, CONCEAL_TURNS_MOUNTAIN, CONCEAL_TURNS_FOREST, CONCEAL_MAX_PER_TILE,
+         CONCEAL_MAX_TURNS, CONCEAL_REVEAL_COOLDOWN,
          AMBUSH_ATTACK_BONUS, AMBUSH_DEFENSE_BONUS,
          CHARGE_UNITS, CHARGE_ATTACK_BONUS, CHARGE_RANGE,
          CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
@@ -27,7 +28,7 @@ import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn } from './building.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
-import { getFactionDef, getUnitCostFor, getFactionVision } from './faction.js';
+import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS } from './faction.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
 import { saveGame, loadGame, loadSavedExists, clearSave } from './save.js';
 import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
@@ -91,9 +92,22 @@ export class Game {
         this.factionAssignments = {};
         this.factionDefs = {};
         this.factionColors = {};
+        // Defensive: ensure no two slots share a faction def. A duplicate def
+        // would create two lords carrying the king's name (the "two kings"
+        // bug). Fill any missing/duplicate slot with an unused faction.
+        const used = new Set();
+        const allIds = FACTION_IDS;
+        const pickUnused = () => {
+            for (const candidate of allIds) {
+                if (!used.has(candidate)) return candidate;
+            }
+            return 'crimson';
+        };
         for (let i = 0; i < slots.length; i++) {
             const slot = slots[i];
-            const id = ids[i];
+            let id = ids[i];
+            if (!id || used.has(id)) id = pickUnused();
+            used.add(id);
             const def = getFactionDef(id) || getFactionDef('crimson');
             this.factionAssignments[slot] = def.id;
             this.factionDefs[slot] = def;
@@ -1281,6 +1295,9 @@ export class Game {
      */
     _tickConcealment() {
         for (const unit of this.gameState.units.values()) {
+            // Decrement the post-reveal cooldown so a unit that timed out of
+            // concealment can eventually hide again.
+            if (unit.concealCooldown && unit.concealCooldown > 0) unit.concealCooldown--;
             if (unit.concealState === 'concealing') {
                 if (this._isInEnemyVision(unit)) {
                     unit.concealState = null;
@@ -1292,6 +1309,7 @@ export class Game {
                 unit.concealTurnsLeft--;
                 if (unit.concealTurnsLeft <= 0) {
                     unit.concealState = 'concealed';
+                    unit.concealTurnsElapsed = 0;
                     const tileKey = `${unit.x},${unit.z}`;
                     const concealed = this.gameState.concealedUnits.get(tileKey) || [];
                     if (!concealed.includes(unit.id)) concealed.push(unit.id);
@@ -1299,6 +1317,23 @@ export class Game {
                     this.log(`${UNIT_TYPE[unit.type].name} is now fully concealed!`);
                 } else {
                     this.log(`${UNIT_TYPE[unit.type].name}: ${unit.concealTurnsLeft} turn(s) until concealed.`);
+                }
+            } else if (unit.concealState === 'concealed') {
+                // Concealment timeout: if no enemy ever approaches, a hidden
+                // unit eventually gives up the ambush and advances. Without
+                // this, two AIs that conceal their front lines stare at each
+                // other forever. On timeout, reveal and set a cooldown so the
+                // AI advances for a few turns before it can re-conceal.
+                unit.concealTurnsElapsed = (unit.concealTurnsElapsed || 0) + 1;
+                if (unit.concealTurnsElapsed >= CONCEAL_MAX_TURNS) {
+                    unit.concealState = null;
+                    unit.concealTerrain = null;
+                    unit.concealTurnsElapsed = 0;
+                    unit.concealCooldown = CONCEAL_REVEAL_COOLDOWN;
+                    const tileKey = `${unit.x},${unit.z}`;
+                    const concealed = this.gameState.concealedUnits.get(tileKey) || [];
+                    this.gameState.concealedUnits.set(tileKey, concealed.filter(id => id !== unit.id));
+                    this.log(`${UNIT_TYPE[unit.type].name} gave up its ambush and advanced after lying in wait.`);
                 }
             }
         }

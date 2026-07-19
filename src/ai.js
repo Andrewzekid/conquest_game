@@ -645,6 +645,7 @@ const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN']);
 const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT']);
 const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER']);
 const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
+const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON']);
 
 function unitRole(type) {
     if (MELEE_TYPES.has(type)) return 'melee';
@@ -652,11 +653,12 @@ function unitRole(type) {
     if (CAVALRY_TYPES.has(type)) return 'cavalry';
     if (SIEGE_TYPES.has(type)) return 'siege';
     if (SUPPORT_TYPES.has(type)) return 'support';
+    if (NAVAL_TYPES.has(type)) return 'naval';
     return 'other';
 }
 
 function countByRole(units, actions, owner) {
-    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0 };
+    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0, naval: 0 };
     for (const u of units) {
         if (u.owner !== owner) continue;
         const r = unitRole(u.type);
@@ -673,8 +675,42 @@ function countByRole(units, actions, owner) {
     return counts;
 }
 
-function roleDeficit(roster, counts, total) {
-    const target = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05 };
+/** Per-faction army composition targets (fractions of the army). Each faction
+ *  leans into its specialty: Golden Horde & Crimson favor cavalry, Iron Empire
+ *  leans siege, Storm Kingdom builds a naval fleet, etc. SCOUTS are never a
+ *  composition target — they're exploration units capped separately at 2.
+ *  Roles whose units aren't in the faction's roster are zeroed out so the AI
+ *  doesn't chase a role it can't fill. */
+function factionComposition(def, roster) {
+    const has = (role) => roster.some(t => unitRole(t) === role);
+    const id = def && def.id;
+    let t;
+    switch (id) {
+        case 'crimson':  t = { melee: 0.35, ranged: 0.10, cavalry: 0.35, siege: 0.15, support: 0.05, naval: 0.00 }; break;
+        case 'golden':   t = { melee: 0.20, ranged: 0.15, cavalry: 0.45, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.25, siege: 0.20, support: 0.10, naval: 0.00 }; break;
+        case 'verdant':  t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
+        case 'violet':   t = { melee: 0.30, ranged: 0.25, cavalry: 0.00, siege: 0.35, support: 0.10, naval: 0.00 }; break;
+        case 'azure':    t = { melee: 0.40, ranged: 0.25, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
+        case 'iron':     t = { melee: 0.30, ranged: 0.00, cavalry: 0.00, siege: 0.55, support: 0.15, naval: 0.00 }; break;
+        case 'shadow':   t = { melee: 0.35, ranged: 0.45, cavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
+        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.10, siege: 0.10, support: 0.05, naval: 0.40 }; break;
+        default:         t = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05, naval: 0.00 };
+    }
+    // Zero out (and renormalize) roles the roster can't fill.
+    let sum = 0;
+    for (const r of Object.keys(t)) {
+        if ((r === 'support') || r === 'naval' || r === 'cavalry' || r === 'ranged' || r === 'siege' || r === 'melee') {
+            if (!has(r)) t[r] = 0;
+        }
+        sum += t[r];
+    }
+    if (sum > 0) for (const r of Object.keys(t)) t[r] = t[r] / sum;
+    return t;
+}
+
+function roleDeficit(roster, counts, total, target) {
     const available = new Set();
     for (const t of roster) available.add(unitRole(t));
     // Don't chase support units until the army has some mass.
@@ -683,19 +719,21 @@ function roleDeficit(roster, counts, total) {
     for (const r of Object.keys(target)) {
         if (!available.has(r)) continue;
         const current = counts[r] || 0;
-        const desired = total * target[r];
+        const desired = total * (target[r] || 0);
         const deficit = desired - current;
         if (deficit > worstDeficit) { worstDeficit = deficit; worstRole = r; }
     }
     return worstRole;
 }
-/** Pick an affordable unit from this faction's roster, biased toward a balanced
- *  army composition. Early on it secures melee screens, then fills the biggest
- *  role deficit (melee/ranged/cavalry/siege/support). Falls back to the
- *  strongest affordable unit if no composition pick is available. */
+/** Pick an affordable unit from this faction's roster, biased toward a
+ *  faction-specialized army composition. Early on it secures melee screens,
+ *  then fills the biggest role deficit. Falls back to the strongest affordable
+ *  *combat* unit (never SCOUT — scouts are exploration units capped at 2 by the
+ *  dedicated scout block, so they don't crowd out the army). */
 function findAffordableUnit(resources, roster, factionDef, units, actions, owner) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    const target = factionComposition(factionDef, roster);
     // Defense floor: first few units must be melee so expansion/siege don't
     // strip the army bare.
     if (total < 4 && roster.some(t => MELEE_TYPES.has(t))) {
@@ -704,19 +742,22 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
         }
     }
     if (total >= 4) {
-        const role = roleDeficit(roster, counts, total);
+        const role = roleDeficit(roster, counts, total, target);
         const order = [];
         if (role === 'melee') order.push('INFANTRY', 'PIKEMAN');
         else if (role === 'ranged') order.push('ARCHER', 'LONGBOWMAN');
-        else if (role === 'cavalry') order.push('CAVALRY', 'CATAPHRACT');
+        else if (role === 'cavalry') order.push('CATAPHRACT', 'CAVALRY');
         else if (role === 'siege') order.push('SIEGE', 'ARTILLERY');
-        else if (role === 'support') order.push('MEDIC', 'ENGINEER');
+        else if (role === 'support') order.push('ENGINEER', 'MEDIC');
+        else if (role === 'naval') order.push('GALLEON', 'FRIGATE', 'GALLEY', 'TRANSPORT');
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }
     }
-    // Fallback: strongest affordable.
-    const order = ['SIEGE', 'ARTILLERY', 'CAVALRY', 'PIKEMAN', 'ARCHER', 'INFANTRY', 'SCOUT'];
+    // Fallback: strongest affordable combat unit (no SCOUT — prevents the
+    // Shadow Court "20 spies" spam where a poor faction trains nothing but the
+    // cheapest unit).
+    const order = ['SIEGE', 'ARTILLERY', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     for (const t of order) {
         if (!roster.includes(t)) continue;
         if (canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
@@ -1330,9 +1371,15 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
 
     // 3) Conceal (ambush setup) for any military unit on conceal terrain near
     //    the front, out of enemy vision, with no adjacent enemy to fight.
+    //    A unit that is ALREADY concealing/concealed is skipped (don't reset its
+    //    progress every turn — that left units stuck in 'concealing' forever and
+    //    marked `acted` so they never advanced). A unit on a post-reveal cooldown
+    //    is also skipped so it advances instead of re-hiding immediately.
     if (atWar && (stance === 'hold' || stance === 'engage')) {
         for (const u of members) {
             if (acted.has(u.id) || u.hasMovedThisTurn || u.hasAttackedThisTurn) continue;
+            if (u.concealState === 'concealing' || u.concealState === 'concealed') continue;
+            if (u.concealCooldown && u.concealCooldown > 0) continue;
             const tile = tiles.get(`${u.x},${u.z}`);
             if (!tile || !CONCEAL_TERRAINS.includes(tile.terrain)) continue;
             const ut = UNIT_TYPE[u.type];
@@ -1436,8 +1483,13 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
 
     // 7) Advance toward the objective in formation. Melee screeners go first;
     //    fragile units only advance if a friendly screen stays in front of them.
+    //    Units that are concealing/concealed hold position (they're setting an
+    //    ambush); the conceal timeout in _tickConcealment eventually releases
+    //    them (sets concealState=null + a cooldown) so a stalemate where both
+    //    sides hide forever can't persist.
     const advance = (u) => {
         if (acted.has(u.id) || u.hasMovedThisTurn) return;
+        if (u.concealState === 'concealing' || u.concealState === 'concealed') return;
         if (!objective) return;
         if (isFragile(u) && !hasScreen(u, units, owner)) return; // hold behind the screen
         const step = stepToward(u, objective, tiles, owner, units, moved, isAtWar);

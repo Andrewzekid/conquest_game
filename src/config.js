@@ -177,6 +177,11 @@ export const CONCEAL_TERRAINS = ['MOUNTAIN', 'FOREST'];  // terrain types that a
 export const CONCEAL_TURNS_MOUNTAIN = 2;  // turns to conceal in mountains (harder terrain)
 export const CONCEAL_TURNS_FOREST = 1;    // turns to conceal in forests (easier)
 export const CONCEAL_MAX_PER_TILE = 2;    // max units that can conceal on one tile
+// Concealment timeout: a hidden unit that no enemy ever approaches gives up
+// its ambush after this many turns and advances. Without it, two AIs that
+// conceal their front lines stare at each other forever.
+export const CONCEAL_MAX_TURNS = 3;          // turns concealed before auto-reveal
+export const CONCEAL_REVEAL_COOLDOWN = 3;    // can't re-conceal for this many turns after a timeout reveal
 export const AMBUSH_ATTACK_BONUS = 3;     // bonus attack when revealing for surprise attack
 export const AMBUSH_DEFENSE_BONUS = 2;    // bonus defense when ambushed unit counter-attacks
 
