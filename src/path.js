@@ -36,13 +36,17 @@ export function nextStepToward(tiles, units, unit, goal, maxRange = 200, owner =
     const goalKey = key(goal.x, goal.z);
     const prev = new Map();
     const visited = new Set([start]);
+    // Use a head index instead of queue.shift() (which is O(n) and makes BFS
+    // O(n²)). With a head pointer, dequeue is O(1) and BFS is O(n).
     const queue = [[unit.x, unit.z]];
+    let head = 0;
     const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
     let found = false;
     let steps = 0;
+    const maxSteps = maxRange * maxRange;
 
-    while (queue.length && steps++ < maxRange * maxRange) {
-        const [cx, cz] = queue.shift();
+    while (head < queue.length && steps++ < maxSteps) {
+        const [cx, cz] = queue[head++];
         if (cx === goal.x && cz === goal.z) { found = true; break; }
         for (const [dx, dz] of dirs) {
             const nx = cx + dx, nz = cz + dz;

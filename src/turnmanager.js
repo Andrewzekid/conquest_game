@@ -121,13 +121,23 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         // Fortifications regrow on cities not being actively besieged.
         regenFortification(gameState.tiles, gameState.units);
 
-        // Run each AI faction in sequence
+        // Run each AI faction in sequence. Each faction is wrapped in try/catch
+        // so a bug or unexpected state in one AI's turn can't freeze the whole
+        // round (which would hang the game in both normal and spectate/auto mode).
         for (const ai of aiFactions) {
             if (gameState.gameOver) break;
             if (gameState.eliminated && gameState.eliminated.has(ai)) continue;
             currentPhase = ai;
             if (onPhaseChange) onPhaseChange(currentPhase);
-            if (runAI) runAI(ai);
+            if (runAI) {
+                try {
+                    runAI(ai);
+                } catch (err) {
+                    // Log and keep going — one broken AI turn must not halt the round.
+                    if (logger) logger(`⚠️ AI turn error for ${ai}: ${err && err.message ? err.message : err}`);
+                    if (typeof console !== 'undefined' && console.error) console.error('AI turn error:', err);
+                }
+            }
             if (typeof recalcFog === 'function') recalcFog();
         }
 

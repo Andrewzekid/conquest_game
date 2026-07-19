@@ -58,10 +58,12 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         resources.gold = (resources.gold || 0) + gold;
         resources.production = (resources.production || 0) + 2 * cl;
         // Cities are population centers: they produce a little food (hinterland
-        // foraging) and wood (timber yards) by default, scaling weakly with level.
+        // foraging), wood (timber yards), and iron (recycling/smelting scrap)
+        // by default, scaling weakly with level.
         // Food is intentionally scarce — farms and fertile terrain matter.
         resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
         resources.wood = (resources.wood || 0) + 1 + cl;
+        resources.iron = (resources.iron || 0) + Math.floor(cl / 2);
         // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
         applyBuildingBonuses(tileKey, tile, buildings, resources);
     }
