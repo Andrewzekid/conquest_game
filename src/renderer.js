@@ -11,7 +11,7 @@ const BREACH_COLOR = 0xff3322;
 const UNIT_ICONS = {
     INFANTRY: '⚔️', ARCHER: '🏹', ARTILLERY: '💣', CAVALRY: '🐎',
     PIKEMAN: '🔱', SCOUT: '🧭', SIEGE: '🛠️', SETTLER: '🏠', ENGINEER: '🔨',
-    LONGBOWMAN: '🏹', CATAPHRACT: '♞', MEDIC: '✚', SIEGE_TOWER: '🏯',
+    LONGBOWMAN: '🏹', CATAPHRACT: '♞', CHARIOT: '🛞', MEDIC: '✚', SIEGE_TOWER: '🏯',
     CATAPULT: '🎯', TREBUCHET: '🪨', WORKER: '👷',
     GALLEY: '⛵', TRANSPORT: '🚢', TRIREME: '🏛️', FRIGATE: '⚓',
     GALLEON: '🏴‍☠️', CARAVEL: '🧭', BATTLESHIP: '💥', SUBMARINE: '🐟',
@@ -495,6 +495,19 @@ export class GameRenderer {
         }
     }
 
+    /** Highlight chariot charge landing tiles (Map of tileKey -> lane). */
+    highlightChariotChargeTargets(targets) {
+        if (!targets) return;
+        const keys = targets instanceof Map ? [...targets.keys()] : targets;
+        for (const key of keys) {
+            const mesh = this.tileMeshes.get(key);
+            if (mesh && mesh.visible) {
+                mesh.material.emissive = new THREE.Color(0xffcc00); // gold = chariot charge lane
+                mesh.material.emissiveIntensity = 0.9;
+            }
+        }
+    }
+
     // --- Detailed unit models (multi-part groups instead of single shapes) ---
     // Each model is a Group whose origin sits at the unit's feet (y=0); the
     // render loop places it on top of its tile. A shared accent palette gives
@@ -682,6 +695,36 @@ export class GameRenderer {
                 rider.position.set(0, 0.42, -0.05); g.add(rider);
                 const saber = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.2, 0.04), P.metal);
                 saber.position.set(0.16, 0.55, 0.05); g.add(saber);
+                break;
+            }
+            case 'CHARIOT': {
+                // Horse pulling a two-wheeled cart with a standing driver.
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.4), P.body);
+                body.position.set(0, 0.3, 0.26); g.add(body);
+                const neck = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.16, 0.09), P.body);
+                neck.position.set(0, 0.39, 0.46); g.add(neck);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.13), P.skin);
+                head.position.set(0, 0.48, 0.52); g.add(head);
+                for (const [sx, sz] of [[-0.07, 0.38], [0.07, 0.38], [-0.07, 0.16], [0.07, 0.16]]) {
+                    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.05), P.dark);
+                    leg.position.set(sx, 0.11, sz); g.add(leg);
+                }
+                // Cart platform behind the horse.
+                const cart = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.22), P.wood);
+                cart.position.set(0, 0.26, -0.1); g.add(cart);
+                // Two wheels.
+                for (const sx of [-0.16, 0.16]) {
+                    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 10), P.dark);
+                    wheel.rotation.z = Math.PI / 2;
+                    wheel.position.set(sx, 0.13, -0.1); g.add(wheel);
+                }
+                // Draft pole linking cart to horse.
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.4, 5), P.wood);
+                pole.rotation.x = Math.PI / 2; pole.position.set(0, 0.24, 0.12); g.add(pole);
+                // Standing driver on the cart.
+                const driver = new THREE.Group();
+                this._addHumanoid(driver, P, { helmet: true });
+                driver.position.set(0, 0.3, -0.14); g.add(driver);
                 break;
             }
             case 'SCOUT': {
@@ -1223,6 +1266,13 @@ export class GameRenderer {
                 mesh.add(flame);
                 mesh.add(this.makeIconSprite('🔥', 0.32, naval ? 0.95 : 1.3));
                 this._flames.push(flame); // tracked so animate() can flicker it
+            }
+            // Stun (chariot post-charge / fall trap): dizzy indicator above unit.
+            if (unit.stunnedTurns && unit.stunnedTurns > 0) {
+                mesh.add(this.makeIconSprite('💫', 0.32, naval ? 0.95 : 1.3));
+            } else if (unit.chargeExhausted && unit.chargeExhausted > 0) {
+                // Exhausted cavalry: sweat/fatigue indicator.
+                mesh.add(this.makeIconSprite('💤', 0.3, naval ? 0.95 : 1.3));
             }
             this.unitGroup.add(mesh);
         }

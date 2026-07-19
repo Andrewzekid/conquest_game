@@ -77,7 +77,7 @@ export function isEncircled(defender, units, tiles) {
  *   bonuses no longer apply — the defenses are down.
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
@@ -187,7 +187,7 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // a unit being shot from range cannot strike back, and ranged defenders
     // don't counter at melee. Encircled defenders cannot counter-attack (they
     // are surrounded). Counter-attacks are weaker than full attacks.
-    if (!defStats.ranged && !atkStats.ranged && !encircled) {
+    if (!defStats.ranged && !atkStats.ranged && !encircled && !noCounter) {
         let defMultiplier = 1.0;
         if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
             defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;

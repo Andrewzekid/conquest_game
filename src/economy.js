@@ -1,7 +1,7 @@
 /** Economy system: resource production, upkeep, trade, market, taxation. */
 import { TERRAIN, MARKET_RATES, TRADE_ROUTE_GOLD, STARVATION_ATTRITION, BUILDING_TYPE,
          CITY_GROWTH_BASE, CITY_GROWTH_PER_SURPLUS_FOOD, CITY_GROWTH_SURPLUS_CAP,
-         CITY_MAX_LEVEL, cityGrowthThreshold } from './config.js';
+         CITY_MAX_LEVEL, cityGrowthThreshold, cityProduction } from './config.js';
 import { getLordGovernanceMultiplier } from './lords.js';
 import { cityRadius, expandCityTerritory } from './map.js';
 
@@ -56,17 +56,17 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         const governor = lords.find(l => l.owner === owner && l.governingCity === tileKey);
         if (governor) gold = Math.floor(gold * getLordGovernanceMultiplier(governor));
         resources.gold = (resources.gold || 0) + gold;
-        resources.production = (resources.production || 0) + 2 * cl;
+        resources.production = (resources.production || 0) + cityProduction(cl);
         // Cities are population centers: they produce a little food (hinterland
         // foraging), wood (timber yards), and iron (recycling/smelting scrap)
-        // by default. Wood and iron scale with the city's INFLUENCE radius
-        // (grows as the city levels up), so a small outpost yields a trickle
-        // and a sprawling capital yields more. Food is intentionally scarce —
-        // farms and fertile terrain matter.
+        // by default. Wood and iron scale weakly with the city's INFLUENCE
+        // radius (grows as the city levels up), so a small outpost yields a
+        // trickle and a sprawling capital yields more. Food is intentionally
+        // scarce — farms and fertile terrain matter.
         const influence = cityRadius(tile);
         resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
-        resources.wood = (resources.wood || 0) + 1 + influence;
-        resources.iron = (resources.iron || 0) + influence;
+        resources.wood = (resources.wood || 0) + 1 + Math.ceil(influence / 2);
+        resources.iron = (resources.iron || 0) + Math.ceil(influence / 2);
         // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
         applyBuildingBonuses(tileKey, tile, buildings, resources);
     }

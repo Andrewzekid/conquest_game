@@ -64,6 +64,11 @@ export const UNIT_TYPE = {
     // New land units.
     LONGBOWMAN:  { name: 'Longbowman',   hp: 8,  attack: 5, defense: 1, moveRange: 1, upkeep: { food: 2, gold: 4, wood: 1 }, ranged: true, attackRange: 3, siegeBonus: 1, vision: 4 },
     CATAPHRACT:  { name: 'Cataphract',   hp: 16, attack: 6, defense: 5, moveRange: 2, upkeep: { food: 5, gold: 5, iron: 2 }, ranged: false, attackRange: 1 },
+    // Chariot: a fast striker that can perform a straight-line CHARGE up to 3
+    // tiles (orthogonal only) dealing massive damage — but the charge stuns the
+    // chariot itself for 2 turns afterward. It cannot move and charge on the
+    // same turn. On a normal turn it moves/attacks like a light melee unit.
+    CHARIOT:     { name: 'Chariot',      hp: 11, attack: 4, defense: 2, moveRange: 3, upkeep: { food: 3, gold: 4, wood: 1, iron: 1 }, ranged: false, attackRange: 1, canCharge: true },
     MEDIC:       { name: 'Medic',        hp: 7,  attack: 1, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 3 }, heal: 2, ranged: false, attackRange: 1 },
     SIEGE_TOWER: { name: 'Siege Tower', hp: 20, attack: 4, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 4, wood: 2, iron: 2 }, besiege: true, besiegePower: 3, canAssault: true, ranged: false, attackRange: 1 },
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
@@ -72,15 +77,15 @@ export const UNIT_TYPE = {
     CATAPULT:    { name: 'Catapult',   hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
     TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 9, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
     // Naval units (unlocked by a Harbor building in a coastal/river city).
-    GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
-    TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
-    FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
-    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 }
+    GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
+    TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1, iron: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
+    FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
+    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
 // (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
@@ -113,6 +118,7 @@ export const UNIT_COST = {
     WORKER:      { gold: 30, food: 10, wood: 5,  iron: 0,  production: 10 },
     LONGBOWMAN:  { gold: 60, food: 0,  wood: 25, iron: 0,  production: 18 },
     CATAPHRACT:  { gold: 90, food: 20, wood: 0,  iron: 15, production: 25 },
+    CHARIOT:     { gold: 65, food: 20, wood: 15, iron: 10, production: 20 },
     MEDIC:       { gold: 55, food: 10, wood: 10, iron: 0,  production: 15 },
     SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
@@ -150,6 +156,7 @@ export const TYPE_ADVANTAGE = {
     CAVALRY:     { strongAgainst: 'INFANTRY',  multiplier: 1.4 },
     PIKEMAN:     { strongAgainst: 'CAVALRY',   multiplier: 1.5 },
     CATAPHRACT:  { strongAgainst: 'INFANTRY',  multiplier: 1.5 },
+    CHARIOT:     { strongAgainst: 'ARCHER',    multiplier: 1.4 },
     // Naval type advantages
     FRIGATE:     { strongAgainst: 'GALLEY',    multiplier: 1.5 },
     GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 }
@@ -213,6 +220,21 @@ export const CHARGE_RANGE = 1;            // Chebyshev distance for charge targe
 export const CHARGE_EXHAUST_TURNS = 2;          // post-charge exhaustion counter start value
 export const CHARGE_EXHAUST_RANGED_VULN = 1.5;  // ranged damage multiplier vs exhausted cavalry
 
+// --- Chariot Charge ---
+// The Chariot performs a devastating straight-line charge of up to
+// CHARIOT_CHARGE_RANGE tiles in one of the four ORTHOGONAL directions (left,
+// right, up, down). Every enemy in the charge lane is struck; infantry and
+// artillery are especially vulnerable (CHARIOT_CHARGE_VULN_MULT). The chariot
+// cannot move and charge on the same turn, and after charging it is STUNNED for
+// CHARIOT_CHARGE_STUN_TURNS turns (cannot move or attack). It ends its charge on
+// the tile just before the first surviving blocker (or at max range).
+export const CHARIOT_CHARGE_UNITS = ['CHARIOT'];
+export const CHARIOT_CHARGE_RANGE = 3;            // max tiles a charge travels (orthogonal)
+export const CHARIOT_CHARGE_STUN_TURNS = 2;       // chariot is stunned this many turns after charging
+export const CHARIOT_CHARGE_ATTACK_BONUS = 4;     // flat attack bonus applied to every hit in the lane
+export const CHARIOT_CHARGE_VULN_TYPES = ['INFANTRY', 'ARTILLERY', 'ARCHER', 'LONGBOWMAN', 'CATAPULT', 'TREBUCHET'];
+export const CHARIOT_CHARGE_VULN_MULT = 2.0;      // extra damage multiplier vs vulnerable types
+
 // --- Freeze (Frost Clan Winter's Grasp) ---
 // Frozen units cannot move on their next turn. The freeze counter is set by the
 // Winter's Grasp active ability and ticks down at the start of the frozen
@@ -231,6 +253,16 @@ export const RANGED_BOMBARD_TYPES = ['ARCHER', 'LONGBOWMAN'];
 export const CITY_INFLUENCE_RADIUS = 3;       // base radius at city level 1
 export const CITY_INFLUENCE_PER_LEVEL = 1;     // radius gained per city level
 export const CITY_LEVEL_UP_COST = { gold: 80, food: 40, production: 20 }; // base; scales × level
+// City production growth curve: per-city production = CITY_PRODUCTION_BASE +
+// CITY_PRODUCTION_PER_LEVEL * (diminishing share of each extra level). The
+// curve is concave (square-root) so early levels grant more than later ones,
+// matching a "production grows but with diminishing returns" economic model.
+export const CITY_PRODUCTION_BASE = 2;          // production at city level 1
+export const CITY_PRODUCTION_PER_LEVEL = 6;     // total spread across levels
+export function cityProduction(cl) {
+    const level = Math.max(1, cl || 1);
+    return CITY_PRODUCTION_BASE + Math.round(CITY_PRODUCTION_PER_LEVEL * (Math.sqrt(level) - 1));
+}
 // Natural city growth (Civ6-style): each city accumulates growth each turn and
 // levels up on its own when it crosses the threshold. You can also pay to
 // level up instantly via the Level Up City button.
@@ -392,8 +424,8 @@ export const LORD_CLASSES = {
     GRAND_COMMANDER:{ name: 'Grand Commander',icon: '🎖️', bonus: { attack: 1, defense: 1, extraCommand: 2 }, desc: '+1 atk & +1 def to army, and commands 2 extra units.' }
 };
 
-export const LORD_BASE_STATS = { command: 1, combat: 1, governance: 1 };
-export const LORD_RECRUIT_COST = { gold: 150, food: 50 };
+export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };
+export const LORD_RECRUIT_COST = { gold: 300, food: 100 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
 

@@ -2,7 +2,8 @@
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
          SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
          GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
-         EXTRA_UNITS, STRUCTURE_COST } from './config.js';
+         CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_VULN_TYPES,
+         EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { canAttack } from './diplomacy.js';
@@ -25,6 +26,7 @@ import { findCommandingLord } from './lords.js';
  *   { type: 'workerBuild',    unitId, buildingType } // worker builds an improvement on its tile
  *   { type: 'pillage',        unitId, tileKey }      // military unit destroys an enemy improvement
  *   { type: 'conceal',        unitId }              // unit begins concealing in forest/mountain (ambush)
+ *   { type: 'recruitLord',    }                      // faction recruits a new lord in its capital
  *
  * Military units no longer act one at a time: they are grouped into army
  * groups (by commanding lord, with spatial clustering for the unaffiliated),
@@ -106,6 +108,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
             }
         }
+    }
+
+    // AI lord recruitment: lords multiply army effectiveness. Recruit up to 3
+    // non-king lords when the faction can afford one and still keep a war chest.
+    const nonKingLords = (lords || []).filter(l => l.owner === owner && !l.isKing);
+    if (nonKingLords.length < 3 && res.gold >= LORD_RECRUIT_COST.gold + 150 &&
+        res.food >= LORD_RECRUIT_COST.food && myCityCount > 0) {
+        actions.push({ type: 'recruitLord' });
+        res = subtractCost(res, LORD_RECRUIT_COST);
     }
 
     // 1. Build a Barracks first (unlocks production + veteran training).
@@ -239,7 +250,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const settlerTarget = Math.max(4, Math.round(GRID_SIZE / 5));
     const settlerCap = Math.max(1, Math.ceil(myCityCount / 2) + 1);
     let queuedSettlers = 0;
-    const maxSettlersThisTurn = 2;
+    const maxSettlersThisTurn = 3; // expand aggressively when safe
     while (queuedSettlers < maxSettlersThisTurn && myCityCount < settlerTarget && capRoom() && roster.includes('SETTLER')) {
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         if (liveSettlers + queuedSettlers >= settlerCap) break;
@@ -247,7 +258,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (queuedSettlers > 0) {
             const meleeCount = myUnits.filter(u => u.type === 'INFANTRY' || u.type === 'PIKEMAN').length;
             const militaryCount = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT').length;
-            if (militaryCount < 5 || meleeCount < 2) break;
+            if (militaryCount < 4 || meleeCount < 1) break;
         }
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile || !canAfford('SETTLER', res, getUnitCostFor('SETTLER', factionDef))) break;
@@ -913,7 +924,7 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence) {
 /** Composition role buckets for the AI army. */
 const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN']);
 const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN']);
-const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT']);
+const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT', 'CHARIOT']);
 const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER']);
 const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
 const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON']);
@@ -1345,6 +1356,35 @@ function isNearFront(u, units, tiles, owner, isAtWar) {
     return false;
 }
 
+/** True if an at-war enemy is close enough that it may walk through this tile on
+ *  its way to an own city/unit. This stops the AI from concealing units forever in
+ *  forests where no enemy will ever pass (a common stalemate where both sides hide). */
+function enemyWillPassThroughConcealTile(u, units, tiles, owner, isAtWar) {
+    const radius = 6;
+    const ownCities = [...tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === owner);
+    for (const e of units.values()) {
+        if (e.owner === owner) continue;
+        if (isAtWar && !isAtWar(e.owner)) continue;
+        if (Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z)) > radius) continue;
+        let target = null, bestD = Infinity;
+        for (const c of ownCities) {
+            const d = Math.max(Math.abs(e.x - c.x), Math.abs(e.z - c.z));
+            if (d < bestD) { bestD = d; target = c; }
+        }
+        if (!target) {
+            for (const f of units.values()) {
+                if (f.owner !== owner) continue;
+                const d = Math.max(Math.abs(e.x - f.x), Math.abs(e.z - f.z));                if (d < bestD) { bestD = d; target = f; }
+            }
+        }
+        if (!target) continue;
+        const deu = Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z));
+        const dut = Math.max(Math.abs(u.x - target.x), Math.abs(u.z - target.z));
+        const det = Math.max(Math.abs(e.x - target.x), Math.abs(e.z - target.z));
+        if (deu + dut <= det + 2) return true;
+    }
+    return false;
+}
 /** Group military units into army groups: by commanding lord's army first,
  *  then spatially cluster the rest (nearest existing group within Chebyshev 2,
  *  else a new single-unit group). Returns [{ id, lord, units: [...] }]. */
@@ -1647,6 +1687,38 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
+    // 2b) Chariot charge: directional straight-line strike (up to 3 tiles) into
+    //     an enemy, before any other action. The chariot cannot also move this
+    //     turn, so only fire when a favorable target sits in a clear lane.
+    if (atWar) {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasAttackedThisTurn || u.hasMovedThisTurn) continue;
+            if (!CHARIOT_CHARGE_UNITS.includes(u.type)) continue;
+            if (u.stunnedTurns && u.stunnedTurns > 0) continue;
+            let best = null, bestScore = -Infinity, bestDir = null;
+            for (const dir of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                for (let step = 1; step <= CHARIOT_CHARGE_RANGE; step++) {
+                    const tx = u.x + dir[0] * step, tz = u.z + dir[1] * step;
+                    const key = `${tx},${tz}`;
+                    const t = tiles.get(key);
+                    if (!t || t.terrain === 'water' || t.terrain === 'mountain') break;
+                    const e = units.get(key);
+                    if (e && e.owner !== owner && (!isAtWar || isAtWar(e.owner))) {
+                        if (!isFavorableAttack(u, e, units, tiles, lords, buildings, tempBonuses, structures)) break;
+                        let score = unitValue(e) + (CHARIOT_CHARGE_VULN_TYPES.includes(e.type) ? 25 : 0);
+                        if (groupTarget && e.id === groupTarget.id) score += 20;
+                        if (score > bestScore) { bestScore = score; best = e; bestDir = dir; }
+                        break; // charge hits the first enemy in the lane
+                    }
+                }
+            }
+            if (best && bestDir) {
+                out.push({ type: 'chariotCharge', fromId: u.id, dx: bestDir[0], dz: bestDir[1] });
+                acted.add(u.id);
+            }
+        }
+    }
+
     // 3) Conceal (ambush setup) for any military unit on conceal terrain near
     //    the front, out of enemy vision, with no adjacent enemy to fight.
     //    A unit that is ALREADY concealing/concealed is skipped (don't reset its
@@ -1672,6 +1744,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
             if (adjEnemy) continue;
             if (!isProbablyHidden(u, units, owner, isAtWar)) continue;
             if (!isNearFront(u, units, tiles, owner, isAtWar)) continue;
+            if (!enemyWillPassThroughConcealTile(u, units, tiles, owner, isAtWar)) continue;
             out.push({ type: 'conceal', unitId: u.id });
             acted.add(u.id);
         }
