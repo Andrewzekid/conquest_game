@@ -9,6 +9,8 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          AMBUSH_ATTACK_BONUS, AMBUSH_DEFENSE_BONUS,
          CHARGE_UNITS, CHARGE_ATTACK_BONUS, CHARGE_RANGE,
          CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
+         CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_STUN_TURNS,
+         CHARIOT_CHARGE_ATTACK_BONUS, CHARIOT_CHARGE_VULN_TYPES, CHARIOT_CHARGE_VULN_MULT,
          RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
          LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
          STRUCTURE_TYPE, STRUCTURE_COST,
@@ -374,7 +376,7 @@ export class Game {
             onBuild: (buildingType, tile) => this.handleBuild(buildingType, tile),
             onTrain: (unitType, tile) => this.handleTrain(unitType, tile),
             onDiplomacy: (action, target) => this.handleDiplomacy(action, target),
-            onRecruitLord: () => this.handleRecruitLord(),
+            onRecruitLord: this.spectateMode ? null : () => this.handleRecruitLord(),
             onLevelUpCity: (tile) => this.handleLevelUpCity(tile),
             onActivateKing: (lord) => this.handleActivateKing(lord),
             onCancelGoal: (unit) => this.handleCancelGoal(unit),
@@ -683,6 +685,17 @@ export class Game {
             }
         }
 
+        // 1d) Chariot charge: a selected chariot clicks a tile at the end of one
+        //     of its 4 orthogonal charge lanes to charge through it.
+        if (sel && sel.owner === PLAYER_FACTION && tile && CHARIOT_CHARGE_UNITS.includes(sel.type) &&
+            this.gameState.chariotChargeTargets && this.gameState.chariotChargeTargets.size) {
+            const lane = this.gameState.chariotChargeTargets.get(`${tile.x},${tile.z}`);
+            if (lane && !sel.hasMovedThisTurn && !sel.hasAttackedThisTurn) {
+                this.handleChariotCharge(sel, lane.dx, lane.dz);
+                return;
+            }
+        }
+
         // 2) Attack: a selected player unit clicks an enemy unit in attack range.
         if (sel && sel.owner === PLAYER_FACTION && clickedUnit && clickedUnit.owner !== PLAYER_FACTION) {
             const inRange = this.gameState.attackTargets.some(u => u.id === clickedUnit.id);
@@ -867,10 +880,24 @@ export class Game {
             }
         }
 
+        // Chariot charge lanes: for a chariot that hasn't moved/acted, each of
+        // the 4 orthogonal directions that contains at least one at-war enemy in
+        // range becomes a chargeable lane. Map of destination tileKey -> {dx,dz}.
+        this.gameState.chariotChargeTargets = new Map();
+        if (unit.owner === PLAYER_FACTION && !unit.hasMovedThisTurn && !unit.hasAttackedThisTurn &&
+            CHARIOT_CHARGE_UNITS.includes(unit.type)) {
+            for (const lane of this._chariotChargeLanes(unit)) {
+                this.gameState.chariotChargeTargets.set(`${lane.landX},${lane.landZ}`, lane);
+            }
+        }
+
         this.ui.showUnitInfo(unit);
         this.renderer.highlightMoveTargets(this.gameState.moveTargets);
         this.renderer.highlightAttackTargets(this.gameState.attackTargets);
         this.renderer.highlightBridgeTargets(this.gameState.bridgeTargets || []);
+        if (this.renderer.highlightChariotChargeTargets) {
+            this.renderer.highlightChariotChargeTargets(this.gameState.chariotChargeTargets);
+        }
     }
 
     selectLord(lord) {
@@ -1253,6 +1280,130 @@ export class Game {
         this.renderAll();
         this.ui.updateResourceBar();
         this.checkVictory();
+    }
+
+    /** Compute the chariot's available charge lanes: for each of the 4
+     *  orthogonal directions, scan up to CHARIOT_CHARGE_RANGE tiles. A lane is
+     *  valid if it contains at least one at-war enemy and the path to (and
+     *  including) the enemy is over passable, in-bounds terrain. Returns an
+     *  array of { dx, dz, landX, landZ, hits: [unit] } where (landX,landZ) is
+     *  the tile the chariot ends on (last passable tile reached along the lane). */
+    _chariotChargeLanes(unit) {
+        const lanes = [];
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        for (const [dx, dz] of dirs) {
+            const hits = [];
+            let landX = unit.x, landZ = unit.z;
+            let blocked = false;
+            for (let step = 1; step <= CHARIOT_CHARGE_RANGE; step++) {
+                const cx = unit.x + dx * step, cz = unit.z + dz * step;
+                const t = this.tiles.get(`${cx},${cz}`);
+                if (!t || !isPassable(t)) { blocked = true; break; }
+                // A fortified enemy city blocks the lane (can't trample walls).
+                if (t.terrain === 'CITY' && t.owner && t.owner !== unit.owner &&
+                    (t.fortification || 0) > 0) { blocked = true; break; }
+                const enemy = this._unitAt(cx, cz);
+                if (enemy && enemy.owner !== unit.owner &&
+                    canAttack(this.gameState.diplomacy, unit.owner, enemy.owner)) {
+                    hits.push(enemy);
+                }
+                landX = cx; landZ = cz;
+                // Stop advancing past a friendly-occupied tile (can't overrun allies).
+                if (enemy && enemy.owner === unit.owner) { landX = unit.x + dx * (step - 1); landZ = unit.z + dz * (step - 1); break; }
+            }
+            void blocked;
+            if (hits.length) lanes.push({ dx, dz, landX, landZ, hits });
+        }
+        return lanes;
+    }
+
+    /** Return the unit standing on (x,z), if any. */
+    _unitAt(x, z) {
+        for (const u of this.gameState.units.values()) {
+            if (u.x === x && u.z === z) return u;
+        }
+        return null;
+    }
+
+    /** Execute a chariot charge in orthogonal direction (dx,dz). Every enemy in
+     *  the lane is struck with a bonus (extra vs infantry/artillery). The
+     *  chariot ends on the last passable tile and is stunned for
+     *  CHARIOT_CHARGE_STUN_TURNS turns. Works for player and AI (isAI skips UI). */
+    handleChariotCharge(attacker, dx, dz, isAI = false) {
+        if (!attacker) return false;
+        if (!CHARIOT_CHARGE_UNITS.includes(attacker.type)) {
+            if (!isAI) this.log('Only chariots can perform a charge.');
+            return false;
+        }
+        if (attacker.hasMovedThisTurn || attacker.hasAttackedThisTurn) {
+            if (!isAI) this.log('A chariot cannot move and charge on the same turn.');
+            return false;
+        }
+        // Recompute the lane fresh so we act on current state.
+        const lane = this._chariotChargeLanes(attacker).find(l => l.dx === dx && l.dz === dz);
+        if (!lane || !lane.hits.length) {
+            if (!isAI) this.log('No valid charge target in that direction.');
+            return false;
+        }
+        this.log(`🛞 ${UNIT_TYPE[attacker.type].name} #${attacker.id} charges ${lane.hits.length} enemy target(s)!`);
+        sfx.attack();
+        const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
+        // Strike each enemy in the lane (nearest first).
+        const ordered = lane.hits.slice().sort((a, b) =>
+            (Math.abs(a.x - attacker.x) + Math.abs(a.z - attacker.z)) -
+            (Math.abs(b.x - attacker.x) + Math.abs(b.z - attacker.z)));
+        for (const defender of ordered) {
+            if (!this.gameState.units.has(attacker.id)) break;   // chariot died mid-lane
+            if (!this.gameState.units.has(defender.id)) continue; // already dead
+            const vuln = CHARIOT_CHARGE_VULN_TYPES.includes(defender.type);
+            const bonus = CHARIOT_CHARGE_ATTACK_BONUS +
+                (vuln ? Math.round(originalAttack * (CHARIOT_CHARGE_VULN_MULT - 1)) : 0);
+            attacker.attack = originalAttack + bonus;
+            const defTile = this.tiles.get(`${defender.x},${defender.z}`);
+            const terrain = defTile ? defTile.terrain : 'PLAINS';
+            const atkLord = findCommandingLord(this.gameState.lords, attacker);
+            const defLord = findCommandingLord(this.gameState.lords, defender);
+            // Charge is a one-sided smash: no counter-attack (noCounter=true).
+            const result = resolveCombat(attacker, defender, terrain, atkLord, defLord,
+                this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses,
+                false, this.gameState.structures,
+                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true);
+            result.messages.forEach(m => this.log(m));
+            attacker.attack = originalAttack;
+            if (result.defenderDied) {
+                this._onUnitDeath(defender);
+                this.log(`${UNIT_TYPE[defender.type].name} destroyed by the charge!`);
+                this._maybeRespawnOnKill(attacker.owner);
+            }
+            if (result.attackerDied) {
+                this._onUnitDeath(attacker);
+                this.log(`${UNIT_TYPE[attacker.type].name} destroyed during the charge!`);
+                break;
+            }
+        }
+        // Move the chariot to the landing tile if it survived and the tile is free.
+        if (this.gameState.units.has(attacker.id)) {
+            const occupant = this._unitAt(lane.landX, lane.landZ);
+            if (!occupant || occupant.id === attacker.id) {
+                attacker.x = lane.landX;
+                attacker.z = lane.landZ;
+            }
+            this._checkFallTrap(attacker);
+            // Charging exhausts the chariot: stunned (no move/attack) for 2 turns.
+            attacker.hasMovedThisTurn = true;
+            attacker.hasAttackedThisTurn = true;
+            attacker.stunnedTurns = Math.max(attacker.stunnedTurns || 0, CHARIOT_CHARGE_STUN_TURNS);
+            this.log(`🛞 ${UNIT_TYPE[attacker.type].name} #${attacker.id} is stunned for ${CHARIOT_CHARGE_STUN_TURNS} turns after charging.`);
+        }
+        this.gameState.moveTargets.clear();
+        this.gameState.attackTargets = [];
+        this.gameState.chargeTargets = [];
+        this.gameState.chariotChargeTargets = new Map();
+        this.renderer.clearHighlights();
+        this.renderAll();
+        this.ui.updateResourceBar();
+        this.checkVictory();
+        return true;
     }
 
     // --- Concealment / Ambush System ---
@@ -2347,8 +2498,9 @@ export class Game {
     }
 
     handleRecruitLord() {
+        if (this.spectateMode) return; // no recruiting while spectating
         if (!canRecruitLord(this.gameState.resources.player)) {
-            this.log('Cannot afford to recruit a lord! (150g, 50f)');
+            this.log(`Cannot afford to recruit a lord! (${LORD_RECRUIT_COST.gold}g, ${LORD_RECRUIT_COST.food}f)`);
             return;
         }
         // The recruited lord comes with a free Infantry — respect the unit cap
@@ -2862,6 +3014,7 @@ export class Game {
             l.owner === faction && !l.hasMovedThisTurn);
         if (!lords.length) return;
         const atWar = (o) => canAttack(this.gameState.diplomacy, faction, o);
+        const pool = this.gameState.resources[faction];
 
         const pickTarget = (lord) => {
             let target = null, best = Infinity;
@@ -2893,21 +3046,155 @@ export class Game {
         };
 
         for (const lord of lords) {
+            if (lord.isKing) {
+                this._aiMoveKing(lord, faction, atWar, pool);
+                continue;
+            }
             const target = pickTarget(lord);
             if (!target) continue;
-            // Lords move up to 2 tiles per turn (like Infantry). Step twice
-            // toward the target; stop if we reach it or get stuck.
             for (let s = 0; s < 2; s++) {
                 if (lord.x === target.x && lord.z === target.z) break;
                 const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
                 if (!step || (step.x === lord.x && step.z === lord.z)) break;
-                // Don't step onto an enemy city tile (lords can't enter enemy cities)
                 const destTile = this.tiles.get(`${step.x},${step.z}`);
-                if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction) break;
+                // Lords may enter a capturable city (breached / siege-tower adjacent).
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
+                    !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
                 lord.x = step.x; lord.z = step.z;
             }
             lord.hasMovedThisTurn = true;
         }
+    }
+
+    /** Move an AI king. Kings stay safe: they retreat from immediate threats,
+     *  only join offensives when the army is large enough, and avoid camping
+     *  forever outside an enemy city they cannot take. They also capture
+     *  breached/unclaimed cities when the opportunity is clear. */
+    _aiMoveKing(lord, faction, atWar, pool) {
+        const factionName = this.factionColors[faction] ? this.factionColors[faction].name : faction;
+
+        // Military units (not scouts/settlers/workers) for army-strength checks.
+        const military = [...this.gameState.units.values()].filter(u =>
+            u.owner === faction && !['SCOUT', 'SETTLER', 'WORKER'].includes(u.type));
+        const ownCities = getOwnedCities(this.tiles, faction);
+        const nearestOwnCity = () => {
+            let best = null, bestD = Infinity;
+            for (const c of ownCities) {
+                const d = Math.abs(c.x - lord.x) + Math.abs(c.z - lord.z);
+                if (d < bestD) { bestD = d; best = c; }
+            }
+            return best;
+        };
+
+        const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
+        const nearestEnemyDist = () => {
+            let best = Infinity;
+            for (const u of enemyUnits) {
+                const d = Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z));
+                if (d < best) best = d;
+            }
+            return best;
+        };
+        const friendlyNearKing = [...this.gameState.units.values()].filter(u =>
+            u.owner === faction && Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) <= 2).length;
+
+        // 1) Capture a breached/unclaimed city that is within reach and empty.
+        for (const t of this.tiles.values()) {
+            if (t.terrain !== 'CITY' || t.owner === faction) continue;
+            if (!canCaptureTile(faction, t, pool) && !this.siegeTowerAdjacentTo(t, faction)) continue;
+            const dist = Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z));
+            if (dist > 2) continue;
+            const enemyOnTile = enemyUnits.some(u => u.x === t.x && u.z === t.z);
+            if (enemyOnTile) continue;
+            this._aiStepLord(lord, t.x, t.z, faction, pool, factionName);
+            return;
+        }
+
+        // 2) Threatened by nearby enemies with little support → retreat to the
+        //    nearest own city immediately.
+        const threatDist = nearestEnemyDist();
+        if (threatDist <= 3 && friendlyNearKing < 2) {
+            const home = nearestOwnCity();
+            if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
+        }
+
+        // 3) Anti-camp: if the king is stuck beside an enemy city it cannot take,
+        //    count turns and move away before it creates a stalemate.
+        const adjacentEnemyCity = [...this.tiles.values()].find(t =>
+            t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
+            Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z)) <= 1);
+        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
+            lord.campTurns = (lord.campTurns || 0) + 1;
+            if (lord.campTurns >= 2) {
+                const home = nearestOwnCity();
+                if (home) {
+                    this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
+                    lord.campTurns = 0;
+                    return;
+                }
+            }
+        } else {
+            lord.campTurns = 0;
+        }
+
+        // 4) Only move the king out with a large army; otherwise keep him safe for
+        //    "other missions" (defense / joining the stack once it grows).
+        const armyLargeEnough = military.length >= 6;
+        let anchor = null;
+        if (armyLargeEnough) {
+            let bestArmy = null, bestSize = 1;
+            for (const l of this.gameState.lords) {
+                if (l.owner !== faction || l.isKing) continue;
+                const size = (l.army || []).length;
+                if (size >= 2 && size > bestSize) { bestSize = size; bestArmy = l; }
+            }
+            if (bestArmy) {
+                anchor = bestArmy;
+            } else if (military.length >= 4) {
+                let sx = 0, sz = 0;
+                for (const u of military) { sx += u.x; sz += u.z; }
+                anchor = { x: Math.round(sx / military.length), z: Math.round(sz / military.length) };
+            }
+        }
+
+        if (anchor) {
+            if (Math.max(Math.abs(lord.x - anchor.x), Math.abs(lord.z - anchor.z)) > 2) {
+                this._aiStepLord(lord, anchor.x, anchor.z, faction, pool, factionName);
+                return;
+            }
+        }
+
+        // 5) No objective / small army: stay within a few tiles of the nearest
+        //    own city so the king is available to defend.
+        const home = nearestOwnCity();
+        if (home && Math.max(Math.abs(lord.x - home.x), Math.abs(lord.z - home.z)) > 3) {
+            this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
+            return;
+        }
+
+        lord.hasMovedThisTurn = true;
+    }
+
+    /** Take one A* step for a lord toward a target; capture cities along the way. */
+    _aiStepLord(lord, targetX, targetZ, faction, pool, factionName) {
+        const step = nextStepToward(this.tiles, this.gameState.units, lord, { x: targetX, z: targetZ }, 200, faction);
+        if (step && (step.x !== lord.x || step.z !== lord.z)) {
+            const destTile = this.tiles.get(`${step.x},${step.z}`);
+            // Block entry into enemy city that is not yet capturable.
+            if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
+                !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) {
+                // no step
+            } else {
+                lord.x = step.x; lord.z = step.z;
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
+                    (canCaptureTile(faction, destTile, pool) || this.siegeTowerAdjacentTo(destTile, faction))) {
+                    pool.gold -= CAPTURE_COST;
+                    captureCityTerritory(this.tiles, destTile, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
+                    this.checkVictory();
+                }
+            }
+        }
+        lord.hasMovedThisTurn = true;
     }
 
     /** An AI lord/king attacks an adjacent at-war enemy. Prefers the lowest-HP
@@ -3024,6 +3311,27 @@ export class Game {
                             this.log(`${factionName} trained ${UNIT_TYPE[action.unitType].name}`);
                         }
                     }
+                    break;
+                }
+                case 'recruitLord': {
+                    const nonKings = (this.gameState.lords || []).filter(l => l.owner === faction && !l.isKing);
+                    if (nonKings.length >= 3) break;
+                    if (!canRecruitLord(pool)) break;
+                    const cities = getOwnedCities(this.tiles, faction);
+                    if (!cities.length) break;
+                    const unitCap = getUnitCap(this.tiles, faction);
+                    const count = [...this.gameState.units.values()].filter(u => u.owner === faction).length;
+                    if (count >= unitCap) break;
+                    const city = cities[0];
+                    pool.gold -= LORD_RECRUIT_COST.gold;
+                    pool.food -= LORD_RECRUIT_COST.food;
+                    const lord = createLord(faction, city.x, city.z);
+                    const unit = createUnit('INFANTRY', faction, city.x, city.z, { factionDef: def });
+                    this.gameState.units.set(unit.id, unit);
+                    assignArmy(lord, unit.id);
+                    unit.lordId = lord.id;
+                    this.gameState.lords.push(lord);
+                    this.log(`${factionName} recruited lord ${lord.name} the ${lord.class} at [${city.x}, ${city.z}]`);
                     break;
                 }
                 case 'build': {
@@ -3291,6 +3599,17 @@ export class Game {
                     if (result.attackerDied) this._onUnitDeath(attacker);
                     break;
                 }
+                case 'chariotCharge': {
+                    // AI chariot charge — mirrors handleChariotCharge for an AI faction.
+                    const attacker = this.gameState.units.get(action.fromId);
+                    if (!attacker) break;
+                    if (!CHARIOT_CHARGE_UNITS.includes(attacker.type)) break;
+                    if (attacker.hasAttackedThisTurn || attacker.hasMovedThisTurn) break;
+                    if (attacker.stunnedTurns && attacker.stunnedTurns > 0) break;
+                    const ok = this.handleChariotCharge(attacker, action.dx, action.dz, true);
+                    if (!ok) break;
+                    break;
+                }
                 case 'conceal': {
                     const unit = this.gameState.units.get(action.unitId);
                     if (unit && unit.owner === faction) this.handleConceal(unit, true);
@@ -3423,6 +3742,8 @@ export class Game {
         if (this.spectateMode) return; // no victory/defeat in spectate mode
         if (this.gameState.gameOver) return;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
+        // Elimination runs in spectate mode too — a faction that loses its
+        // last city (or its king) is out, even with no human player.
         for (const f of FACTIONS) {
             if (this.gameState.eliminated.has(f)) continue;
             if (countCities(this.tiles, f) === 0) {
@@ -3431,6 +3752,7 @@ export class Game {
                 this.log(`${name} has lost all cities and is eliminated!`);
             }
         }
+        if (this.spectateMode) return; // no victory/defeat screen in spectate mode
         const playerAlive = !this.gameState.eliminated.has(PLAYER_FACTION);
         const aiRemaining = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
         if (!playerAlive) this.endGame('defeat');

@@ -39,18 +39,51 @@ export function cityFortMax(tile) {
     return 2 + ((tile && tile.cityLevel) || 1);
 }
 
-/** Carve an irregular, non-square continent out of the grid: tiles far from
- *  the map center (plus layered wavy noise so the coast isn't a circle or a
- *  square) are turned into WATER, giving an organic island/continent silhouette.
- *  The interior is kept, so there's still plenty of land for cities and
+/** Pick 2–4 continent centers spread across the map, each with its own radius:
+ *  one large "main" continent, one or two medium ones, and optionally small
+ *  islets. Centers are kept far enough apart (relative to their radii) that the
+ *  continents stay separated by water instead of merging into one giant blob. */
+function pickContinentCenters() {
+    const mapHalf = Math.min(GRID_WIDTH, GRID_HEIGHT) / 2;
+    const count = 2 + Math.floor(Math.random() * 3); // 2..4 continents
+    const centers = [];
+    for (let i = 0; i < count; i++) {
+        const radius = i === 0
+            ? mapHalf * (0.50 + Math.random() * 0.15)   // large: 0.50–0.65 of half-map
+            : i === 1
+                ? mapHalf * (0.30 + Math.random() * 0.12) // medium: 0.30–0.42
+                : mapHalf * (0.16 + Math.random() * 0.10); // small islets: 0.16–0.26
+        // Keep most of the disc on the map (a little edge clipping is fine).
+        const mx = Math.min(radius * 0.5, (GRID_WIDTH - 1) / 2);
+        const mz = Math.min(radius * 0.5, (GRID_HEIGHT - 1) / 2);
+        let best = null;
+        for (let attempt = 0; attempt < 60; attempt++) {
+            const x = mx + Math.random() * (GRID_WIDTH - 1 - 2 * mx);
+            const z = mz + Math.random() * (GRID_HEIGHT - 1 - 2 * mz);
+            let ok = true;
+            for (const c of centers) {
+                // Spacing > sum of radii (+ margin for noisy coasts) = water gap.
+                const minDist = (c.radius + radius) * 1.15;
+                if (Math.hypot(x - c.x, z - c.z) < minDist) { ok = false; break; }
+            }
+            if (ok) { best = { x, z, radius }; break; }
+            if (!best) best = { x, z, radius }; // fallback if spacing can't be met
+        }
+        centers.push(best);
+    }
+    return centers;
+}
+
+/** Carve irregular continents out of the grid: tiles outside every continent's
+ *  radius (plus layered wavy noise so coasts aren't circles) are turned into
+ *  WATER, giving 2–4 organic continents/islands separated by ocean. The
+ *  interiors are kept, so there's still plenty of land for cities and
  *  expansion. Two noise octaves — a slow one for large bays/peninsulas and a
  *  fast one for fine coastline wiggle — break up any boxy symmetry.
  *  Accepts an optional cutoffOverride so the caller can retry with a more
  *  generous land threshold if the first pass produced too little land. */
 function applyContinentMask(tiles, cutoffOverride = null) {
-    const cx = (GRID_WIDTH - 1) / 2;
-    const cz = (GRID_HEIGHT - 1) / 2;
-    const maxR = Math.min(GRID_WIDTH, GRID_HEIGHT) / 2;
+    const centers = pickContinentCenters();
     // Random per-generation phases + frequencies so every map's coastline differs.
     const phx = Math.random() * Math.PI * 2;
     const phz = Math.random() * Math.PI * 2;
@@ -58,17 +91,22 @@ function applyContinentMask(tiles, cutoffOverride = null) {
     const phz2 = Math.random() * Math.PI * 2;
     const freqSlow = 0.18 + Math.random() * 0.08;  // large bays/lobes
     const freqFast = 0.55 + Math.random() * 0.25;  // fine coastline wiggle
-    // Land cutoff: keep ~75% of the radius as solid interior, so the shape is
-    // clearly rounder than the grid without starving room for cities.
-    const CUTOFF = cutoffOverride != null ? cutoffOverride : 0.22;
+    // Land cutoff: keep ~85% of each radius as solid interior, so the shapes
+    // are clearly rounder than the grid without starving room for cities.
+    const CUTOFF = cutoffOverride != null ? cutoffOverride : 0.15;
     for (const t of tiles) {
-        // 0 at the center, ~1 at edge midpoints, ~1.41 at the corners.
-        const d = Math.hypot(t.x - cx, t.z - cz) / maxR;
         // Slow octave (range ~[-0.22, 0.22]) shapes big bays/peninsulas; fast
         // octave (range ~[-0.10, 0.10]) adds fine wiggle to the coast.
         const slow = 0.22 * (Math.sin(t.x * freqSlow + phx) + Math.cos(t.z * freqSlow + phz)) / 2;
         const fast = 0.10 * (Math.sin(t.z * freqFast + phx2) + Math.cos(t.x * freqFast + phz2)) / 2;
-        const landScore = (1.0 - d) + slow + fast;
+        // A tile is land if it lies inside ANY continent: the best (max) score
+        // over all centers wins.
+        let landScore = -Infinity;
+        for (const c of centers) {
+            const s = 1.0 - Math.hypot(t.x - c.x, t.z - c.z) / c.radius;
+            if (s > landScore) landScore = s;
+        }
+        landScore += slow + fast;
         if (landScore < CUTOFF) {
             t.terrain = 'WATER';
         }
@@ -136,6 +174,63 @@ function assignBiomes(tiles) {
     }
 }
 
+/** Guarantee every stamped city is reachable by land units: it must have at
+ *  least one non-WATER passable neighbor, and its connected land component
+ *  (BFS over non-WATER tiles) must span at least MIN_CITY_LAND tiles. RIVER
+ *  tiles count as blocking (a bridgeless river stops land units just like
+ *  water). Cities that fail get fixed by converting adjacent WATER tiles to
+ *  PLAINS, growing outward ring by ring; if a ring has no WATER left but
+ *  bridgeless rivers still cut the city off, an adjacent RIVER tile is
+ *  converted as a last resort. */
+const MIN_CITY_LAND = 12;
+const MAX_CITY_FIX_RINGS = 40;
+function ensureCityAccessibility(tiles, cityTiles) {
+    const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    // Passable-for-land-access: anything but WATER or (bridgeless) RIVER.
+    const isLand = (t) => t && t.terrain !== 'WATER' && t.terrain !== 'RIVER';
+    const landComponentSize = (start) => {
+        const seen = new Set([`${start.x},${start.z}`]);
+        const queue = [start];
+        while (queue.length) {
+            const cur = queue.shift();
+            for (const [dx, dz] of dirs) {
+                const k = `${cur.x + dx},${cur.z + dz}`;
+                if (seen.has(k)) continue;
+                const n = byKey.get(k);
+                if (!isLand(n)) continue;
+                seen.add(k);
+                queue.push(n);
+            }
+        }
+        return seen.size;
+    };
+    const convertRing = (city, ring, terrain) => {
+        let converted = false;
+        for (let dx = -ring; dx <= ring; dx++) {
+            for (let dz = -ring; dz <= ring; dz++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+                const t = byKey.get(`${city.x + dx},${city.z + dz}`);
+                if (t && t.terrain === terrain) {
+                    t.terrain = 'PLAINS';
+                    delete t.bridge;
+                    converted = true;
+                }
+            }
+        }
+        return converted;
+    };
+    for (const city of cityTiles) {
+        for (let ring = 1; ring <= MAX_CITY_FIX_RINGS; ring++) {
+            const hasLandNeighbor = dirs.some(([dx, dz]) => isLand(byKey.get(`${city.x + dx},${city.z + dz}`)));
+            if (hasLandNeighbor && landComponentSize(city) >= MIN_CITY_LAND) break;
+            // Prefer filling WATER; only breach a river ring if there was no
+            // water to convert at this radius.
+            if (!convertRing(city, ring, 'WATER')) convertRing(city, ring, 'RIVER');
+        }
+    }
+}
+
 /** Carve large, meandering rivers across the map as random walks. Rivers are
  *  impassable until bridged; cities are never placed on river tiles. Each river
  *  is long and sinuous, ~2 tiles wide, with occasional widenings (small lakes)
@@ -165,14 +260,18 @@ function generateRivers(tiles) {
         }
     };
 
+    // Rivers flow over land, so seed each walk from a random land tile (with
+    // several continents the map edges are mostly ocean — an edge start would
+    // meander through water and carve nothing).
+    const landStarts = tiles.filter(t => t.terrain !== 'WATER');
     for (let i = 0; i < riverCount; i++) {
-        // Start on a random edge tile and walk inward.
-        let x, z, dx, dz;
-        const edge = Math.floor(Math.random() * 4);
-        if (edge === 0)      { x = Math.floor(Math.random() * GRID_WIDTH); z = 0; dx = 0; dz = 1; }
-        else if (edge === 1) { x = Math.floor(Math.random() * GRID_WIDTH); z = GRID_HEIGHT - 1; dx = 0; dz = -1; }
-        else if (edge === 2) { x = 0; z = Math.floor(Math.random() * GRID_HEIGHT); dx = 1; dz = 0; }
-        else                 { x = GRID_WIDTH - 1; z = Math.floor(Math.random() * GRID_HEIGHT); dx = -1; dz = 0; }
+        // Start on a random land tile and walk in a random direction.
+        const start = landStarts[Math.floor(Math.random() * landStarts.length)];
+        if (!start) break;
+        let x = start.x, z = start.z;
+        const dir = Math.floor(Math.random() * 4);
+        let dx = dir === 0 ? 1 : dir === 1 ? -1 : 0;
+        let dz = dir === 2 ? 1 : dir === 3 ? -1 : 0;
 
         const length = Math.floor(Math.max(GRID_WIDTH, GRID_HEIGHT) * (0.95 + Math.random() * 0.4)); // long, dominant rivers
         let sinceWiden = 0;
@@ -260,19 +359,20 @@ export function generateMap() {
         }
     }
 
-    // Shape the landmass into an irregular continent (cuts off the square
-    // corners and carves a wavy coastline) BEFORE biomes/rivers/cities.
-    // Retry with a more generous cutoff if the first pass produced too little
-    // land (prevents cities from spawning in the ocean on unlucky seeds).
+    // Shape the landmass into 2–4 irregular continents separated by water (cuts
+    // off the square corners and carves wavy coastlines) BEFORE biomes/rivers/
+    // cities. Retry with a more generous cutoff if the first pass produced too
+    // little land (prevents cities from spawning in the ocean on unlucky seeds).
     applyContinentMask(tiles);
     let landCount = tiles.filter(t => t.terrain !== 'WATER').length;
     let maskAttempts = 0;
     while (landCount < tiles.length * 0.30 && maskAttempts < 5) {
-        // Reset all tiles to PLAINS before re-applying the mask.
+        // Reset all tiles to PLAINS before re-applying the mask, with a lower
+        // cutoff each time (lower cutoff = more land).
         for (const t of tiles) {
             if (t.terrain === 'WATER') t.terrain = 'PLAINS';
         }
-        applyContinentMask(tiles, 0.30 + maskAttempts * 0.08);
+        applyContinentMask(tiles, Math.max(0.02, 0.15 - (maskAttempts + 1) * 0.04));
         landCount = tiles.filter(t => t.terrain !== 'WATER').length;
         maskAttempts++;
     }
@@ -319,6 +419,10 @@ export function generateMap() {
         c.fortMax = cityFortMax(c);
         c.fortification = c.fortMax;
     }
+
+    // Make sure no city is marooned: fill/breach tiles until every city has a
+    // land neighbor and a reasonably-sized connected landmass.
+    ensureCityAccessibility(tiles, cityTiles);
 
     // Place Natural Wonders after cities so they don't sit under a starting
     // city (capturing/founding on a wonder tile still keeps the bonus).

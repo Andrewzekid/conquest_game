@@ -1,8 +1,8 @@
 /** UI: resource bar, tile/unit info, build menu, diplomacy panel, lord panel, combat log. */
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
-         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CONCEAL_TERRAINS,
-         STRUCTURE_TYPE, STRUCTURE_COST,
+         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
+         STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
          cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
@@ -382,6 +382,22 @@ export function bindUI(gameState, callbacks) {
                     for (const tgt of chargeTargets) {
                         html += `<button class="charge-btn" data-target-id="${tgt.id}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id} for +${2} attack (exhausts cavalry).">⚔️ Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id}</button>`;
                     }
+                }
+            }
+            // Chariot charge: directional lanes (click the highlighted gold tile).
+            if (CHARIOT_CHARGE_UNITS.includes(unit.type)) {
+                if (unit.stunnedTurns && unit.stunnedTurns > 0) {
+                    html += `<div style="font-size:11px; color:#c99; margin-top:4px;">💫 Stunned for ${unit.stunnedTurns} more turn${unit.stunnedTurns === 1 ? '' : 's'} (charge recovery).</div>`;
+                } else if (!unit.hasAttackedThisTurn && !unit.hasMovedThisTurn) {
+                    const lanes = gameState.chariotChargeTargets;
+                    const laneCount = lanes instanceof Map ? lanes.size : (lanes ? lanes.length : 0);
+                    if (laneCount) {
+                        html += `<div style="font-size:11px; color:#ffd35a; margin-top:4px;">🛞 Charge (up to 3 tiles): click a gold-highlighted tile. Stuns the chariot 2 turns; massive damage vs infantry/artillery.</div>`;
+                    } else {
+                        html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">🛞 No enemy in a straight charge lane. (Cannot move and charge the same turn.)</div>`;
+                    }
+                } else if (unit.hasMovedThisTurn) {
+                    html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">🛞 Chariot already moved — cannot charge this turn.</div>`;
                 }
             }
             if (unit.type === 'SETTLER') {
@@ -921,14 +937,14 @@ export function bindUI(gameState, callbacks) {
             els.lordPanel.appendChild(div);
         }
 
-        // Recruit lord button
-        const recruitBtn = document.createElement('button');
-        recruitBtn.textContent = 'Recruit Lord (150g, 50f)';
-        recruitBtn.style.cssText = 'margin-top:5px; padding:4px; width:100%;';
-        recruitBtn.onclick = () => {
-            if (callbacks.onRecruitLord) callbacks.onRecruitLord();
-        };
-        els.lordPanel.appendChild(recruitBtn);
+        // Recruit lord button (only for the human player — hidden in spectate).
+        if (callbacks.onRecruitLord) {
+            const recruitBtn = document.createElement('button');
+            recruitBtn.textContent = `Recruit Lord (${LORD_RECRUIT_COST.gold}g, ${LORD_RECRUIT_COST.food}f)`;
+            recruitBtn.style.cssText = 'margin-top:5px; padding:4px; width:100%;';
+            recruitBtn.onclick = () => callbacks.onRecruitLord();
+            els.lordPanel.appendChild(recruitBtn);
+        }
     }
 
     function addCombatLog(message) {

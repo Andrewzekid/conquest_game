@@ -43,8 +43,8 @@ export function createLord(owner, x, z, name, classKey) {
  *  Kings are guaranteed at least 50 max HP regardless of level. */
 export function lordMaxHp(lord) {
     if (!lord) return 1;
-    const base = 12 + (lord.level - 1) * 2 + (lord.isKing ? 38 : 0);
-    return lord.isKing ? Math.max(50, base) : base;
+    const base = 18 + (lord.level - 1) * 3 + (lord.isKing ? 42 : 0);
+    return lord.isKing ? Math.max(55, base) : base;
 }
 
 /** A lord's own melee attack: combat stat + class bonus + king bonus. */
