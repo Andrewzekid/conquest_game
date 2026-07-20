@@ -136,7 +136,7 @@ export const BRIDGE_COST = { gold: 40, wood: 20 };
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
 export const SIEGE_TOWER_COST = { gold: 40, wood: 15, iron: 0, production: 15 };
 export const SIEGE_TOWER_BUILD_TURNS = 3;
-export const SIEGE_TOWER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
+export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
 // Engineers can only build Siege Towers (not CATAPULT/TREBUCHET).
 // Long-range siege engines require a Siege Workshop building in a city.
@@ -146,7 +146,7 @@ export const SIEGE_TOWER_BUILD_RADIUS = 2; // Engineer must be within this Cheby
 // allows infantry to assault fortified cities). Requires wood, built in 1 turn.
 export const LADDER_COST = { gold: 30, wood: 15 };
 export const LADDER_BUILD_TURNS = 1;
-export const LADDER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
+export const LADDER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
 // Type advantage system (rock-paper-scissors bonus)
 export const TYPE_ADVANTAGE = {
