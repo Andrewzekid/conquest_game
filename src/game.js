@@ -3414,6 +3414,40 @@ export class Game {
             }
         }
 
+        // 3b) Join a crucial siege. If our army is besieging an at-war enemy
+        //     city (>=3 friendly military within Chebyshev 3) and the enemy king
+        //     is present (within Chebyshev 2), and we clearly outnumber the
+        //     defenders locally, the king steps in to help crack the city — a
+        //     high-value objective at low risk. The retreat gate (step 2)
+        //     already ensures we only advance when not locally outmatched.
+        if (atWar) {
+            let target = null, bestD = Infinity;
+            for (const c of this.tiles.values()) {
+                if (c.terrain !== 'CITY' || c.owner === faction || !atWar(c.owner)) continue;
+                // (a) our army is besieging it: >=3 friendly military nearby.
+                let friends = 0;
+                for (const u of military) {
+                    if (Math.max(Math.abs(u.x - c.x), Math.abs(u.z - c.z)) <= 3) {
+                        friends++;
+                        if (friends >= 3) break;
+                    }
+                }
+                if (friends < 3) continue;
+                // (b) the enemy king is present.
+                const enemyKing = enemyLords.find(l => l.isKing &&
+                    Math.max(Math.abs(l.x - c.x), Math.abs(l.z - c.z)) <= 2);
+                if (!enemyKing) continue;
+                // low risk: we outnumber the defenders locally.
+                if (localPower(c.x, c.z, 3, true) <= localPower(c.x, c.z, 3, false) * 1.3) continue;
+                const d = Math.max(Math.abs(c.x - lord.x), Math.abs(c.z - lord.z));
+                if (d < bestD) { bestD = d; target = c; }
+            }
+            if (target && Math.max(Math.abs(lord.x - target.x), Math.abs(lord.z - target.z)) > 1) {
+                this._aiStepLord(lord, target.x, target.z, faction, pool, factionName);
+                return;
+            }
+        }
+
         // 4) Anchor to the main conquest group or military centroid once we have
         //    a modest force (3+ military units). This gets the king into fights.
         if (military.length >= 3) {
@@ -3658,13 +3692,14 @@ export class Game {
                 }
                 case 'recruitLord': {
                     const nonKings = (this.gameState.lords || []).filter(l => l.owner === faction && !l.isKing);
-                    if (nonKings.length >= 3) break;
-                    if (!canRecruitLord(pool)) break;
                     const cities = getOwnedCities(this.tiles, faction);
                     if (!cities.length) break;
-                    const unitCap = getUnitCap(this.tiles, faction);
-                    const count = [...this.gameState.units.values()].filter(u => u.owner === faction).length;
-                    if (count >= unitCap) break;
+                    // Cap scales with empire size: one non-king lord per city,
+                    // min 3, so each major army group can have a commander.
+                    if (nonKings.length >= Math.max(3, cities.length)) break;
+                    if (!canRecruitLord(pool)) break;
+                    // Note: a lord's single bodyguard INFANTRY is allowed to
+                    // exceed the unit cap — it should not block army growth.
                     const city = cities[0];
                     pool.gold -= LORD_RECRUIT_COST.gold;
                     pool.food -= LORD_RECRUIT_COST.food;
@@ -3890,6 +3925,29 @@ export class Game {
                     });
                     unit.hasAttackedThisTurn = true;
                     this.log(`${factionName}: engineer started ${sdef.name} at [${tile.x}, ${tile.z}].`);
+                    break;
+                }
+                case 'buildBridge': {
+                    // An AI engineer bridges an adjacent unbridged river tile.
+                    // Mirrors the player's handleBuildBridge (no UI highlights).
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (!unit || (unit.type !== 'ENGINEER' && unit.type !== 'SIEGE') ||
+                        unit.owner !== faction) break;
+                    if (unit.hasAttackedThisTurn) break;
+                    const riverTile = this.tiles.get(action.tileKey);
+                    if (!riverTile || riverTile.terrain !== 'RIVER' || riverTile.bridge) break;
+                    const dist = Math.abs(unit.x - riverTile.x) + Math.abs(unit.z - riverTile.z);
+                    if (dist !== 1) break;
+                    let canPayB = true;
+                    for (const [res, amt] of Object.entries(BRIDGE_COST)) {
+                        if ((pool[res] || 0) < amt) { canPayB = false; break; }
+                    }
+                    if (!canPayB) break;
+                    for (const [res, amt] of Object.entries(BRIDGE_COST)) pool[res] = (pool[res] || 0) - amt;
+                    riverTile.bridge = true;
+                    if (this.gameState.bridges) this.gameState.bridges.add(`${riverTile.x},${riverTile.z}`);
+                    unit.hasAttackedThisTurn = true;
+                    this.log(`${factionName}: engineer built a bridge at [${riverTile.x}, ${riverTile.z}].`);
                     break;
                 }
                 case 'board': {

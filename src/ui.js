@@ -9,7 +9,7 @@ import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } fr
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
-import { getUnitCap, unitCapForCity } from './economy.js';
+import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 
 export function bindUI(gameState, callbacks) {
     const els = {
@@ -141,73 +141,24 @@ export function bindUI(gameState, callbacks) {
         updateResourceTooltips();
     }
 
-    /** Calculate and display production breakdown tooltips for each resource. */
+    /** Calculate and display production breakdown tooltips for each resource.
+     *  Derives the breakdown from the real economy (grossYields + upkeepTotals
+     *  in economy.js) so the income shown always matches what actually lands in
+     *  the resource pool — no phantom "+N/t" that never reaches the stockpile. */
     function updateResourceTooltips() {
         const tiles = gameState.tiles;
         const buildings = gameState.buildings;
         const units = gameState.units;
         if (!tiles) return;
 
-        // Calculate production sources
-        let goldCities = 0, goldMarkets = 0, goldTrade = 0, goldUpkeep = 0;
-        let foodFarms = 0, foodCities = 0, foodTerrain = 0, foodUpkeep = 0;
-        let woodMills = 0, woodCities = 0, woodForests = 0, woodUpkeep = 0;
-        let ironMines = 0, ironMountains = 0, ironHills = 0, ironUpkeep = 0;
-        let prodCities = 0, prodBarracks = 0, prodWorkshops = 0;
+        const def = defOf(PLAYER_FACTION);
+        const lords = gameState.lords || [];
+        const y = grossYields(tiles, PLAYER_FACTION, buildings, lords, def);
+        const up = upkeepTotals(units, PLAYER_FACTION);
 
-        // Count cities and their base production
-        for (const tile of tiles.values()) {
-            if (tile.owner !== PLAYER_FACTION) continue;
-            const key = `${tile.x},${tile.z}`;
-            const tileBuildings = buildings.get(key) || [];
-
-            if (tile.terrain === 'CITY') {
-                const cl = tile.cityLevel || 1;
-                goldCities += 8 + (cl - 1) * 2; // Base city gold
-                foodCities += 2 + cl; // City food
-                woodCities += 1 + cl; // City wood (new feature)
-                prodCities += 2 * cl; // City production
-
-                // Building bonuses on city tile
-                for (const bType of tileBuildings) {
-                    if (bType === 'MARKET') goldMarkets += 10;
-                    if (bType === 'BARRACKS') prodBarracks += 10;
-                    if (bType === 'SIEGE_WORKSHOP') prodWorkshops += 5;
-                    if (bType === 'HARBOR') prodWorkshops += 5;
-                }
-            } else {
-                // Non-city tiles: check for terrain improvements
-                const terrain = TERRAIN[tile.terrain];
-                if (terrain && terrain.resource) {
-                    const amount = terrain.amount || 0;
-                    if (terrain.resource === 'food') foodTerrain += amount;
-                    if (terrain.resource === 'wood') woodForests += amount;
-                    if (terrain.resource === 'iron') {
-                        if (tile.terrain === 'MOUNTAIN') ironMountains += amount;
-                        else if (tile.terrain === 'HILLS') ironHills += amount;
-                    }
-                }
-
-                // Building bonuses on non-city tiles
-                for (const bType of tileBuildings) {
-                    if (bType === 'FARM') foodFarms += 5;
-                    if (bType === 'LUMBERMILL') woodMills += 5;
-                    if (bType === 'MINE') ironMines += 5;
-                }
-            }
-        }
-
-        // Calculate unit upkeep
-        for (const unit of units.values()) {
-            if (unit.owner !== PLAYER_FACTION) continue;
-            const upkeep = unit.upkeep || {};
-            goldUpkeep += upkeep.gold || 0;
-            foodUpkeep += upkeep.food || 0;
-            woodUpkeep += upkeep.wood || 0;
-            ironUpkeep += upkeep.iron || 0;
-        }
-
-        // Trade routes (simplified - count trade pacts)
+        // Trade routes (simplified - count trade pacts). Not part of terrain
+        // production, so added to gold separately.
+        let goldTrade = 0;
         const diplo = gameState.diplomacy;
         if (diplo && diplo.relations) {
             for (const rel of Object.values(diplo.relations)) {
@@ -227,45 +178,46 @@ export function bindUI(gameState, callbacks) {
             }
         };
 
-        // Store net values for the resource bar income suffix
-        _netGold = goldCities + goldMarkets + goldTrade - goldUpkeep;
-        _netFood = foodFarms + foodCities + foodTerrain - foodUpkeep;
-        _netWood = woodMills + woodCities + woodForests - woodUpkeep;
-        _netIron = ironMines + ironMountains + ironHills - ironUpkeep;
-        _netProd = prodCities + prodBarracks + prodWorkshops;
+        // Net per resource = gross categories - upkeep (+ trade for gold).
+        _netGold = y.gold.city + y.gold.market + y.gold.terrain + y.gold.wonder + goldTrade - up.gold;
+        _netFood = y.food.city + y.food.farm + y.food.terrain + y.food.wonder + y.food.passive - up.food;
+        _netWood = y.wood.city + y.wood.lumbermill + y.wood.terrain + y.wood.wonder - up.wood;
+        _netIron = y.iron.city + y.iron.mine + y.iron.terrain + y.iron.wonder - up.iron;
+        _netProd = y.production.city + y.production.barracks + y.production.workshop +
+            y.production.harbor + y.production.wonder;
 
         // Gold tooltip
-        setTooltip('gold-cities', goldCities);
-        setTooltip('gold-markets', goldMarkets);
+        setTooltip('gold-cities', y.gold.city);
+        setTooltip('gold-markets', y.gold.market);
         setTooltip('gold-trade', goldTrade);
-        setTooltip('gold-upkeep', -goldUpkeep, false);
+        setTooltip('gold-upkeep', -up.gold, false);
         setTooltip('gold-net', _netGold);
 
         // Food tooltip
-        setTooltip('food-farms', foodFarms);
-        setTooltip('food-cities', foodCities);
-        setTooltip('food-terrain', foodTerrain);
-        setTooltip('food-upkeep', -foodUpkeep, false);
+        setTooltip('food-farms', y.food.farm);
+        setTooltip('food-cities', y.food.city);
+        setTooltip('food-terrain', y.food.terrain);
+        setTooltip('food-upkeep', -up.food, false);
         setTooltip('food-net', _netFood);
 
         // Wood tooltip
-        setTooltip('wood-mills', woodMills);
-        setTooltip('wood-cities', woodCities);
-        setTooltip('wood-forests', woodForests);
-        setTooltip('wood-upkeep', -woodUpkeep, false);
+        setTooltip('wood-mills', y.wood.lumbermill);
+        setTooltip('wood-cities', y.wood.city);
+        setTooltip('wood-forests', y.wood.terrain);
+        setTooltip('wood-upkeep', -up.wood, false);
         setTooltip('wood-net', _netWood);
 
-        // Iron tooltip
-        setTooltip('iron-mines', ironMines);
-        setTooltip('iron-mountains', ironMountains);
-        setTooltip('iron-hills', ironHills);
-        setTooltip('iron-upkeep', -ironUpkeep, false);
+        // Iron tooltip (terrain iron covers both mountains and hills)
+        setTooltip('iron-mines', y.iron.mine);
+        setTooltip('iron-mountains', y.iron.terrain);
+        setTooltip('iron-hills', 0);
+        setTooltip('iron-upkeep', -up.iron, false);
         setTooltip('iron-net', _netIron);
 
         // Production tooltip
-        setTooltip('prod-cities', prodCities);
-        setTooltip('prod-barracks', prodBarracks);
-        setTooltip('prod-workshops', prodWorkshops);
+        setTooltip('prod-cities', y.production.city);
+        setTooltip('prod-barracks', y.production.barracks);
+        setTooltip('prod-workshops', y.production.workshop + y.production.harbor);
         setTooltip('prod-net', _netProd);
     }
 

@@ -3,7 +3,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
          SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
          GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_VULN_TYPES,
-         EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST, LORD_CLASSES,
+         EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST,
          AI_SETTLER_TARGET, AI_SETTLER_CAP_FACTOR, AI_SETTLER_CAP_BASE, AI_SETTLERS_PER_TURN,
          AI_FRONTIER_BONUS_CLOSE, AI_FRONTIER_BONUS_MID, AI_FRONTIER_BONUS_FAR,
           AI_ENEMY_CITY_PROXIMITY_PENALTY, AI_WEAK_CITY_SNIPE_BONUS, AI_WEAK_CITY_RATIO,
@@ -54,9 +54,22 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     influence = influence || null;
     structures = structures || new Map();
     const roster = (factionDef && factionDef.roster) || ['INFANTRY', 'ARCHER', 'CAVALRY', 'ARTILLERY'];
+    // Whether any owned city already has a Siege Workshop (unlocks
+    // CATAPULT/TREBUCHET). Computed early so fullRoster can include them and
+    // the composition logic can treat siege as trainable.
+    let hasSiegeWorkshop = false;
+    for (const bs of buildings.values()) {
+        if (bs && bs.includes('SIEGE_WORKSHOP')) { hasSiegeWorkshop = true; break; }
+    }
     // Every faction can also train the shared EXTRA_UNITS (cavalry, longbowmen,
     // medics, …) — without them most factions never field any cavalry.
-    const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
+    const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u)),
+        ...(hasSiegeWorkshop ? ['CATAPULT', 'TREBUCHET'].filter(u => !roster.includes(u)) : [])];
+    // Whether the faction can train a direct siege unit (roster SIEGE/ARTILLERY
+    // or a workshop's CATAPULT/TREBUCHET). Factions with neither — Verdant,
+    // Storm — have no trainable siege and must rely on ENGINEER-built Siege
+    // Towers; their composition must not chase an unfillable siege role.
+    const hasTrainableSiege = roster.some(t => t === 'SIEGE' || t === 'ARTILLERY') || hasSiegeWorkshop;
 
     /** Only factions at war with `owner` are valid targets. */
     const isAtWar = (other) => !diploState || canAttack(diploState, owner, other);
@@ -84,11 +97,29 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const homeMassSize = homeMass != null ? (land.sizes.get(homeMass) || 0) : 9999;
     const totalLandTiles = [...land.sizes.values()].reduce((a, b) => a + b, 0);
     const isIslandFaction = homeMassSize < 30 || (totalLandTiles > 0 && homeMassSize / totalLandTiles < 0.10);
-    // Build a harbor when the home landmass has no settleable tiles left but
-    // other landmasses remain to conquer — even for larger continents that are
-    // fully claimed. This prevents the AI from stalling once it fills its island.
+    // Build a harbor + fleet when the faction needs to cross water to keep
+    // expanding. The old `homeMassFull` gate required ZERO settleable tiles, so a
+    // conquered-but-not-fully-settled continent (or a small island with a couple
+    // of open tiles) never triggered naval expansion and the AI stalled. The
+    // relaxed `needsNavalExpansion` fires when there's foreign land to reach AND
+    // any of: small island, home landmass nearly full (<3 settleable tiles), or
+    // no enemy cities left on the home mass (continent conquered — only water
+    // stands between the faction and new land).
     const homeMassFull = homeMass != null && !homeMassHasFoundSpot(tiles, owner, land, homeMass);
+    let homeMassSettleable = 0;
+    let noEnemyCitiesOnHomeMass = true;
+    if (homeMass != null) {
+        for (const t of tiles.values()) {
+            if (land.idOf.get(`${t.x},${t.z}`) !== homeMass) continue;
+            if (canFoundOn(t, owner)) homeMassSettleable++;
+            if (noEnemyCitiesOnHomeMass && t.terrain === 'CITY' && t.owner && t.owner !== owner && isAtWar(t.owner)) {
+                noEnemyCitiesOnHomeMass = false;
+            }
+        }
+    }
     const foreignMassWithoutCity = homeMassFull && hasForeignLandmassWithoutCity(tiles, owner, land, homeMass);
+    const needsNavalExpansion = hasForeignLandmassWithoutCity(tiles, owner, land, homeMass) &&
+        (isIslandFaction || homeMassSettleable < 3 || noEnemyCitiesOnHomeMass);
 
     // 0. CAPTURE FIRST. Any unit already adjacent to a breached (fortification 0)
     //    capturable city takes it NOW — before gold is spent on training or
@@ -136,10 +167,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (Object.keys(sales).length > 0) sellAtMarket(res, sales);
     }
 
-    // AI lord recruitment: lords multiply army effectiveness. Recruit up to 3
-    // non-king lords when the faction can afford one and still keep a war chest.
+    // AI lord recruitment: lords multiply army effectiveness. Recruit up to
+    // max(3, cityCount) non-king lords so each major army group can have a
+    // commander. The gate is just the recruit cost (no extra war-chest buffer)
+    // — under the lean economy the old +150 buffer made lords unreachable.
     const nonKingLords = (lords || []).filter(l => l.owner === owner && !l.isKing);
-    if (nonKingLords.length < 3 && res.gold >= LORD_RECRUIT_COST.gold + 150 &&
+    const lordCap = Math.max(3, myCityCount);
+    if (nonKingLords.length < lordCap && res.gold >= LORD_RECRUIT_COST.gold &&
         res.food >= LORD_RECRUIT_COST.food && myCityCount > 0) {
         actions.push({ type: 'recruitLord' });
         res = subtractCost(res, LORD_RECRUIT_COST);
@@ -155,10 +189,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (lord.isKing || lord.governingCity) continue; // already governing or is king
         if (!lord.army || lord.army.length === 0) {
             // Try to build an army from nearby idle military units.
-            const nearby = myUnits.filter(u =>
+            let nearby = myUnits.filter(u =>
                 u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u) &&
                 !u.lordId && manhattan(u.x, u.z, lord.x, lord.z) <= 6);
-            nearby.sort((a, b) => manhattan(a.x, a.z, lord.x, lord.z) - manhattan(b.x, b.z, lord.x, lord.z));
+            // If nothing is nearby, claim the nearest unassigned military
+            // cluster anywhere on the map so front-line groups (which form far
+            // from the capital where lords spawn) also get a commander.
+            // assignArmy has no position requirement, and the "keep lords with
+            // their army" logic later walks the lord out to its new army.
+            if (nearby.length === 0) {
+                const unassigned = myUnits.filter(u =>
+                    u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' &&
+                    !isNaval(u) && !u.lordId);
+                if (unassigned.length > 0) {
+                    unassigned.sort((a, b) =>
+                        manhattan(a.x, a.z, lord.x, lord.z) - manhattan(b.x, b.z, lord.x, lord.z));
+                    const seed = unassigned[0];
+                    nearby = unassigned
+                        .filter(u => manhattan(u.x, u.z, seed.x, seed.z) <= 4)
+                        .sort((a, b) => manhattan(a.x, a.z, seed.x, seed.z) -
+                                       manhattan(b.x, b.z, seed.x, seed.z));
+                }
+            } else {
+                nearby.sort((a, b) => manhattan(a.x, a.z, lord.x, lord.z) -
+                                      manhattan(b.x, b.z, lord.x, lord.z));
+            }
             for (const u of nearby) {
                 if (!canCommand(lord)) break;
                 assignArmy(lord, u.id);
@@ -175,23 +230,74 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 0h. Island factions: build a Harbor in the coastal capital ASAP. Ships are
-    //     the only way off a small landmass, so this takes priority over Barracks.
-    //     Also build when the home landmass is full and another landmass awaits.
+    // 0ab. Engineer bridges. Rivers are impassable without a bridge, so an
+    //      engineer adjacent to an unbridged river that blocks the path to its
+    //      objective (nearest at-war enemy city) builds a bridge now — BEFORE
+    //      the unit-training spree drains the treasury. The cost is reserved
+    //      (subtracted from `res`) so later spending can't starve it. This is
+    //      the AI's only way across rivers; without it engineers stop at the
+    //      bank and armies never reach enemy cities across water.
+    for (const unit of myUnits) {
+        if (unit.type !== 'ENGINEER' || unit.hasAttackedThisTurn) continue;
+        if (!canAffordCost(res, BRIDGE_COST)) break; // out of funds — stop trying
+        const river = findBridgeTarget(unit, tiles, owner, isAtWar, atWar);
+        if (river) {
+            actions.push({ type: 'buildBridge', unitId: unit.id, tileKey: `${river.x},${river.z}` });
+            res = subtractCost(res, BRIDGE_COST);
+            acted.add(unit.id);
+        }
+    }
+
+    // 0h. Harbor first for factions that need to cross water (small island, or
+    //     home landmass full/conquered with foreign land awaiting). Ships are the
+    //     only way to new land, so this takes priority over Barracks. Runs before
+    //     any spending spree; if it can't afford the harbor yet, reserve the cost
+    //     so later spending this turn doesn't push it further out of reach.
+    //     `queuedHarbors` tracks harbor builds queued this turn so the ship
+    //     training block (2d) can launch units the same turn the harbor goes up.
+    const queuedHarbors = new Set();
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
-        if (!hasHarbor && (isIslandFaction || foreignMassWithoutCity)) {
+        if (!hasHarbor && (isIslandFaction || needsNavalExpansion)) {
             const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
                 !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
-            if (coastal && canAffordBuilding('HARBOR', res)) {
-                actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
-                res = payBuilding('HARBOR', res);
+            if (coastal) {
+                if (canAffordBuilding('HARBOR', res)) {
+                    actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
+                    res = payBuilding('HARBOR', res);
+                    queuedHarbors.add(`${coastal.x},${coastal.z}`);
+                } else {
+                    // Reserve funds so the spending spree below can't starve the harbor.
+                    res = subtractCost(res, BUILDING_TYPE.HARBOR.cost);
+                }
             }
         }
     }
 
     // 1. Build a Barracks first (unlocks production + veteran training).
-    if (!hasBarracks) {
+    //     EXCEPTION: a faction with no trainable siege (no roster SIEGE/ARTILLERY
+    //     and no Siege Workshop) that is at war MUST get a Siege Workshop first —
+    //     without it (or engineers) it can never breach a fortified city and will
+    //     fall back to cavalry spam. Build the workshop before Barracks in that
+    //     case, and reserve its cost so the spending spree can't starve it.
+    const needsSiegeWorkshopFirst = atWar && !hasTrainableSiege && !hasSiegeWorkshop && myCityCount >= 1;
+    if (needsSiegeWorkshopFirst) {
+        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
+            !(buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
+        if (city) {
+            const swCost = BUILDING_TYPE.SIEGE_WORKSHOP.cost;
+            if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
+                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${city.x},${city.z}` });
+                res = payBuilding('SIEGE_WORKSHOP', res);
+            } else {
+                // Can't afford yet — reserve the funds so later spending this
+                // turn doesn't push the workshop further out of reach.
+                res = subtractCost(res, swCost);
+            }
+        }
+    }
+
+    if (!hasBarracks && !needsSiegeWorkshopFirst) {
         const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
             !(buildings.get(`${t.x},${t.z}`) || []).includes('BARRACKS'));
         if (city && canAffordBuilding('BARRACKS', res)) {
@@ -201,13 +307,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 1a. Build a Siege Workshop in a city (unlocks CATAPULT/TREBUCHET —
-    //     long-range AOE siege). One is enough; it costs a lot.
-    //     AI builds this proactively (not just when at war) to prepare for
-    //     future conflicts and enable siege engine production.
-    //     Lowered requirement from 2 cities to 1 city for earlier siege capability.
-    const hasSiegeWorkshop = owned.some(t =>
-        (buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
-    if (!hasSiegeWorkshop && myCityCount >= 1) {
+    //     long-range AOE siege). One is enough. AI builds this proactively (not
+    //     just when at war) to prepare for future conflicts. (When at war and
+    //     lacking siege it was already built above, before Barracks.)
+    if (!hasSiegeWorkshop && myCityCount >= 1 && !needsSiegeWorkshopFirst) {
         const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
             !(buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
         if (city && canAffordBuilding('SIEGE_WORKSHOP', res)) {
@@ -246,8 +349,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     If a Siege Workshop exists, long-range AOE engines (CATAPULT/TREBUCHET)
     //     are added to the options -- they're gated per-city by the workshop.
     //     Siege cap scales with the unit cap to maintain ~15% siege composition.
+    // Count siege capability: direct siege engines AND engineer-built Siege
+    // Towers AND the ENGINEERs that build them. Factions with no roster siege
+    // (Verdant, Storm) rely on engineers/towers, so counting them here keeps
+    // the siege cap aware of that path and stops it over-demanding siege (which
+    // otherwise falls through to cavalry spam).
     const siegeCount = myUnits.filter(u => u.type === 'SIEGE' || u.type === 'ARTILLERY' ||
-        u.type === 'CATAPULT' || u.type === 'TREBUCHET').length;
+        u.type === 'CATAPULT' || u.type === 'TREBUCHET' ||
+        u.type === 'SIEGE_TOWER' || u.type === 'ENGINEER').length;
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
@@ -310,9 +419,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     Towers against enemy cities and defensive structures (traps,
     //     fortifications) at home. The cap scales with city count so expanded
     //     territory gets fortified quickly, and rises further while at war so
-    //     tower production keeps pace with conquest.
+    //     tower production keeps pace with conquest. Factions with no trainable
+    //     siege (Verdant, Storm) rely on engineers/towers as their ONLY siege
+    //     path, so they keep a larger engineer corps at war.
     {
-        const engCap = Math.max(atWar ? 3 : 1, Math.ceil(myCityCount / 3));
+        const engCap = Math.max(atWar ? (hasTrainableSiege ? 3 : 5) : 1, Math.ceil(myCityCount / 3));
         const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
             actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
         if (engNow < engCap && capRoom()) {
@@ -327,19 +438,21 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 1d. HARBOR. Build one in a coastal city (adjacent to water/river) so the
-    //     faction can field ships. Island factions (small home landmass)
-    //     prioritize it — ships are their only way off the rock. Also build when
-    //     the home landmass is full and a harbor is the only path to new land.
+    // 1d. HARBOR fallback. The early build (0h) already handles island/expand-
+    //     needed factions before the spending spree. This catches the general
+    //     case: a faction with a couple of cities or a Barracks that can afford a
+    //     harbor for coastal defense / future naval use. Also covers
+    //     needsNavalExpansion if 0h couldn't find a coastal city at the time.
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor) {
             const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
                 !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
             if (coastal && canAffordBuilding('HARBOR', res) &&
-                (isIslandFaction || homeMassFull || myCityCount >= 2 || hasBarracks)) {
+                (isIslandFaction || needsNavalExpansion || myCityCount >= 2 || hasBarracks)) {
                 actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
                 res = payBuilding('HARBOR', res);
+                queuedHarbors.add(`${coastal.x},${coastal.z}`);
             }
         }
     }
@@ -347,18 +460,28 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // 2. Civ6-style aggressive expansion: train settlers aggressively to
     //     claim territory. Caps are scaled by map size and existing cities, and
     //     by the global SETTLER_AGGRESSION multiplier (data-driven tuning).
-    const settlerTarget = Math.round(Math.max(AI_SETTLER_TARGET, Math.round(GRID_SIZE / 3)) * SETTLER_AGGRESSION);
-    const settlerCap = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION));
-    const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION));
+    //     When the faction is short on key resources (gold/wood/iron/food),
+    //     expansion is the only durable fix, so settler priority is boosted:
+    //     higher target/cap/per-turn and a relaxed defensive floor.
+    const stock = res || {};
+    const scarce = ((stock.gold || 0) < 50 ? 1 : 0) + ((stock.wood || 0) < 40 ? 1 : 0) +
+        ((stock.iron || 0) < 30 ? 1 : 0) + ((stock.food || 0) < 40 ? 1 : 0);
+    const settlerUrgency = scarce >= 2 ? 2.0 : scarce >= 1 ? 1.5 : 1.0;
+    const settlerTarget = Math.round(Math.max(AI_SETTLER_TARGET, Math.round(GRID_SIZE / 3)) * SETTLER_AGGRESSION * settlerUrgency);
+    const settlerCap = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency));
+    const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION * settlerUrgency));
     let queuedSettlers = 0;
     while (queuedSettlers < settlersPerTurn && myCityCount < settlerTarget && capRoom() && roster.includes('SETTLER')) {
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         if (liveSettlers + queuedSettlers >= settlerCap) break;
-        // A second queued settler requires a defensive floor so the army isn't stripped.
+        // A second queued settler requires a defensive floor so the army isn't
+        // stripped. The floor is relaxed when resources are scarce (urgency >
+        // 1) — claiming resource terrain is worth a slightly thinner garrison.
         if (queuedSettlers > 0) {
             const meleeCount = myUnits.filter(u => u.type === 'INFANTRY' || u.type === 'PIKEMAN').length;
             const militaryCount = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT').length;
-            if (militaryCount < 3 || meleeCount < 1) break;
+            const floor = settlerUrgency > 1 ? 2 : 3;
+            if (militaryCount < floor || meleeCount < 1) break;
         }
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile || !canAfford('SETTLER', res, getUnitCostFor('SETTLER', factionDef))) break;
@@ -384,30 +507,21 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 2c. Train units from this faction's roster if affordable and below cap.
-    //     Keeps a gold buffer when a capture is imminent so the walk-in capture
-    //     isn't starved (see step 0).
-    while (myUnits.length + trainCount() < AI_MAX_UNITS) {
-        if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
-        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives);
-        if (!trainable) break;
-        const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
-        if (!spawnTile) break;
-        actions.push({ type: 'train', unitType: trainable, tileKey: `${spawnTile.x},${spawnTile.z}` });
-        res = spendCost(trainable, res, getUnitCostFor(trainable, factionDef));
-    }
-
-    // 2d. SHIPS. With a Harbor, field a small fleet: island factions need a
+    // 2c. SHIPS. With a Harbor, field a small fleet: island factions need a
     //     Transport first (their only way to settle new landmasses), then
     //     warships. Continental factions keep at most a couple of warships unless
-    //     their home landmass is full, in which case they also need transports.
+    //     they need to expand overseas, in which case they also need transports.
+    //     Runs BEFORE the land-unit training loop so the army doesn't fill
+    //     AI_MAX_UNITS first and starve the cap room ships need (the previous
+    //     "ships never train" bug). A harbor queued this turn (0h/1d) counts as
+    //     present so ships can launch the same turn the harbor goes up.
     {
         const harborCity = owned.find(t => t.terrain === 'CITY' &&
-            (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+            ((buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') || queuedHarbors.has(`${t.x},${t.z}`)));
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
-            const needsExpansionFleet = isIslandFaction || homeMassFull || foreignMassWithoutCity;
+            const needsExpansionFleet = isIslandFaction || needsNavalExpansion;
             const navalCap = needsExpansionFleet ? 6 : 2;
             if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
                 const transportCount = myUnits.filter(u => u.type === 'TRANSPORT').length +
@@ -425,6 +539,20 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
             }
         }
+    }
+
+    // 2d. Train land units from this faction's roster if affordable and below
+    //     cap. Keeps a gold buffer when a capture is imminent so the walk-in
+    //     capture isn't starved (see step 0). Runs after ships so a small fleet
+    //     is guaranteed room before the army fills the cap.
+    while (myUnits.length + trainCount() < AI_MAX_UNITS) {
+        if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives);
+        if (!trainable) break;
+        const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
+        if (!spawnTile) break;
+        actions.push({ type: 'train', unitType: trainable, tileKey: `${spawnTile.x},${spawnTile.z}` });
+        res = spendCost(trainable, res, getUnitCostFor(trainable, factionDef));
     }
 
     // 2c. Workers: train a few if there are improvable owned tiles within a
@@ -625,6 +753,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     }
                 }
             }
+            // a2c) Bridge-building is handled in the early pre-pass (step 0ab)
+            //     so the cost is reserved before the unit-training spree drains
+            //     the treasury. An engineer already bridged this turn is in
+            //     `acted` and skips the offense move below.
+
             // Offense move: no threatened home — step toward the nearest enemy
             // city so the engineer can build towers on subsequent turns.
             if (atWar) {
@@ -1073,6 +1206,30 @@ function findNearestEnemyCity(unit, tiles, owner, isAtWar) {
     return best;
 }
 
+/** River tile an engineer should bridge, or null. Returns an orthogonally-
+ *  adjacent unbridged RIVER tile whose far side is passable land closer (by
+ *  Manhattan distance) to the engineer's nearest at-war enemy city — i.e. the
+ *  river is actually blocking the path forward, not a side branch. */
+function findBridgeTarget(unit, tiles, owner, isAtWar, atWar) {
+    if (!atWar) return null; // bridging is an offensive maneuver toward enemy cities
+    const objective = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+    if (!objective) return null;
+    const curDist = manhattan(unit.x, unit.z, objective.x, objective.z);
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    for (const [dx, dz] of dirs) {
+        const river = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+        if (!river || river.terrain !== 'RIVER' || river.bridge) continue;
+        const far = tiles.get(`${unit.x + 2 * dx},${unit.z + 2 * dz}`);
+        if (!far) continue;
+        // Far side must be passable land the engineer can step onto once the
+        // bridge is built (not water/mountain, not another unbridged river).
+        if (far.terrain === 'WATER' || far.terrain === 'MOUNTAIN') continue;
+        if (far.terrain === 'RIVER' && !far.bridge) continue;
+        if (manhattan(far.x, far.z, objective.x, objective.z) < curDist) return river;
+    }
+    return null;
+}
+
 /** Pick the best at-war enemy target within the unit's attackRange (lowest HP
  *  first, to maximize kills and avoid counter-attacks). Uses the per-type
  *  attackRange, so ranged units fire at range. */
@@ -1448,7 +1605,12 @@ function countByRole(units, actions, owner) {
  *  Roles whose units aren't in the faction's roster are zeroed out so the AI
  *  doesn't chase a role it can't fill. */
 function factionComposition(def, roster) {
-    const has = (role) => roster.some(t => unitRole(t) === role);
+    // `has('siege')` requires a TRAINABLE siege unit. SIEGE_TOWER is engineer-
+    // built (never trained), so it must not count — otherwise no-siege-roster
+    // factions (Verdant, Storm) keep a siege composition target they can never
+    // fill, and the training fallback resolves to cavalry.
+    const has = (role) => roster.some(t => unitRole(t) === role &&
+        !(role === 'siege' && t === 'SIEGE_TOWER'));
     const id = def && def.id;
     let t;
     switch (id) {
@@ -1552,7 +1714,7 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
     // cheapest unit). Order depends on current objective.
     let order;
     if (objective && objective.siege) {
-        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     } else if (objective && objective.decisive) {
         order = ['CATAPHRACT', 'CAVALRY', 'CHARIOT', 'PIKEMAN', 'INFANTRY', 'LONGBOWMAN', 'ARCHER', 'SIEGE', 'ARTILLERY'];
     } else if (objective && objective.raid) {
@@ -1560,7 +1722,7 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
     } else if (objective && objective.defensive) {
         order = ['PIKEMAN', 'INFANTRY', 'ARCHER', 'LONGBOWMAN', 'SIEGE', 'ARTILLERY', 'CATAPHRACT', 'CAVALRY'];
     } else {
-        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     }
     for (const t of order) {
         if (!roster.includes(t)) continue;

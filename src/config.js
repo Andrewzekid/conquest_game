@@ -108,11 +108,11 @@ export const TERRAIN_BONUS = {
 export const UNIT_COST = {
     INFANTRY:    { gold: 30, food: 10, wood: 0,  iron: 0,  production: 10 },
     ARCHER:      { gold: 40, food: 0,  wood: 20, iron: 0,  production: 15 },
-    ARTILLERY:   { gold: 80, food: 0,  wood: 30, iron: 30, production: 30 },
+    ARTILLERY:   { gold: 60, food: 0,  wood: 20, iron: 20, production: 25 },
     CAVALRY:     { gold: 50, food: 30, wood: 0,  iron: 10, production: 20 },
     PIKEMAN:     { gold: 45, food: 10, wood: 10, iron: 10, production: 15 },
     SCOUT:       { gold: 25, food: 5,  wood: 5,  iron: 0,  production: 8 },
-    SIEGE:       { gold: 75, food: 10, wood: 15, iron: 15, production: 25 },
+    SIEGE:       { gold: 55, food: 5,  wood: 10, iron: 10, production: 20 },
     SETTLER:     { gold: 50, food: 25, wood: 0,  iron: 0,  production: 20 },
     ENGINEER:    { gold: 60, food: 10, wood: 20, iron: 10, production: 20 },
     WORKER:      { gold: 30, food: 10, wood: 5,  iron: 0,  production: 10 },
@@ -120,9 +120,9 @@ export const UNIT_COST = {
     CATAPHRACT:  { gold: 90, food: 20, wood: 0,  iron: 15, production: 25 },
     CHARIOT:     { gold: 65, food: 20, wood: 15, iron: 10, production: 20 },
     MEDIC:       { gold: 55, food: 10, wood: 10, iron: 0,  production: 15 },
-    SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
-    CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
-    TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
+    SIEGE_TOWER: { gold: 40, food: 5,  wood: 15, iron: 0,  production: 15 },
+    CATAPULT:    { gold: 80,  food: 0,  wood: 10, iron: 15, production: 25 },
+    TREBUCHET:   { gold: 100, food: 0,  wood: 15, iron: 25, production: 30 },
     GALLEY:      { gold: 40, food: 10, wood: 20, iron: 0,  production: 16 },
     TRANSPORT:   { gold: 35, food: 5,  wood: 20, iron: 0,  production: 20 },
     FRIGATE:     { gold: 60, food: 15, wood: 30, iron: 10, production: 24 },
@@ -134,7 +134,7 @@ export const BRIDGE_COST = { gold: 40, wood: 20 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 80, wood: 20, iron: 20, production: 30 };
+export const SIEGE_TOWER_COST = { gold: 40, wood: 15, iron: 0, production: 15 };
 export const SIEGE_TOWER_BUILD_TURNS = 3;
 export const SIEGE_TOWER_BUILD_RADIUS = 2; // Engineer must be within this Chebyshev radius of an enemy city
 
@@ -306,7 +306,7 @@ export const BUILDING_TYPE = {
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
     HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
-    SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
+    SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }
 };
 
@@ -320,9 +320,9 @@ export const STRUCTURE_TYPE = {
 };
 
 export const STRUCTURE_COST = {
-    SPIKES:        { gold: 30, wood: 20, iron: 0 },
-    FORTIFICATION: { gold: 50, wood: 30, iron: 10 },
-    FALL_TRAP:     { gold: 40, wood: 10, iron: 5 }
+    SPIKES:        { gold: 20, wood: 10, iron: 0 },
+    FORTIFICATION: { gold: 30, wood: 20, iron: 5 },
+    FALL_TRAP:     { gold: 25, wood: 5,  iron: 0 }
 };
 
 // --- Natural Wonders ---
@@ -425,7 +425,7 @@ export const LORD_CLASSES = {
 };
 
 export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };
-export const LORD_RECRUIT_COST = { gold: 220, food: 80 };
+export const LORD_RECRUIT_COST = { gold: 140, food: 60 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
 

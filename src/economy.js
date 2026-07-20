@@ -17,16 +17,50 @@ const WORKED_TILES_PER_LEVEL = 2;
  * always produces gold + production. Buildings (player-built improvements)
  * still apply their bonus on the tiles they're built on. This bounds the
  * economy so owning a large territory doesn't flood the player with resources.
+ *
+ * The per-source arithmetic lives in `grossYields` (below) so the UI can display
+ * the exact same income breakdown the economy actually applies — no phantom
+ * "+13/t food" that never reaches the stockpile.
  */
 export function collectResources(tiles, owner, resources, buildings, lords, factionDef) {
     const messages = [];
+    const b = grossYields(tiles, owner, buildings, lords, factionDef);
+    for (const res of Object.keys(b)) {
+        let sum = 0;
+        for (const cat of Object.values(b[res])) sum += cat;
+        resources[res] = (resources[res] || 0) + sum;
+    }
+    return messages;
+}
+
+/** Per-source gross yield breakdown for a faction, using the exact Civ6
+ *  worked-tile model that `collectResources` applies. The UI displays this so
+ *  the income shown always matches what actually lands in the resource pool.
+ *  Structure (each category is a flat per-turn amount):
+ *    gold: { city, market, terrain, wonder }
+ *    food: { city, farm, terrain, wonder, passive }
+ *    wood: { city, lumbermill, terrain, wonder }
+ *    iron: { city, mine, terrain, wonder }
+ *    production: { city, barracks, workshop, harbor, wonder }
+ *  `collectResources` sums each resource's categories into the pool. */
+export function grossYields(tiles, owner, buildings, lords, factionDef) {
+    const breakdown = {
+        gold: { city: 0, market: 0, terrain: 0, wonder: 0 },
+        food: { city: 0, farm: 0, terrain: 0, wonder: 0, passive: 0 },
+        wood: { city: 0, lumbermill: 0, terrain: 0, wonder: 0 },
+        iron: { city: 0, mine: 0, terrain: 0, wonder: 0 },
+        production: { city: 0, barracks: 0, workshop: 0, harbor: 0, wonder: 0 },
+    };
+    const add = (res, cat, amt) => { breakdown[res][cat] = (breakdown[res][cat] || 0) + amt; };
+    const lordsArr = lords || [];
 
     const cities = [];
     for (const t of tiles.values()) {
         if (t.owner === owner && t.terrain === 'CITY') cities.push(t);
     }
 
-    // Determine which non-city owned tiles each city "works" (nearest first).
+    // Worked-tile selection (Civ6 "citizens"): each city works its nearest
+    // WORKED_TILES_BASE + level*WORKED_TILES_PER_LEVEL non-city owned tiles.
     const worked = new Set();
     for (const c of cities) {
         const r = cityRadius(c);
@@ -47,28 +81,41 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         }
     }
 
-    // City tiles: gold + production (level-scaled), plus base gold yield.
+    // City tiles: gold + production (level-scaled) plus a hinterland trickle of
+    // food/wood/iron. Food scales with level so a young city still feeds itself
+    // (1 + level: a Lv1 city yields 2 food — enough early game to avoid
+    // starvation before farms are up). Wood/iron scale weakly with influence.
     for (const tile of cities) {
         const tileKey = `${tile.x},${tile.z}`;
         const terrainData = TERRAIN[tile.terrain] || TERRAIN.CITY;
         const cl = tile.cityLevel || 1;
         let gold = (terrainData.amount || 0) + (cl - 1) * 1;
-        const governor = lords.find(l => l.owner === owner && l.governingCity === tileKey);
+        const governor = lordsArr.find(l => l.owner === owner && l.governingCity === tileKey);
         if (governor) gold = Math.floor(gold * getLordGovernanceMultiplier(governor));
-        resources.gold = (resources.gold || 0) + gold;
-        resources.production = (resources.production || 0) + cityProduction(cl);
-        // Cities are population centers: they produce a little food (hinterland
-        // foraging), wood (timber yards), and iron (recycling/smelting scrap)
-        // by default. Wood and iron scale weakly with the city's INFLUENCE
-        // radius (grows as the city levels up), so a small outpost yields a
-        // trickle and a sprawling capital yields more. Food is intentionally
-        // scarce — farms and fertile terrain matter.
+        add('gold', 'city', gold);
+        add('production', 'city', cityProduction(cl));
         const influence = cityRadius(tile);
-        resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
-        resources.wood = (resources.wood || 0) + 1 + Math.ceil(influence / 3);
-        resources.iron = (resources.iron || 0) + Math.ceil(influence / 3);
-        // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
-        applyBuildingBonuses(tileKey, tile, buildings, resources);
+        add('food', 'city', 1 + cl);
+        add('wood', 'city', 1 + Math.ceil(influence / 3));
+        add('iron', 'city', Math.ceil(influence / 3));
+        // City buildings (MARKET/BARRACKS/SIEGE_WORKSHOP/HARBOR/WALLS).
+        const tileBuildings = buildings.get(tileKey) || [];
+        for (const bType of tileBuildings) {
+            const bData = BUILDING_TYPE[bType];
+            if (!bData || !bData.bonus) continue;
+            for (const [res, bonus] of Object.entries(bData.bonus)) {
+                if (res === 'defense') continue;
+                if (res === 'gold') add('gold', bType === 'MARKET' ? 'market' : 'city', bonus);
+                else if (res === 'production') {
+                    if (bType === 'BARRACKS') add('production', 'barracks', bonus);
+                    else if (bType === 'SIEGE_WORKSHOP') add('production', 'workshop', bonus);
+                    else if (bType === 'HARBOR') add('production', 'harbor', bonus);
+                    else add('production', 'city', bonus);
+                } else {
+                    add(res, 'city', bonus);
+                }
+            }
+        }
     }
 
     // Worked non-city tiles: terrain base yield + building bonuses.
@@ -78,24 +125,28 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         const terrainData = TERRAIN[tile.terrain] || TERRAIN.PLAINS;
         const resType = terrainData.resource;
         let amount = terrainData.amount || 0;
-        // Building bonuses that boost THIS tile's resource add to the yield;
-        // other bonuses (e.g. MARKET gold) are applied as flat income below.
         const tileBuildings = buildings.get(key) || [];
         for (const bType of tileBuildings) {
             const bData = BUILDING_TYPE[bType];
             if (bData && bData.bonus) {
                 for (const [res, bonus] of Object.entries(bData.bonus)) {
                     if (res === resType) amount += bonus;
-                    else resources[res] = (resources[res] || 0) + bonus;
+                    else add(res, 'terrain', bonus);
                 }
             }
         }
-        if (resType) resources[resType] = (resources[resType] || 0) + amount;
+        if (resType) {
+            // Categorize the terrain (+ matched improvement) yield.
+            if (resType === 'food') add('food', tileBuildings.includes('FARM') ? 'farm' : 'terrain', amount);
+            else if (resType === 'wood') add('wood', tileBuildings.includes('LUMBERMILL') ? 'lumbermill' : 'terrain', amount);
+            else if (resType === 'iron') add('iron', tileBuildings.includes('MINE') ? 'mine' : 'terrain', amount);
+            else add(resType, 'terrain', amount);
+        }
     }
 
     // Faction passive: flat food per turn (e.g. Verdant Realm).
     if (factionDef && factionDef.passive && factionDef.passive.foodPerTurn) {
-        resources.food = (resources.food || 0) + factionDef.passive.foodPerTurn;
+        add('food', 'passive', factionDef.passive.foodPerTurn);
     }
 
     // Natural Wonders: each owned tile with a wonder grants its bonus to its
@@ -103,34 +154,24 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
     for (const tile of tiles.values()) {
         if (tile.owner === owner && tile.wonder && tile.wonder.bonus) {
             for (const [res, amt] of Object.entries(tile.wonder.bonus)) {
-                resources[res] = (resources[res] || 0) + amt;
+                if (breakdown[res]) add(res, 'wonder', amt);
             }
         }
     }
-
-    return messages;
+    return breakdown;
 }
 
-/** Apply non-yield building bonuses (gold/production/defense) for buildings on
- *  a city tile (MARKET, BARRACKS, WALLS, HARBOR). */
-function applyBuildingBonuses(tileKey, tile, buildings, resources) {
-    const tileBuildings = buildings.get(tileKey) || [];
-    const terrainData = TERRAIN[tile.terrain] || TERRAIN.CITY;
-    const resType = terrainData.resource;
-    for (const bType of tileBuildings) {
-        const bData = BUILDING_TYPE[bType];
-        if (!bData || !bData.bonus) continue;
-        for (const [res, bonus] of Object.entries(bData.bonus)) {
-            // Defense bonuses aren't resources; skip (handled in combat).
-            if (res === 'defense') continue;
-            if (res === resType) {
-                // Adds to base yield — fold into gold below as a flat add.
-                resources[res] = (resources[res] || 0) + bonus;
-            } else {
-                resources[res] = (resources[res] || 0) + bonus;
-            }
+/** Per-resource unit upkeep totals for a faction (matches `processUpkeep`). */
+export function upkeepTotals(units, owner) {
+    const totals = { food: 0, gold: 0, wood: 0, iron: 0 };
+    for (const unit of units.values()) {
+        if (unit.owner !== owner) continue;
+        const upkeep = unit.upkeep || { food: 2, gold: 1 };
+        for (const res of ['food', 'gold', 'wood', 'iron']) {
+            totals[res] += upkeep[res] || 0;
         }
     }
+    return totals;
 }
 
 /**
@@ -140,15 +181,7 @@ function applyBuildingBonuses(tileKey, tile, buildings, resources) {
  */
 export function processUpkeep(units, owner, resources) {
     const messages = [];
-    const totals = { food: 0, gold: 0, wood: 0, iron: 0 };
-
-    for (const unit of units.values()) {
-        if (unit.owner !== owner) continue;
-        const upkeep = unit.upkeep || { food: 2, gold: 1 };
-        for (const res of ['food', 'gold', 'wood', 'iron']) {
-            totals[res] += upkeep[res] || 0;
-        }
-    }
+    const totals = upkeepTotals(units, owner);
 
     for (const res of ['food', 'gold', 'wood', 'iron']) {
         resources[res] = (resources[res] || 0) - totals[res];
