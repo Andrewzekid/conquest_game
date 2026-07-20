@@ -84,6 +84,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const homeMassSize = homeMass != null ? (land.sizes.get(homeMass) || 0) : 9999;
     const totalLandTiles = [...land.sizes.values()].reduce((a, b) => a + b, 0);
     const isIslandFaction = homeMassSize < 30 || (totalLandTiles > 0 && homeMassSize / totalLandTiles < 0.10);
+    // Build a harbor when the home landmass has no settleable tiles left but
+    // other landmasses remain to conquer — even for larger continents that are
+    // fully claimed. This prevents the AI from stalling once it fills its island.
+    const homeMassFull = homeMass != null && !homeMassHasFoundSpot(tiles, owner, land, homeMass);
+    const foreignMassWithoutCity = homeMassFull && hasForeignLandmassWithoutCity(tiles, owner, land, homeMass);
 
     // 0. CAPTURE FIRST. Any unit already adjacent to a breached (fortification 0)
     //    capturable city takes it NOW — before gold is spent on training or
@@ -172,9 +177,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
     // 0h. Island factions: build a Harbor in the coastal capital ASAP. Ships are
     //     the only way off a small landmass, so this takes priority over Barracks.
-    if (isIslandFaction && !atWar) {
+    //     Also build when the home landmass is full and another landmass awaits.
+    {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
-        if (!hasHarbor) {
+        if (!hasHarbor && (isIslandFaction || foreignMassWithoutCity)) {
             const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
                 !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
             if (coastal && canAffordBuilding('HARBOR', res)) {
@@ -318,14 +324,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
     // 1d. HARBOR. Build one in a coastal city (adjacent to water/river) so the
     //     faction can field ships. Island factions (small home landmass)
-    //     prioritize it — ships are their only way off the rock.
+    //     prioritize it — ships are their only way off the rock. Also build when
+    //     the home landmass is full and a harbor is the only path to new land.
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor) {
             const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
                 !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
             if (coastal && canAffordBuilding('HARBOR', res) &&
-                (isIslandFaction || myCityCount >= 2 || hasBarracks)) {
+                (isIslandFaction || homeMassFull || myCityCount >= 2 || hasBarracks)) {
                 actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
                 res = payBuilding('HARBOR', res);
             }
@@ -387,21 +394,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
     // 2d. SHIPS. With a Harbor, field a small fleet: island factions need a
     //     Transport first (their only way to settle new landmasses), then
-    //     warships. Continental factions keep at most a couple of warships.
+    //     warships. Continental factions keep at most a couple of warships unless
+    //     their home landmass is full, in which case they also need transports.
     {
         const harborCity = owned.find(t => t.terrain === 'CITY' &&
             (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
-            const navalCap = isIslandFaction ? 6 : 2;
+            const needsExpansionFleet = isIslandFaction || homeMassFull || foreignMassWithoutCity;
+            const navalCap = needsExpansionFleet ? 6 : 2;
             if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
                 const transportCount = myUnits.filter(u => u.type === 'TRANSPORT').length +
                     actions.filter(a => a.type === 'train' && a.unitType === 'TRANSPORT').length;
-                const needsMoreTransports = isIslandFaction && transportCount < 2;
+                const waitingSettlers = myUnits.filter(u => u.type === 'SETTLER' &&
+                    !findFoundSpot(u, tiles, owner, land, land.idOf.get(`${u.x},${u.z}`), units)).length;
+                const needsMoreTransports = needsExpansionFleet && transportCount < 2 + waitingSettlers;
                 let pick = 'GALLEY';
-                if (isIslandFaction && transportCount === 0) pick = 'TRANSPORT';
-                else if (needsMoreTransports && Math.random() < 0.5) pick = 'TRANSPORT';
+                if (needsExpansionFleet && transportCount === 0) pick = 'TRANSPORT';
+                else if (needsMoreTransports && Math.random() < 0.7) pick = 'TRANSPORT';
                 const pc = getUnitCostFor(pick, factionDef);
                 if (canAfford(pick, res, pc)) {
                     actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
@@ -2403,6 +2414,33 @@ function findNearestEnemyTileForScout(unit, tiles, owner, isAtWar) {
 // ============================================================
 // Landmass / naval / siege-target helpers
 // ============================================================
+
+/** True if the given landmass still has at least one tile where the faction
+ *  can found a new city. */
+function homeMassHasFoundSpot(tiles, owner, land, massId) {
+    if (massId == null) return false;
+    for (const t of tiles.values()) {
+        if (land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
+        if (canFoundOn(t, owner)) return true;
+    }
+    return false;
+}
+
+/** True if there exists a non-home landmass with no friendly city on it. */
+function hasForeignLandmassWithoutCity(tiles, owner, land, homeMass) {
+    const friendlyMasses = new Set();
+    for (const t of tiles.values()) {
+        if (t.terrain === 'CITY' && t.owner === owner) {
+            const m = land.idOf.get(`${t.x},${t.z}`);
+            if (m != null) friendlyMasses.add(m);
+        }
+    }
+    for (const m of land.sizes.keys()) {
+        if (m === homeMass) continue;
+        if (!friendlyMasses.has(m)) return true;
+    }
+    return false;
+}
 
 /** Label every non-WATER tile with a landmass id (flood fill over land,
  *  treating RIVER as land — rivers are bridgeable, they don't isolate an

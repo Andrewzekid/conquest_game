@@ -35,16 +35,16 @@ export function setGridDimensions(width, height) {
 
 // Terrain types. `key` is the string identifier used in tile.terrain (fixes map/renderer mismatch).
 export const TERRAIN = {
-    PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 2,  defense: 0 },
-    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 3,  defense: 1 },
-    MOUNTAIN: { key: 'MOUNTAIN', color: 0x7d6b58, name: 'Mountain', resource: 'iron',  amount: 3,  defense: 3 },
-    HILLS:    { key: 'HILLS',    color: 0x9aaa55, name: 'Hills',    resource: 'iron',  amount: 2,  defense: 1 },
-    DESERT:   { key: 'DESERT',   color: 0xe6d08a, name: 'Desert',   resource: 'gold',  amount: 2,  defense: 0 },
-    MARSH:    { key: 'MARSH',    color: 0x4f6b53, name: 'Marsh',    resource: 'food',  amount: 2,  defense: 0 },
-    TUNDRA:   { key: 'TUNDRA',   color: 0xc6d4d0, name: 'Tundra',  resource: 'food',  amount: 2,  defense: 1 },
+    PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 1,  defense: 0 },
+    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 2,  defense: 1 },
+    MOUNTAIN: { key: 'MOUNTAIN', color: 0x7d6b58, name: 'Mountain', resource: 'iron',  amount: 2,  defense: 3 },
+    HILLS:    { key: 'HILLS',    color: 0x9aaa55, name: 'Hills',    resource: 'iron',  amount: 1,  defense: 1 },
+    DESERT:   { key: 'DESERT',   color: 0xe6d08a, name: 'Desert',   resource: 'gold',  amount: 1,  defense: 0 },
+    MARSH:    { key: 'MARSH',    color: 0x4f6b53, name: 'Marsh',    resource: 'food',  amount: 1,  defense: 0 },
+    TUNDRA:   { key: 'TUNDRA',   color: 0xc6d4d0, name: 'Tundra',  resource: 'food',  amount: 1,  defense: 1 },
     WATER:    { key: 'WATER',    color: 0x2f6fb0, name: 'Water',    resource: null,    amount: 0,  defense: 0 },
-    RIVER:    { key: 'RIVER',    color: 0x2f90d8, name: 'River',    resource: 'food',  amount: 2,  defense: 0 },
-    CITY:     { key: 'CITY',     color: 0xc9b06b, name: 'City',     resource: 'gold',  amount: 8,  defense: 3, wood: 1 }
+    RIVER:    { key: 'RIVER',    color: 0x2f90d8, name: 'River',    resource: 'food',  amount: 1,  defense: 0 },
+    CITY:     { key: 'CITY',     color: 0xc9b06b, name: 'City',     resource: 'gold',  amount: 5,  defense: 3, wood: 1 }
 };
 
 export const UNIT_TYPE = {
@@ -123,10 +123,10 @@ export const UNIT_COST = {
     SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
-    GALLEY:      { gold: 55, food: 10, wood: 30, iron: 0,  production: 16 },
-    TRANSPORT:   { gold: 45, food: 5,  wood: 25, iron: 0,  production: 20 },
-    FRIGATE:     { gold: 80, food: 15, wood: 40, iron: 10, production: 24 },
-    GALLEON:     { gold: 120, food: 20, wood: 50, iron: 20, production: 30 }
+    GALLEY:      { gold: 40, food: 10, wood: 20, iron: 0,  production: 16 },
+    TRANSPORT:   { gold: 35, food: 5,  wood: 20, iron: 0,  production: 20 },
+    FRIGATE:     { gold: 60, food: 15, wood: 30, iron: 10, production: 24 },
+    GALLEON:     { gold: 90, food: 20, wood: 40, iron: 20, production: 30 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -258,7 +258,7 @@ export const CITY_LEVEL_UP_COST = { gold: 80, food: 40, production: 20 }; // bas
 // curve is concave (square-root) so early levels grant more than later ones,
 // matching a "production grows but with diminishing returns" economic model.
 export const CITY_PRODUCTION_BASE = 2;          // production at city level 1
-export const CITY_PRODUCTION_PER_LEVEL = 6;     // total spread across levels
+export const CITY_PRODUCTION_PER_LEVEL = 3;     // total spread across levels (diminishing)
 export function cityProduction(cl) {
     const level = Math.max(1, cl || 1);
     return CITY_PRODUCTION_BASE + Math.round(CITY_PRODUCTION_PER_LEVEL * (Math.sqrt(level) - 1));
@@ -304,7 +304,7 @@ export const BUILDING_TYPE = {
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY',
                   desc: '+10 production/turn. Units trained in this city start as veterans (Lv.2) and cost 25% less gold.' },
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
-    HARBOR:     { name: 'Harbor',     cost: { gold: 80, wood: 40, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
+    HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }

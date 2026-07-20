@@ -52,7 +52,7 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         const tileKey = `${tile.x},${tile.z}`;
         const terrainData = TERRAIN[tile.terrain] || TERRAIN.CITY;
         const cl = tile.cityLevel || 1;
-        let gold = (terrainData.amount || 0) + (cl - 1) * 2;
+        let gold = (terrainData.amount || 0) + (cl - 1) * 1;
         const governor = lords.find(l => l.owner === owner && l.governingCity === tileKey);
         if (governor) gold = Math.floor(gold * getLordGovernanceMultiplier(governor));
         resources.gold = (resources.gold || 0) + gold;
@@ -65,8 +65,8 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
         // scarce — farms and fertile terrain matter.
         const influence = cityRadius(tile);
         resources.food = (resources.food || 0) + 1 + Math.floor(cl / 2);
-        resources.wood = (resources.wood || 0) + 1 + Math.ceil(influence / 2);
-        resources.iron = (resources.iron || 0) + Math.ceil(influence / 2);
+        resources.wood = (resources.wood || 0) + 1 + Math.ceil(influence / 3);
+        resources.iron = (resources.iron || 0) + Math.ceil(influence / 3);
         // City buildings (MARKET/BARRACKS/WALLS/HARBOR) on the city tile.
         applyBuildingBonuses(tileKey, tile, buildings, resources);
     }
