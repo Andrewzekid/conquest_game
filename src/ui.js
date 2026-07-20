@@ -5,9 +5,9 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
          STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
          cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn } from './building.js';
-import { getDiplomacySummary, stateLabel, relationshipLabel } from './diplomacy.js';
+import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
-import { maxArmySize, lordAttack, lordDefense, kingGuardBonus } from './lords.js';
+import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity } from './economy.js';
 
@@ -106,13 +106,27 @@ export function bindUI(gameState, callbacks) {
         return null;
     }
 
+    let _netGold = 0, _netFood = 0, _netWood = 0, _netIron = 0, _netProd = 0;
+
+    function stockpileColor(val) {
+        if (val < 20) return '#ff6666';
+        if (val < 50) return '#ffcc44';
+        return '#ffffff';
+    }
+
     function updateResourceBar() {
         const r = gameState.resources.player;
-        if (els.gold) els.gold.textContent = Math.floor(r.gold);
-        if (els.food) els.food.textContent = Math.floor(r.food);
-        if (els.wood) els.wood.textContent = Math.floor(r.wood);
-        if (els.iron) els.iron.textContent = Math.floor(r.iron);
-        if (els.production) els.production.textContent = Math.floor(r.production || 0);
+        const set = (el, val, net) => {
+            if (!el) return;
+            const color = stockpileColor(val);
+            const sign = net >= 0 ? '+' : '';
+            el.innerHTML = `<span style="color:${color}">${Math.floor(val)}</span> <span style="color:${net >= 0 ? '#7cfc00' : '#ff6666'}; font-size:11px;">${sign}${Math.floor(net)}/t</span>`;
+        };
+        if (els.gold) set(els.gold, r.gold, _netGold);
+        if (els.food) set(els.food, r.food, _netFood);
+        if (els.wood) set(els.wood, r.wood, _netWood);
+        if (els.iron) set(els.iron, r.iron, _netIron);
+        if (els.production) set(els.production, r.production || 0, _netProd);
         if (els.turn) els.turn.textContent = gameState.turn;
         if (els.phaseIndicator) {
             const phase = gameState.turnManager ? gameState.turnManager.phase : PLAYER_FACTION;
@@ -213,39 +227,46 @@ export function bindUI(gameState, callbacks) {
             }
         };
 
+        // Store net values for the resource bar income suffix
+        _netGold = goldCities + goldMarkets + goldTrade - goldUpkeep;
+        _netFood = foodFarms + foodCities + foodTerrain - foodUpkeep;
+        _netWood = woodMills + woodCities + woodForests - woodUpkeep;
+        _netIron = ironMines + ironMountains + ironHills - ironUpkeep;
+        _netProd = prodCities + prodBarracks + prodWorkshops;
+
         // Gold tooltip
         setTooltip('gold-cities', goldCities);
         setTooltip('gold-markets', goldMarkets);
         setTooltip('gold-trade', goldTrade);
         setTooltip('gold-upkeep', -goldUpkeep, false);
-        setTooltip('gold-net', goldCities + goldMarkets + goldTrade - goldUpkeep);
+        setTooltip('gold-net', _netGold);
 
         // Food tooltip
         setTooltip('food-farms', foodFarms);
         setTooltip('food-cities', foodCities);
         setTooltip('food-terrain', foodTerrain);
         setTooltip('food-upkeep', -foodUpkeep, false);
-        setTooltip('food-net', foodFarms + foodCities + foodTerrain - foodUpkeep);
+        setTooltip('food-net', _netFood);
 
         // Wood tooltip
         setTooltip('wood-mills', woodMills);
         setTooltip('wood-cities', woodCities);
         setTooltip('wood-forests', woodForests);
         setTooltip('wood-upkeep', -woodUpkeep, false);
-        setTooltip('wood-net', woodMills + woodCities + woodForests - woodUpkeep);
+        setTooltip('wood-net', _netWood);
 
         // Iron tooltip
         setTooltip('iron-mines', ironMines);
         setTooltip('iron-mountains', ironMountains);
         setTooltip('iron-hills', ironHills);
         setTooltip('iron-upkeep', -ironUpkeep, false);
-        setTooltip('iron-net', ironMines + ironMountains + ironHills - ironUpkeep);
+        setTooltip('iron-net', _netIron);
 
         // Production tooltip
         setTooltip('prod-cities', prodCities);
         setTooltip('prod-barracks', prodBarracks);
         setTooltip('prod-workshops', prodWorkshops);
-        setTooltip('prod-net', prodCities + prodBarracks + prodWorkshops);
+        setTooltip('prod-net', _netProd);
     }
 
     function showTileInfo(tile) {
@@ -724,7 +745,35 @@ export function bindUI(gameState, callbacks) {
                 cityHeader.style.cssText = 'margin-top:8px; font-size:11px; color:#9fd;';
                 const cap = getUnitCap(gameState.tiles, PLAYER_FACTION);
                 const used = [...gameState.units.values()].filter(u => u.owner === PLAYER_FACTION).length;
-                cityHeader.textContent = `City Lv.${cityLevel} (influence ${3 + (cityLevel - 1)}) • Fort ${tile.fortification||0}/${tile.fortMax||0}${hasBarracks ? ' • Barracks' : ''} • Unit cap ${used}/${cap} (+${unitCapForCity(cityLevel + 1) - unitCapForCity(cityLevel)} on level up)`;
+                // Compute per-city yield (terrain + improvements)
+                const radius = 3 + (cityLevel - 1);
+                let cFood = 0, cWood = 0, cIron = 0, cGold = 8 + (cityLevel - 1) * 2;
+                for (const ct of gameState.tiles.values()) {
+                    if (ct.owner !== PLAYER_FACTION) continue;
+                    if (Math.abs(ct.x - tile.x) > radius || Math.abs(ct.z - tile.z) > radius) continue;
+                    const ctk = `${ct.x},${ct.z}`;
+                    const cb = (gameState.buildings.get(ctk) || []);
+                    if (ct.terrain === 'CITY') {
+                        cb.forEach(bt => {
+                            if (bt === 'MARKET') cGold += 10;
+                        });
+                    } else {
+                        const terr = TERRAIN[ct.terrain];
+                        if (terr && terr.resource) {
+                            const amt = terr.amount || 0;
+                            if (terr.resource === 'food') cFood += amt;
+                            else if (terr.resource === 'wood') cWood += amt;
+                            else if (terr.resource === 'iron') cIron += amt;
+                        }
+                        cb.forEach(bt => {
+                            if (bt === 'FARM') cFood += 5;
+                            else if (bt === 'LUMBERMILL') cWood += 5;
+                            else if (bt === 'MINE') cIron += 5;
+                        });
+                    }
+                }
+                cityHeader.textContent = `City Lv.${cityLevel} (influence ${radius}) • Fort ${tile.fortification||0}/${tile.fortMax||0}${hasBarracks ? ' • Barracks' : ''} • Unit cap ${used}/${cap}`;
+                cityHeader.textContent += ` • Yield: +${cFood}f +${cWood}w +${cIron}i +${cGold}g`;
                 els.buildMenu.appendChild(cityHeader);
 
                 // Natural-growth progress bar toward the next level.
@@ -844,30 +893,63 @@ export function bindUI(gameState, callbacks) {
             const targetName = fcOf(target).name || target;
             const aName = fcOf(rel.a).name || rel.a;
             const bName = fcOf(rel.b).name || rel.b;
+            const grievance = grievanceLevel(rel.grievances || 0);
 
             const div = document.createElement('div');
             div.style.cssText = 'margin: 4px 0; padding: 4px; border-left: 3px solid #888;';
             const stateColor = rel.state === 'war' ? '#ff4444' :
                                rel.state === 'peace' ? '#44ff44' :
-                               rel.state === 'alliance' ? '#4488ff' : '#ffaa00';
+                               rel.state === 'alliance' ? '#4488ff' :
+                               rel.state === 'neutral' ? '#aaaaaa' :
+                               rel.state === 'non_aggression' ? '#88cc88' :
+                               rel.state === 'ceasefire' ? '#88cccc' : '#ffaa00';
+            let extraInfo = '';
+            if (rel.tradeAmount > 0) extraInfo += ` (Trade: ${rel.tradeAmount}g)`;
+            if (rel.expiresOn && gameState.turn) {
+                const turnsLeft = rel.expiresOn - gameState.turn;
+                extraInfo += ` <span style="opacity:.6;">(expires in ${turnsLeft} turn${turnsLeft !== 1 ? 's' : ''})</span>`;
+            }
             div.innerHTML = `
                 <span style="color:${stateColor}; font-weight:bold;">${stateLabel(rel.state)}</span>
-                — ${aName} vs ${bName}
-                ${rel.tradeAmount > 0 ? `(Trade: ${rel.tradeAmount}g)` : ''}
+                — ${aName} vs ${bName}${extraInfo}
                 <span style="opacity:.6; font-size:10px;">[${relationshipLabel(rel.relationship)} ${rel.relationship|0}]</span>
+                <br><span style="font-size:10px; color:${grievance === 'furious' ? '#ff4444' : grievance === 'hostile' ? '#ff8844' : '#999'};">
+                Tension: ${grievance} (${rel.grievances || 0})
+                </span>
             `;
 
             // Action buttons only on rows involving the player. The available
-            // action set depends on the current state (see plan E5).
+            // action set depends on the current state.
             if (involvesPlayer) {
-                if (rel.state === 'war') {
+                if (rel.state === 'neutral') {
+                    div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
+                    div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                    div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
+                    div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
+                    div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
+                } else if (rel.state === 'non_aggression') {
+                    div.appendChild(mkBtn(`Propose Ceasefire`, 'proposeCeasefire', target));
+                    div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                    div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
+                    div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
+                    div.appendChild(mkBtn(`💥 Break NAP → War`, 'declareWar', target));
+                } else if (rel.state === 'ceasefire') {
+                    div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
+                    div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                    div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
+                    div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
+                    div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
+                } else if (rel.state === 'war') {
+                    div.appendChild(mkBtn(`Propose Ceasefire`, 'proposeCeasefire', target));
                     div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
                 } else if (rel.state === 'peace') {
+                    div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
                     div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
                     div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
                 } else if (rel.state === 'trade_pact') {
                     div.appendChild(mkBtn(`Cancel Trade`, 'cancelTrade', target));
+                    div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Alliance`, 'proposeAlliance', target));
                     div.appendChild(mkBtn(`Declare War`, 'declareWar', target));
                 } else if (rel.state === 'alliance') {
@@ -890,7 +972,7 @@ export function bindUI(gameState, callbacks) {
                 const fromName = fcOf(o.from).name || o.from;
                 const row = document.createElement('div');
                 row.style.cssText = 'margin:3px 0; padding:3px; border-left:3px solid #4488ff; font-size:11px;';
-                const kind = o.type === 'peace' ? 'Peace' : o.type === 'trade_pact' ? 'Trade Pact' : 'Alliance';
+                const kind = o.type === 'peace' ? 'Peace' : o.type === 'trade_pact' ? 'Trade Pact' : o.type === 'non_aggression' ? 'NAP' : o.type === 'ceasefire' ? 'Ceasefire' : 'Alliance';
                 row.innerHTML = `${fromName} proposes <b>${kind}</b>`;
                 row.appendChild(mkBtn('Accept', 'acceptOffer', i));
                 row.appendChild(mkBtn('Decline', 'declineOffer', i));
@@ -951,10 +1033,26 @@ export function bindUI(gameState, callbacks) {
         if (!els.combatLog) return;
         const entry = document.createElement('div');
         entry.textContent = message;
-        entry.style.cssText = 'padding: 2px 0; border-bottom: 1px solid #333; font-size: 12px;';
+        // Categorize by content for colored left border + icon prefix
+        let catClass = 'log-default';
+        const m = message.toLowerCase();
+        if (/[🐎🗡️🦔🪤🏹]|attacks?|charges?|destroyed|killed|ambush|bombard|breached|splash|fell in battle|impaled|trap|spikes/.test(m)) {
+            catClass = 'log-combat';
+        } else if (/declar.*(?:war|peace)|peace treaty|nap|alliance|ceasefire|trade pact|denounce|offers? (?:peace|nap|ceasefire|alliance|trade)|treaty|cancel.*trade/.test(m)) {
+            catClass = 'log-diplomacy';
+        } else if (/[💰]|trained|selling|market|sell|afford|recruit|Gold/.test(m)) {
+            catClass = 'log-economy';
+        } else if (/🔨|started building|ready in|producing|builds?\b|built/.test(m)) {
+            catClass = 'log-production';
+        }
+        const icon = catClass === 'log-combat' ? '⚔️' :
+                     catClass === 'log-diplomacy' ? '🏛️' :
+                     catClass === 'log-economy' ? '💰' :
+                     catClass === 'log-production' ? '🔨' : '';
+        entry.innerHTML = `${icon ? `<span style="margin-right:4px;">${icon}</span>` : ''}<span>${message}</span>`;
+        entry.className = catClass;
         els.combatLog.insertBefore(entry, els.combatLog.firstChild);
-        // Keep only last 20 messages
-        while (els.combatLog.children.length > 20) {
+        while (els.combatLog.children.length > 30) {
             els.combatLog.removeChild(els.combatLog.lastChild);
         }
     }
