@@ -318,9 +318,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     if (!hasSiegeWorkshop && myCityCount >= 1 && !needsSiegeWorkshopFirst) {
         const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
             !(buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
-        if (city && canAffordBuilding('SIEGE_WORKSHOP', res)) {
-            actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${city.x},${city.z}` });
-            res = payBuilding('SIEGE_WORKSHOP', res);
+        if (city) {
+            if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
+                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${city.x},${city.z}` });
+                res = payBuilding('SIEGE_WORKSHOP', res);
+            } else if (!hasTrainableSiege) {
+                // No-siege-roster faction (Verdant, Golden, Storm): the Siege
+                // Workshop is the ONLY path to CATAPULT/TREBUCHET, so it's a
+                // key military structure. At peace the spending spree would
+                // otherwise drain gold and delay it indefinitely. Reserve its
+                // cost so it gets built before too long.
+                res = subtractCost(res, BUILDING_TYPE.SIEGE_WORKSHOP.cost);
+            }
         }
     }
 
@@ -354,14 +363,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     If a Siege Workshop exists, long-range AOE engines (CATAPULT/TREBUCHET)
     //     are added to the options -- they're gated per-city by the workshop.
     //     Siege cap scales with the unit cap to maintain ~15% siege composition.
-    // Count siege capability: direct siege engines AND engineer-built Siege
-    // Towers AND the ENGINEERs that build them. Factions with no roster siege
-    // (Verdant, Storm) rely on engineers/towers, so counting them here keeps
-    // the siege cap aware of that path and stops it over-demanding siege (which
-    // otherwise falls through to cavalry spam).
+    // Count real siege engines only. ENGINEERs and SIEGE_TOWERs are a means
+    // to build/breach — not siege units themselves — so counting them here
+    // used to crowd out CATAPULT/TREBUCHET for no-siege-roster factions (their
+    // engineer count alone could satisfy the siege cap and skip block 1b).
+    // The factionComposition `has('siege')` guard already prevents the
+    // cavalry fallthrough that engineer-counting was originally added to
+    // solve, so it is safe to count only actual siege engines here.
     const siegeCount = myUnits.filter(u => u.type === 'SIEGE' || u.type === 'ARTILLERY' ||
-        u.type === 'CATAPULT' || u.type === 'TREBUCHET' ||
-        u.type === 'SIEGE_TOWER' || u.type === 'ENGINEER').length;
+        u.type === 'CATAPULT' || u.type === 'TREBUCHET').length;
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
