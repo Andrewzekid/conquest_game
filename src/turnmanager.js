@@ -2,7 +2,7 @@
 import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth } from './economy.js';
 import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
-import { processTradePacts, updatePeaceCounters } from './diplomacy.js';
+import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel } from './diplomacy.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -52,8 +52,18 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         // Diplomacy bookkeeping: tick peace/alliance/war counters (which drift
         // relationship scores), then pay out trade-pact bonuses.
         if (gameState.diplomacy) {
-            updatePeaceCounters(gameState.diplomacy);
-            const tradeMsgs = processTradePacts(gameState.diplomacy, gameState.resources);
+            updatePeaceCounters(gameState.diplomacy, gameState.turn);
+            // Precompute which factions own a Harbor so trade pacts can pay a
+            // Harbor+trade passive gold bonus.
+            const harborFactions = new Set();
+            if (gameState.buildings) {
+                for (const [key, list] of gameState.buildings) {
+                    if (!Array.isArray(list) || !list.includes('HARBOR')) continue;
+                    const t = gameState.tiles.get(key);
+                    if (t && t.owner) harborFactions.add(t.owner);
+                }
+            }
+            const tradeMsgs = processTradePacts(gameState.diplomacy, gameState.resources, harborFactions);
             if (logger) tradeMsgs.forEach(m => logger(m));
         }
         // Reputation drift: a faction at peace with everyone slowly rebuilds
@@ -70,6 +80,49 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 }
                 if (!atWar) {
                     gameState.reputation[f] = Math.min(100, (gameState.reputation[f] == null ? 50 : gameState.reputation[f]) + 1);
+                }
+            }
+        }
+
+        // Civ6-style tension: any non-at-war faction whose tile hosts another
+        // faction's military unit grows aggrieved (units in foreign territory).
+        // Scanned once per round; +2 per offending unit per turn.
+        if (gameState.diplomacy) {
+            for (const u of gameState.units.values()) {
+                if (gameState.eliminated && gameState.eliminated.has(u.owner)) continue;
+                const t = gameState.tiles.get(`${u.x},${u.z}`);
+                if (!t || !t.owner || t.owner === u.owner) continue;
+                // At war → no grievance (that's just combat). Only peacetime
+                // trespass counts as a provocation.
+                if (getRelation(gameState.diplomacy, u.owner, t.owner).state === 'war') continue;
+                const existing = getRelation(gameState.diplomacy, t.owner, u.owner).grievances || 0;
+                const amount = grievanceLevel(existing) === 'hostile' || grievanceLevel(existing) === 'furious' ? 4 : 2;
+                addGrievance(gameState.diplomacy, t.owner, u.owner, amount, 'troops in territory');
+            }
+        }
+
+        // Denunciation: if any AI faction holds furious grievances against the
+        // player and hasn't denounced recently, apply a reputation penalty and
+        // log it. Once per relation, not every turn.
+        if (gameState.diplomacy && gameState.diplomacy.diplomaticEvents) {
+            for (const [key, rel] of Object.entries(gameState.diplomacy.relations)) {
+                const [a, b] = key.split(':');
+                if (a !== 'player' && b !== 'player') continue;
+                if ((rel.grievances || 0) < 40) continue;
+                const aiFaction = a === 'player' ? b : a;
+                if (gameState.eliminated && gameState.eliminated.has(aiFaction)) continue;
+                // Check if already denounced recently (last 10 turns)
+                const events = gameState.diplomacy.diplomaticEvents;
+                let recentDenounce = false;
+                for (let i = events.length - 1; i >= 0; i--) {
+                    if (events[i].type === 'denounce' && events[i].factions && events[i].factions.includes(aiFaction) && events[i].turn > gameState.turn - 10) {
+                        recentDenounce = true; break;
+                    }
+                }
+                if (!recentDenounce && gameState.reputation) {
+                    gameState.reputation.player = Math.max(0, (gameState.reputation.player || 50) - 5);
+                    events.push({ type: 'denounce', factions: [aiFaction], turn: gameState.turn, message: 'denounced you' });
+                    if (logger) logger(`A faction has denounced you! (Reputation -5)`);
                 }
             }
         }

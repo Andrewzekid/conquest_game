@@ -83,6 +83,15 @@ export function loadGame() {
             if (rel.warsDeclared === undefined) rel.warsDeclared = 0;
             if (rel.peaceTreaties === undefined) rel.peaceTreaties = 0;
             if (rel.tradesMade === undefined) rel.tradesMade = 0;
+            // Civ6-style grievance/tension system fields.
+            if (rel.grievances === undefined) rel.grievances = 0;
+            if (rel.grievanceLog === undefined) rel.grievanceLog = [];
+            if (rel.expiresOn === undefined) rel.expiresOn = null;
+            // Formal-war tracking + trust/grudge memory (added after v1 saves).
+            if (rel.formalWar === undefined) rel.formalWar = rel.state === 'war';
+            if (rel.lastWarDeclaredTurn === undefined) rel.lastWarDeclaredTurn = 0;
+            if (rel.grudges === undefined) rel.grudges = {};
+            if (rel.trust === undefined) rel.trust = Math.max(0, 1 - (rel.brokenTreaties || 0) * 0.25);
         }
 
         const state = {
