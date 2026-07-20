@@ -2958,3 +2958,38 @@ function cityGarrison(city, units) {
     }
     return g;
 }
+
+/** Decide a king's response to being under ranged fire, or null if no ranged
+ *  threat. A ranged enemy (attackRange >= 2) hitting the king from outside the
+ *  king's melee reach (Chebyshev > 1) is untouchable by the king's adjacent-only
+ *  attack, so the king must either close to melee or retreat out of range.
+ *  Pure: takes the king, at-war enemy units, and the local friendly/foe power
+ *  (Chebyshev-3 sums the caller already computed). Returns:
+ *    { close: true,  target: {x,z} }   -> step (up to 2x) toward the shooter
+ *    { close: false, shooter, srange } -> retreat toward a safe tile (caller
+ *                                        picks home), stepping until distance
+ *                                        to the shooter exceeds srange
+ *    null                              -> no ranged threat; caller does nothing
+ *  Used by _aiMoveKing in game.js. */
+export function kingRangedResponse(lord, enemyUnits, friendLocal, foeLocal) {
+    let shooter = null, bestD = Infinity;
+    for (const u of enemyUnits) {
+        const udef = UNIT_TYPE[u.type];
+        const range = (udef && udef.attackRange) || (udef && udef.ranged ? 2 : 1);
+        if (range < 2) continue;
+        const d = Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z));
+        if (d <= range && d > 1) { // in their kill-zone, king can't counter
+            if (d < bestD) { bestD = d; shooter = u; }
+        }
+    }
+    if (!shooter) return null;
+    const sdef = UNIT_TYPE[shooter.type];
+    const srange = (sdef && sdef.attackRange) || (sdef && sdef.ranged ? 2 : 1);
+    const d = Math.max(Math.abs(shooter.x - lord.x), Math.abs(shooter.z - lord.z));
+    const outmatched = foeLocal > friendLocal * 1.1;
+    if (!outmatched && d <= 3) {
+        // 2 steps from distance 3 reaches adjacent, so d<=3 is closeable.
+        return { close: true, target: { x: shooter.x, z: shooter.z } };
+    }
+    return { close: false, shooter, srange };
+}

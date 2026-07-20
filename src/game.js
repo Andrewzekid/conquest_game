@@ -22,7 +22,7 @@ import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadi
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
 import { resolveCombat, canCaptureTile } from './battle.js';
 import { createTurnManager } from './turnmanager.js';
-import { computeAIActions } from './ai.js';
+import { computeAIActions, kingRangedResponse } from './ai.js';
 import { GameRenderer } from './renderer.js';
 import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
@@ -3405,6 +3405,38 @@ export class Game {
         if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
+        }
+
+        // 2b) Respond to ranged fire. A ranged enemy (attackRange >= 2) hitting
+        //     the king from outside the king's melee reach (Chebyshev > 1) is
+        //     untouchable by the king's adjacent-only attack, so sitting still
+        //     just eats damage. Close to melee if we can win locally; otherwise
+        //     retreat out of range. The king steps TWICE here so it can actually
+        //     reach a distance-2 archer or escape a distance-3 kill zone in one
+        //     turn (its normal move is 1 tile/turn). Scoped to ranged response
+        //     so the king doesn't generally outrun its army.
+        {
+            const resp = kingRangedResponse(lord, enemyUnits, friendLocal, foeLocal);
+            if (resp) {
+                if (resp.close) {
+                    for (let s = 0; s < 2; s++) {
+                        if (Math.max(Math.abs(lord.x - resp.target.x), Math.abs(lord.z - resp.target.z)) <= 1) break;
+                        this._aiStepLord(lord, resp.target.x, resp.target.z, faction, pool, factionName);
+                    }
+                    return;
+                }
+                // Outmatched or too far to close — retreat toward the nearest
+                // own city, up to 2 steps, to escape the kill-zone.
+                const home = nearestOwnCity();
+                if (home) {
+                    for (let s = 0; s < 2; s++) {
+                        const nd = Math.max(Math.abs(resp.shooter.x - lord.x), Math.abs(resp.shooter.z - lord.z));
+                        if (nd > resp.srange) break; // escaped
+                        this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
+                    }
+                    return;
+                }
+            }
         }
 
         // 3) Early-game harassment response: an enemy king is pressing our territory.
