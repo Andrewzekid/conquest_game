@@ -251,11 +251,16 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
-    // Composition-aware siege cap: aim for ~15% siege normally, ~28% when
-    // actively besieging an enemy city.
-    const siegeCap = activeObjectives.siege
-        ? Math.max(3, Math.round(AI_MAX_UNITS * 0.28))
-        : Math.max(2, Math.round(AI_MAX_UNITS * 0.15));
+    // Composition-aware siege cap: the siege ratio depends on the army's
+    // current objective. A faction actively besieging an enemy city fields far
+    // more siege (~40%); a decisive field battle or home defense wants fewer
+    // siege engines (~10-12%); otherwise a baseline ~15%.
+    const siegeRatio = activeObjectives.siege ? 0.40
+        : activeObjectives.decisive ? 0.10
+        : activeObjectives.defensive ? 0.12
+        : 0.15;
+    const siegeCap = Math.max(activeObjectives.siege ? 4 : 2,
+        Math.round(AI_MAX_UNITS * siegeRatio));
     if (siegeOptions.length && siegeCount < siegeCap) {
         // When siege workshop exists, prioritize artillery (CATAPULT/TREBUCHET)
         // over basic siege units for their AOE capabilities.
@@ -1341,21 +1346,55 @@ function unitRole(type) {
 /** Detect what the faction is currently trying to do so training can match the
  *  immediate need. Returns { siege, raid, defensive }. */
 function detectActiveObjectives(units, tiles, owner, isAtWar) {
-    const out = { siege: false, raid: false, defensive: false };
+    // Objective kinds drive army composition (notably the siege ratio):
+    //   siege     -> an army is besieging an enemy city (wants LOTS of siege)
+    //   decisive  -> a pitched field battle vs a massed enemy army (little siege)
+    //   defensive -> enemy units threatening an own city (melee/ranged focus)
+    //   raid      -> exposed enemy units in the open (cavalry focus)
+    // Explore/patrol are per-unit (scouts, king's guard) and don't shape
+    // faction-wide training composition; "conquest" reduces to siege here.
+    const out = { siege: false, raid: false, defensive: false, decisive: false, kind: null };
     if (!isAtWar) return out;
     const ownCities = [...tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === owner);
+    const ownMil = [...units.values()].filter(u => u.owner === owner &&
+        !['SETTLER', 'WORKER', 'SCOUT', 'ENGINEER'].includes(u.type));
     const enemyMil = [...units.values()].filter(u => u.owner !== owner && isAtWar(u.owner) &&
         !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type));
-    // Siege: an at-war fortified enemy city is close to our territory or units.
+    // Siege: an at-war enemy city is close to our territory OR our own forces
+    // (the besieging army). Counting our own units is what makes "the army is
+    // already surrounding the city" register as a siege even when that city is
+    // far from home territory. A city whose walls are already down still counts
+    // while our army is committed on top of it -- it still needs siege to
+    // finish the capture and to push on to the next city.
     for (const t of tiles.values()) {
         if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
         if (!isAtWar(t.owner)) continue;
-        if ((t.fortification || 0) <= 0) continue;
-        const cityDists = ownCities.map(c => manhattan(c.x, c.z, t.x, t.z));
-        const unitDists = enemyMil.map(u => manhattan(u.x, u.z, t.x, t.z));
-        const cityDist = cityDists.length ? Math.min(...cityDists) : Infinity;
-        const unitDist = unitDists.length ? Math.min(...unitDists) : Infinity;
-        if (cityDist <= 12 || unitDist <= 10) { out.siege = true; break; }
+        const fort = t.fortification || 0;
+        const cityDist = ownCities.length
+            ? Math.min(...ownCities.map(c => manhattan(c.x, c.z, t.x, t.z))) : Infinity;
+        let ownUnitDist = Infinity;
+        for (const u of ownMil) {
+            const d = manhattan(u.x, u.z, t.x, t.z);
+            if (d < ownUnitDist) ownUnitDist = d;
+        }
+        const wallsUp = fort > 0;
+        const armyOnIt = ownUnitDist <= 4;        // our army is on/around the city
+        const nearHome = cityDist <= 12;
+        if ((wallsUp && (nearHome || ownUnitDist <= 10)) || armyOnIt) {
+            out.siege = true; break;
+        }
+    }
+    // Decisive battle: a large enemy field army is massed near our forces (a
+    // pitched battle), where siege engines are a liability -- favor
+    // melee/cavalry instead.
+    {
+        let nearby = 0;
+        for (const e of enemyMil) {
+            for (const u of ownMil) {
+                if (manhattan(e.x, e.z, u.x, u.z) <= 6) { nearby++; break; }
+            }
+        }
+        if (nearby >= 5) out.decisive = true;
     }
     // Defensive: enemy military units are near an own city.
     for (const c of ownCities) {
@@ -1376,6 +1415,11 @@ function detectActiveObjectives(units, tiles, owner, isAtWar) {
             if (!nearCity) { out.raid = true; break; }
         }
     }
+    // Resolve a single dominant objective kind for composition tuning.
+    if (out.siege) out.kind = 'siege';
+    else if (out.decisive) out.kind = 'decisive';
+    else if (out.defensive) out.kind = 'defensive';
+    else if (out.raid) out.kind = 'raid';
     return out;
 }
 
@@ -1456,13 +1500,20 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     let target = factionComposition(factionDef, roster);
-    // Objective-driven composition tweaks.
+    // Objective-driven composition tweaks. The siege ratio swings hardest:
+    // a siege objective leans hard into siege engines, while a decisive field
+    // battle or defense pulls siege back in favor of melee/cavalry.
     if (objective) {
         target = { ...target };
         if (objective.siege) {
-            target.siege = Math.min(0.55, target.siege + 0.20);
-            target.cavalry = Math.max(0, target.cavalry - 0.05);
-            target.ranged = Math.max(0, target.ranged - 0.05);
+            target.siege = Math.min(0.60, target.siege + 0.30);
+            target.cavalry = Math.max(0, target.cavalry - 0.10);
+            target.ranged = Math.max(0, target.ranged - 0.10);
+            target.melee = Math.max(0.20, target.melee - 0.05);
+        } else if (objective.decisive) {
+            target.siege = Math.max(0, target.siege - 0.15);
+            target.cavalry = Math.min(0.50, target.cavalry + 0.15);
+            target.melee = Math.min(0.55, target.melee + 0.05);
         } else if (objective.raid) {
             target.cavalry = Math.min(0.50, target.cavalry + 0.20);
             target.siege = Math.max(0, target.siege - 0.10);
@@ -1502,6 +1553,8 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
     let order;
     if (objective && objective.siege) {
         order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+    } else if (objective && objective.decisive) {
+        order = ['CATAPHRACT', 'CAVALRY', 'CHARIOT', 'PIKEMAN', 'INFANTRY', 'LONGBOWMAN', 'ARCHER', 'SIEGE', 'ARTILLERY'];
     } else if (objective && objective.raid) {
         order = ['CATAPHRACT', 'CAVALRY', 'CHARIOT', 'SIEGE', 'ARTILLERY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     } else if (objective && objective.defensive) {
