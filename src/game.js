@@ -3312,7 +3312,16 @@ export class Game {
                 this._aiMoveKing(lord, faction, atWar, pool);
                 continue;
             }
-            const target = pickTarget(lord);
+            // Don't let a lord charge ahead of its army. If separated from the
+            // bulk of its troops, regroup first; only then push the objective.
+            const centroid = armyCentroid(lord);
+            const distToArmy = Math.abs(lord.x - centroid.x) + Math.abs(lord.z - centroid.z);
+            let target;
+            if ((lord.army || []).length > 0 && distToArmy > 4) {
+                target = centroid;
+            } else {
+                target = pickTarget(lord);
+            }
             if (!target) continue;
             for (let s = 0; s < 2; s++) {
                 if (lord.x === target.x && lord.z === target.z) break;
