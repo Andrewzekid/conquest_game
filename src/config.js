@@ -6,6 +6,13 @@ export let GRID_HEIGHT = 40;
 export let GRID_SIZE = 40; // Legacy: equals width for compatibility
 export const TILE_SIZE = 1;
 
+// Map landmass tuning. Any landmass below MIN_LANDMASS_SIZE tiles after
+// generation is flooded back into the ocean so stray 1-3 tile islets disappear,
+// and faction capitals are only placed on landmasses at least MIN_START_LANDMASS
+// tiles (falling back to the largest available if too few qualify).
+export const MIN_LANDMASS_SIZE = 24;
+export const MIN_START_LANDMASS = 36;
+
 // Tile count-based map sizes with player count recommendations
 export const MAP_SIZES = {
     tiny:   { tiles: 400,  players: 3, name: 'Tiny' },
@@ -167,7 +174,7 @@ export const CAPTURE_COST = 20; // Gold to capture an unowned tile
 // Pillage: a military unit can destroy an enemy terrain improvement on an
 // adjacent tile, pocketing a gold reward. One improvement per pillage action.
 export const PILLAGE_GOLD_REWARD = 15;
-export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE'];
+export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE', 'BARRACKS', 'SIEGE_WORKSHOP', 'HARBOR'];
 
 // AOE/fire ailment tuning for siege engines (CATAPULT, TREBUCHET).
 export const AOE_RADIUS = 1;            // Chebyshev radius around the target tile for splash
@@ -299,19 +306,46 @@ export const TRADE_ROUTE_GOLD = 10; // per turn per route
 export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 
 // --- Buildings ---
+// Military buildings (BARRACKS / SIEGE_WORKSHOP / HARBOR) may be built on any
+// passable land tile inside a city's influence (not just the city tile) — set
+// `influenceBuildable: true`. MARKET/WALLS stay city-only; FARM/LUMBERMILL/MINE
+// remain terrain-matched.
 export const BUILDING_TYPE = {
     FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 3 },   terrain: 'PLAINS', desc: '+3 food/turn.' },
     LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 5 },   terrain: 'FOREST', desc: '+5 wood/turn.' },
     MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', desc: '+10 gold/turn.' },
-    BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY',
-                  desc: '+10 production/turn. Units trained in this city start as veterans (Lv.2) and cost 25% less gold.' },
+    BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+10 production/turn. Units trained in this city start as veterans and cost less gold. Buildable in the city or its influence.' },
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
-    HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
-                  desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
-    SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY',
-                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }
+    HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.' },
+    SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.' }
 };
+
+// Military structures outside cities can be attacked, damaged, and pillaged.
+export const MILITARY_BUILDING_HP = { BARRACKS: 20, SIEGE_WORKSHOP: 25, HARBOR: 30 };
+export const MILITARY_BUILDING_DEFENSE = { BARRACKS: 2, SIEGE_WORKSHOP: 3, HARBOR: 3 };
+
+// Per-level upgrade curves for military buildings (max level 3). Each level
+// grants a higher veteran level + cheaper training (diminishing returns).
+export const MILITARY_BUILDING_LEVELS = {
+    BARRACKS: [
+        { veteranLevel: 2, goldMult: 0.75, upgradeCost: null },
+        { veteranLevel: 3, goldMult: 0.65, upgradeCost: { gold: 90, iron: 20 } },
+        { veteranLevel: 4, goldMult: 0.60, upgradeCost: { gold: 150, iron: 30 } }
+    ],
+    HARBOR: [
+        { veteranLevel: 2, goldMult: 0.85, upgradeCost: null },
+        { veteranLevel: 3, goldMult: 0.75, upgradeCost: { gold: 90, iron: 20 } },
+        { veteranLevel: 4, goldMult: 0.70, upgradeCost: { gold: 150, iron: 30 } }
+    ]
+};
+export const BUILDING_MAX_LEVEL = 3;
+
+// Pillage reward gold for destroying an enemy military structure.
+export const MILITARY_PILLAGE_GOLD = 40;
 
 // --- Engineer Structures (traps / defensive structures) ---
 // Engineers can build one of three structure types on owned tiles within city
@@ -461,7 +495,10 @@ export const AI_SETTLER_TARGET = 8; // base; scaled by map size
 export const AI_SETTLER_CAP_FACTOR = 0.8;
 export const AI_SETTLER_CAP_BASE = 2;
 // Max settlers the AI will produce in a single turn.
-export const AI_SETTLERS_PER_TURN = 5;
+export const AI_SETTLERS_PER_TURN = 1;
+// Hard cap on the total number of live + queued settlers the AI will ever keep
+// (prevents a faction from spamming settlers and sprawling endlessly).
+export const AI_SETTLER_HARD_CAP = 6;
 // Frontier bonus values (distance from nearest owned city).
 export const AI_FRONTIER_BONUS_CLOSE = 120;   // within 3 tiles
 export const AI_FRONTIER_BONUS_MID = 60;      // within 6 tiles

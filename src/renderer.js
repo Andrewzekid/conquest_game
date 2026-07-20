@@ -1010,6 +1010,7 @@ export class GameRenderer {
     renderBuildings(gameState) {
         this.buildingGroup.clear();
         const visible = gameState.visible || null;
+        const bState = gameState.buildingState || null;
         for (const [tileKey, list] of gameState.buildings) {
             const tile = gameState.tiles.get(tileKey);
             if (!tile) continue;
@@ -1022,6 +1023,28 @@ export class GameRenderer {
                 const ox = (i % 2) * 0.25 - 0.12;
                 const oz = Math.floor(i / 2) * 0.25 - 0.12;
                 prop.position.set(bx - GRID_SIZE / 2 + ox, baseY, bz - GRID_SIZE / 2 + oz);
+                // Area 6d: show level + damage for military structures.
+                if (bState && BUILDING_TYPE[bType] && BUILDING_TYPE[bType].military) {
+                    const st = bState.get(`${tileKey}:${bType}`);
+                    if (st) {
+                        if (st.level >= 2) {
+                            const lvl = this.makeIconSprite('⭐'.repeat(st.level - 1), 0.4, 1.1);
+                            prop.add(lvl);
+                        }
+                        if (st.maxHp > 0 && st.hp < st.maxHp) {
+                            const ratio = Math.max(0, st.hp / st.maxHp);
+                            // Tint the prop red as it takes damage.
+                            prop.traverse(o => {
+                                if (o.isMesh && o.material && o.material.color) {
+                                    o.material = o.material.clone();
+                                    o.material.color.lerp(new THREE.Color(0xff4444), 1 - ratio);
+                                }
+                            });
+                            const bar = this.makeIconSprite('❤️', 0.35, 1.4);
+                            prop.add(bar);
+                        }
+                    }
+                }
                 this.buildingGroup.add(prop);
             });
         }

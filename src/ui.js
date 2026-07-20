@@ -1,10 +1,10 @@
 /** UI: resource bar, tile/unit info, build menu, diplomacy panel, lord panel, combat log. */
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
-         FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
-         EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
-         STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
-         cityGrowthThreshold, CITY_MAX_LEVEL } from './config.js';
-import { getBuildableBuildings, pillageableOn } from './building.js';
+          FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
+          EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
+          STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
+          cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL } from './config.js';
+import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } from './diplomacy.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
@@ -666,6 +666,30 @@ export function bindUI(gameState, callbacks) {
                     if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
                 };
                 els.buildMenu.appendChild(btn);
+            }
+
+            // Upgrade section (Area 6b): for each existing military building on
+            // this tile below max level, show an Upgrade button with its cost.
+            const existing = gameState.buildings.get(`${tile.x},${tile.z}`) || [];
+            for (const bType of existing) {
+                const bData = BUILDING_TYPE[bType];
+                if (!bData || !bData.military) continue;
+                const levels = MILITARY_BUILDING_LEVELS[bType];
+                if (!levels) continue;
+                const st = getBuildingState(gameState.buildingState, `${tile.x},${tile.z}`, bType);
+                if (st.level >= BUILDING_MAX_LEVEL) continue;
+                const next = levels[st.level];
+                if (!next || !next.upgradeCost) continue;
+                const upBtn = document.createElement('button');
+                upBtn.textContent = `⬆ Upgrade ${bData.name} → L${st.level + 1} (${formatCost(next.upgradeCost)})`;
+                const canAffordUp = Object.entries(next.upgradeCost)
+                    .every(([r, a]) => (gameState.resources.player[r] || 0) >= a);
+                upBtn.disabled = !canAffordUp;
+                upBtn.style.cssText = 'display:block; margin:2px; padding:4px; width:100%; background:#2a3a5a;';
+                upBtn.onclick = () => {
+                    if (callbacks.onUpgradeBuilding) callbacks.onUpgradeBuilding(bType, tile);
+                };
+                els.buildMenu.appendChild(upBtn);
             }
 
             // Unit training (only in cities) — one unit per city per turn.

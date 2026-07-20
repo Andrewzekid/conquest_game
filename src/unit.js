@@ -6,7 +6,8 @@ let _uid = 0;
 function nextId() { return ++_uid; }
 
 /** Create a new unit object.
- *  opts.veteran: start at Lv.2 (Barracks).
+ *  opts.veteran: starting level — boolean true → Lv.2 (legacy Barracks), or a
+ *    number 1-4 for upgraded Barracks/Harbor veteran levels.
  *  opts.factionDef: apply faction unit mods + passive combat bonus. */
 export function createUnit(type, owner, x, z, opts = {}) {
     const stats = UNIT_TYPE[type];
@@ -14,7 +15,9 @@ export function createUnit(type, owner, x, z, opts = {}) {
     const def = opts.factionDef || null;
     const fstats = getUnitStatsFor(type, def);
     const passive = getPassiveCombat(def);
-    const level = opts.veteran ? 2 : 1;
+    let level = 1;
+    if (typeof opts.veteran === 'number') level = Math.max(1, Math.min(4, opts.veteran));
+    else if (opts.veteran) level = 2;
     const maxHp = fstats.hp + (level - 1) * 3;
     return {
         id: nextId(),

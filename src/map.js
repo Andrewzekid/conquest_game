@@ -1,7 +1,7 @@
 /** Map generation: terrain, ownership, starting positions.
  *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
  *  and per-faction city names. */
-import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES } from './config.js';
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS } from './config.js';
 import { getFactionDef } from './faction.js';
 
 // Per-faction city name counters
@@ -23,13 +23,12 @@ function nextCityNameForFaction(factionId) {
 }
 
 /** Influence/vision radius of a city, based on its level (1-based).
- *  Stepped (not linear) so influence grows in tiers:
- *    Lv 1-2 → 1,  Lv 3-4 → 2,  Lv 5-9 → 3,  Lv 10+ → 4. */
+ *  Stepped (not linear) so influence grows slowly in tiers and caps at 3:
+ *    Lv 1-3 → 1,  Lv 4-6 → 2,  Lv 7+ → 3. */
 export function cityRadius(tile) {
     const level = (tile && tile.cityLevel) || 1;
-    if (level >= 10) return 4;
-    if (level >= 5) return 3;
-    if (level >= 3) return 2;
+    if (level >= 7) return 3;
+    if (level >= 4) return 2;
     return 1;
 }
 
@@ -337,10 +336,86 @@ function placeWonders(tiles) {
 }
 
 /**
+ * Flood-fill the land into contiguous components and flood any mass smaller
+ * than MIN_LANDMASS_SIZE back into WATER (preserving a city tile only if it is
+ * itself the sole survivor of a too-small mass — rare). This removes the tiny
+ * detached islets the continent generator can produce and is run BEFORE city
+ * placement so capitals never land on a doomed speck of land. Rivers have
+ * already been carved, so re-validation of city accessibility still happens
+ * afterwards in generateMap.
+ */
+function pruneSmallLandmasses(tiles) {
+    const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const isLand = (t) => t && t.terrain !== 'WATER';
+    const seen = new Set();
+    for (const start of tiles) {
+        if (start.terrain === 'WATER' || seen.has(`${start.x},${start.z}`)) continue;
+        // BFS the whole landmass.
+        const comp = [];
+        const queue = [start];
+        seen.add(`${start.x},${start.z}`);
+        while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const [dx, dz] of dirs) {
+                const k = `${cur.x + dx},${cur.z + dz}`;
+                if (seen.has(k)) continue;
+                const n = byKey.get(k);
+                if (!isLand(n)) continue;
+                seen.add(k);
+                queue.push(n);
+            }
+        }
+        if (comp.length < MIN_LANDMASS_SIZE) {
+            for (const t of comp) {
+                if (t.terrain === 'CITY') continue; // never drown a stamped city
+                t.terrain = 'WATER';
+                delete t.bridge;
+            }
+        }
+    }
+}
+
+/** Group the given city tiles by the contiguous landmass each sits on (BFS over
+ *  non-WATER tiles). Returns [{ cities: [tile...], size: number }] sorted
+ *  largest-first, where `size` is the full landmass tile count (not just cities). */
+function groupCitiesByLandmass(tiles, cityTiles) {
+    const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const isLand = (t) => t && t.terrain !== 'WATER';
+    const citySet = new Set(cityTiles.map(c => `${c.x},${c.z}`));
+    const seen = new Set();
+    const groups = [];
+    for (const start of tiles) {
+        if (start.terrain === 'WATER' || seen.has(`${start.x},${start.z}`)) continue;
+        const comp = [];
+        const queue = [start];
+        seen.add(`${start.x},${start.z}`);
+        while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const [dx, dz] of dirs) {
+                const k = `${cur.x + dx},${cur.z + dz}`;
+                if (seen.has(k)) continue;
+                const n = byKey.get(k);
+                if (!isLand(n)) continue;
+                seen.add(k);
+                queue.push(n);
+            }
+        }
+        const cities = comp.filter(t => citySet.has(`${t.x},${t.z}`));
+        if (cities.length) groups.push({ cities, size: comp.length });
+    }
+    groups.sort((a, b) => b.size - a.size);
+    return groups;
+}
+
+/**
  * Generate tile data for the full grid. Cities are placed explicitly: one start
  * city per faction plus a few neutral contested cities (fewer cities overall).
  * Each tile: { x, z, terrain, owner, loyalty, cityLevel, fortification, fortMax }
- * Returns { tiles, startKeys }
+ * Returns { tiles, startKeys, wonders }
  */
 export function generateMap() {
     const tiles = [];
@@ -385,6 +460,26 @@ export function generateMap() {
     // cities avoid rivers).
     generateRivers(tiles);
 
+    // Flood any landmass smaller than MIN_LANDMASS_SIZE back into the ocean so
+    // stray islets disappear (and no capital can land on one). Runs after rivers
+    // so river tiles are unaffected; city accessibility is re-validated below.
+    pruneSmallLandmasses(tiles);
+    // Recompute land fraction — if pruning dropped us below the 30% floor, retry
+    // the whole mask (pruning can occasionally expose a too-sparse map).
+    let landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
+    let pruneAttempts = 0;
+    while (landCount2 < tiles.length * 0.30 && pruneAttempts < 5) {
+        for (const t of tiles) {
+            if (t.terrain === 'WATER') t.terrain = 'PLAINS';
+        }
+        applyContinentMask(tiles, Math.max(0.02, 0.15 - (pruneAttempts + 1) * 0.04));
+        assignBiomes(tiles);
+        generateRivers(tiles);
+        pruneSmallLandmasses(tiles);
+        landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
+        pruneAttempts++;
+    }
+
     // Total city count: one per faction + a few neutral (scales with map size).
     const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
     const neutral = mapScale >= 48 ? 4 : mapScale >= 36 ? 3 : 2;
@@ -428,20 +523,30 @@ export function generateMap() {
     // city (capturing/founding on a wonder tile still keeps the bonus).
     const wonders = placeWonders(tiles);
 
-    // Assign start cities: player nearest the (0,0) corner, the rest via farthest
-    // sampling so factions spread out.
+    // Group cities by the landmass they sit on, so capitals can be restricted to
+    // mainland-sized starts (>= MIN_START_LANDMASS) instead of tiny islets.
+    const grouped = groupCitiesByLandmass(tiles, cityTiles);
+    const mainlandCities = grouped
+        .filter(g => g.size >= MIN_START_LANDMASS)
+        .flatMap(g => g.cities);
+    const startPool = mainlandCities.length >= Math.min(FACTIONS.length, cityTiles.length)
+        ? mainlandCities
+        : cityTiles; // fallback: not enough qualifying starts, use everything
+
+    // Assign start cities: player nearest the (0,0) corner (from the start pool),
+    // the rest via farthest-point sampling so factions spread out.
     const startKeys = {};
     const placed = [];
-    let playerCity = cityTiles[0];
+    let playerCity = startPool[0];
     let bestCorner = Infinity;
-    for (const c of cityTiles) {
+    for (const c of startPool) {
         const d = c.x + c.z;
         if (d < bestCorner) { bestCorner = d; playerCity = c; }
     }
     playerCity.owner = 'player';
     placed.push(playerCity);
     startKeys['player'] = `${playerCity.x},${playerCity.z}`;
-    const remaining = cityTiles.filter(c => c !== playerCity);
+    const remaining = startPool.filter(c => c !== playerCity);
 
     for (const faction of FACTIONS) {
         if (faction === 'player') continue;
@@ -545,7 +650,7 @@ export function getAdjacentTiles(tiles, x, z) {
  * structures on flipped tiles are destroyed — the enemy dismantles the old
  * owner's traps/fortifications when taking the tile.
  */
-export function captureCityTerritory(tiles, cityTile, newOwner, structures = null) {
+export function captureCityTerritory(tiles, cityTile, newOwner, structures = null, buildings = null, buildingState = null) {
     const messages = [];
     const oldOwner = cityTile.owner;
     cityTile.owner = newOwner;
@@ -553,6 +658,18 @@ export function captureCityTerritory(tiles, cityTile, newOwner, structures = nul
     // A freshly captured city is fortified for its new owner.
     cityTile.fortMax = cityFortMax(cityTile);
     cityTile.fortification = cityTile.fortMax;
+    // Dismantle the previous owner's buildings on this city tile (including any
+    // military structure) — a captured city's structures don't serve the new
+    // owner. Their state entries are cleared too.
+    {
+        const key = `${cityTile.x},${cityTile.z}`;
+        if (buildings && buildings.has(key)) buildings.delete(key);
+        if (buildingState) {
+            for (const k of [...buildingState.keys()]) {
+                if (k.startsWith(key + ':')) buildingState.delete(k);
+            }
+        }
+    }
     // Assign a name if the city doesn't have one (use new owner's faction names)
     if (!cityTile.cityName) {
         const factionDef = getFactionDef(newOwner);
@@ -625,6 +742,16 @@ export function foundCity(tiles, tile, owner) {
     if (tile.terrain === 'CITY') return ['A city already exists here.'];
     if (tile.terrain === 'WATER' || tile.terrain === 'MOUNTAIN' || tile.terrain === 'RIVER') {
         return [`Cannot found a city on ${tile.terrain.toLowerCase()} terrain.`];
+    }
+    // Spacing rule: a new city may not be founded within the influence radius
+    // (+1) of any existing city (any owner), so cities don't overlap influence
+    // bubbles and crowd each other out.
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY') continue;
+        const minDist = cityRadius(t) + 1;
+        if (Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z)) < minDist) {
+            return [`Too close to ${t.cityName || 'an existing city'} — found elsewhere.`];
+        }
     }
     tile.terrain = 'CITY';
     tile.cityLevel = 1;

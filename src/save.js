@@ -2,7 +2,7 @@
  *  Phase F: enhanced persistence with verification for growth, burn, workshop,
  *  wonders, diplomacy relationship scores, and all new state fields. */
 const SAVE_KEY = 'conquest_save';
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 
 export function saveGame(gameState) {
     try {
@@ -14,6 +14,9 @@ export function saveGame(gameState) {
             tiles: [...gameState.tiles.values()],
             units: [...gameState.units.values()],
             buildings: [...gameState.buildings.entries()],
+            // Military structure level/hp state (Area 6). Absent on v2 saves,
+            // which are rejected by the version check below anyway.
+            buildingState: [...(gameState.buildingState || new Map()).entries()],
             lords: gameState.lords,
             resources: gameState.resources,
             diplomacy: gameState.diplomacy,
@@ -70,6 +73,9 @@ export function loadGame() {
             units.set(u.id, u);
         }
         const buildings = new Map(data.buildings);
+        // Military structure state (Area 6). Treat missing as empty (defaults to
+        // level 1 / full hp on access via getBuildingState).
+        const buildingState = new Map(data.buildingState || []);
         // Verify buildings include SIEGE_WORKSHOP entries (stored as string arrays).
 
         // Restore diplomacy with new Phase E fields (backward compatible).
@@ -100,6 +106,7 @@ export function loadGame() {
             tiles,
             units,
             buildings,
+            buildingState,
             lords: data.lords,
             resources: data.resources,
             diplomacy,
