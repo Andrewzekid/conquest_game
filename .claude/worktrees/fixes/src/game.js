@@ -14,9 +14,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
          LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
          STRUCTURE_TYPE, STRUCTURE_COST,
-         FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS,
-         GRIEVANCE_WAR_THRESHOLD, NEUTRAL_CITY_GRUDGE_RADIUS, MIN_CITY_SPACING,
-         CITY_LEVEL_UP_COST, CITY_MAX_LEVEL } from './config.js';
+         FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
@@ -26,7 +24,7 @@ import { computeAIActions } from './ai.js';
 import { GameRenderer } from './renderer.js';
 import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
-import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey, getTension, addGrievance, grievanceLevel } from './diplomacy.js';
+import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
          lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp } from './lords.js';
@@ -262,10 +260,12 @@ export class Game {
             unit.lordId = king.id;
         }
 
-        // Everyone starts NEUTRAL (Civ6-style). Wars must be formally declared
-        // — canAttack() only permits WAR, so neutral factions can't be attacked
-        // accidentally. createDiplomacyState already initializes every pair to
-        // NEUTRAL, so no override loop is needed here.
+        // Everyone starts at war with everyone else (free-for-all conquest).
+        for (let i = 0; i < FACTIONS.length; i++) {
+            for (let j = i + 1; j < FACTIONS.length; j++) {
+                setRelation(this.gameState.diplomacy, FACTIONS[i], FACTIONS[j], DIPLOMACY_STATES.WAR);
+            }
+        }
 
         // Stash placed Natural Wonders so start() can announce them (the UI
         // log isn't available yet during initState).
@@ -973,10 +973,7 @@ export class Game {
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner &&
             (canCaptureTile(lord.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
             pool.gold -= CAPTURE_COST;
-            const prevOwner = destTile.owner;
-            const wasNeutral = !prevOwner;
             captureCityTerritory(this.tiles, destTile, lord.owner, this.gameState.structures).forEach(m => this.log(m));
-            this._awardCaptureGrievances(destTile, lord.owner, prevOwner, wasNeutral);
             sfx.capture();
         }
         sfx.move();
@@ -1003,11 +1000,8 @@ export class Game {
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner &&
             (canCaptureTile(unit.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
             pool.gold -= CAPTURE_COST;
-            const prevOwner = destTile.owner;
-            const wasNeutral = !prevOwner;
             captureCityTerritory(this.tiles, destTile, unit.owner, this.gameState.structures).forEach(m => this.log(m));
             sfx.capture();
-            this._awardCaptureGrievances(destTile, unit.owner, prevOwner, wasNeutral);
         }
         // Arrived at goal → clear it.
         if (unit.goal && unit.goal.x === x && unit.goal.z === z) unit.goal = null;
@@ -1794,8 +1788,6 @@ export class Game {
         // The tile's terrain changed (PLAINS -> CITY); rebuild its mesh so the
         // keep/flag scenery appears (the base mesh was built for the old terrain).
         this.renderer.updateTileTerrain(tile);
-        // Civ6 border tension: founding too close to a neighbor angers them.
-        this._awardFoundGrievances(tile, PLAYER_FACTION);
         // Consume the settler.
         this.gameState.units.delete(unit.id);
         removeUnitFromArmies(this.gameState.lords, unit.id);
@@ -1982,19 +1974,6 @@ export class Game {
             this._onUnitDeath(unit);
             this.log(`${name} #${unit.id} was killed by the fall trap!`);
         }
-    }
-
-    /** True if an enemy warship is orthogonally adjacent to (cx,cz), blockading
-     *  the harbor and preventing ship production. */
-    _isHarborBlockaded(cx, cz) {
-        for (const u of this.gameState.units.values()) {
-            if (u.owner === PLAYER_FACTION || u.boarded) continue;
-            const def = UNIT_TYPE[u.type];
-            if (!def || !def.naval) continue;
-            if (u.type === 'TRANSPORT') continue;
-            if (Math.abs(u.x - cx) + Math.abs(u.z - cz) === 1) return true;
-        }
-        return false;
     }
 
     /** Spikes check for a cavalry charge: if the tile the charger storms onto
@@ -2340,9 +2319,6 @@ export class Game {
         if (NAVAL_UNITS.includes(unitType)) {
             const hasHarbor = (this.gameState.buildings.get(cityKey) || []).includes('HARBOR');
             if (!hasHarbor) { this.log('Ships require a Harbor in this city.'); return; }
-            // 6c — Enemy warship blockade: an adjacent enemy ship blocks ship production.
-            const blocked = this._isHarborBlockaded(tile.x, tile.z);
-            if (blocked) { this.log('The harbor is blockaded by enemy ships!'); return; }
         }
         // Siege engines require a Siege Workshop in this city.
         if (SIEGE_ENGINES.includes(unitType)) {
@@ -2429,10 +2405,7 @@ export class Game {
             rep[faction] = Math.max(0, Math.min(100, (rep[faction] == null ? 50 : rep[faction]) + delta));
         };
         const treatyLabel = (type) => type === DIPLOMACY_STATES.PEACE ? 'peace'
-            : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact'
-            : type === DIPLOMACY_STATES.NAP ? 'a non-aggression pact'
-            : type === DIPLOMACY_STATES.CEASEFIRE ? 'a ceasefire'
-            : 'an alliance';
+            : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact' : 'an alliance';
         const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
         // Player proposes a treaty to an AI; the AI accepts/rejects via
         // aiDecideTreaty using its personality, the power ratio, and the
@@ -2449,14 +2422,10 @@ export class Game {
             }
             // A low-reputation player is treated as if its relationship score were
             // worse, so the AI is less willing to sign trade/peace with a known
-            // treaty-breaker. Past broken treaties (trust) cool it further.
-            const effRel = (rel.relationship || 0) + (playerRep - 50) / 2 - (rel.brokenTreaties || 0) * 5;
-            const theirGrievances = getRelation(diplo, target, 'player').grievances || 0;
-            if (aiDecideTreaty(pers, type, ratio, effRel, rel.brokenTreaties || 0, 0, false, theirGrievances)) {
-                const turn = this.gameState.turn || 0;
-                const duration = type === DIPLOMACY_STATES.NAP ? 15 :
-                                type === DIPLOMACY_STATES.CEASEFIRE ? 8 : 0;
-                setRelation(diplo, 'player', target, type, turn, duration);
+            // treaty-breaker.
+            const effRel = (rel.relationship || 0) + (playerRep - 50) / 2;
+            if (aiDecideTreaty(pers, type, ratio, effRel)) {
+                setRelation(diplo, 'player', target, type);
                 if (type === DIPLOMACY_STATES.TRADE_PACT) rel.tradeAmount = 10;
                 this.log(`${nameOf(target)} accepts your proposal — ${treatyLabel(type)} established.`);
                 if (type === DIPLOMACY_STATES.ALLIANCE) this.updateFog();
@@ -2472,30 +2441,16 @@ export class Game {
         } else if (action === 'proposeAlliance') {
             propose(DIPLOMACY_STATES.ALLIANCE);
         } else if (action === 'declareWar') {
-            const prevRel = getRelation(diplo, 'player', target);
-            const prevState = prevRel.state;
-            const turn = this.gameState.turn || 0;
-            setRelation(diplo, 'player', target, DIPLOMACY_STATES.WAR, turn);
-            // The act of declaring war angers the target (+10). The breach
-            // grievance for breaking an active treaty is awarded centrally by
-            // setRelation (mutual, scaled for early NAP/ceasefire breaks).
-            addGrievance(diplo, target, 'player', 10, 'war declared');
-            // Reputation cost scales with the weight of whatever treaty is being
-            // broken (alliance hurts most; neutral skirmish least).
-            const repHit = prevState === DIPLOMACY_STATES.ALLIANCE ? 30
-                : prevState === DIPLOMACY_STATES.NAP ? 20
-                : prevState === DIPLOMACY_STATES.CEASEFIRE ? 15
-                : prevState === DIPLOMACY_STATES.PEACE ? 15
-                : prevState === DIPLOMACY_STATES.TRADE_PACT ? 10
-                : prevState === DIPLOMACY_STATES.NEUTRAL ? 5 : 0;
-            if (repHit > 0) adjustRep('player', -repHit);
-            this.log(`War declared on ${nameOf(target)}!${repHit > 0 ? ` (Reputation -${repHit})` : ''}`);
+            const wasPeaceful = getRelation(diplo, 'player', target).state !== DIPLOMACY_STATES.WAR;
+            setRelation(diplo, 'player', target, DIPLOMACY_STATES.WAR);
+            if (wasPeaceful) {
+                adjustRep('player', -15);
+                this.log(`War declared on ${nameOf(target)}! (Reputation -15)`);
+            } else {
+                this.log(`War declared on ${nameOf(target)}!`);
+            }
             // Joint war: the player's allies are dragged in against the target.
             this._jointWar(PLAYER_FACTION, target);
-        } else if (action === 'proposeNap') {
-            propose(DIPLOMACY_STATES.NAP);
-        } else if (action === 'proposeCeasefire') {
-            propose(DIPLOMACY_STATES.CEASEFIRE);
         } else if (action === 'cancelTrade') {
             const rel = getRelation(diplo, 'player', target);
             if (rel.state === DIPLOMACY_STATES.TRADE_PACT) {
@@ -2510,10 +2465,7 @@ export class Game {
             if (!offer || offer.to !== PLAYER_FACTION) return;
             diplo.pendingOffers.splice(idx, 1);
             if (action === 'acceptOffer') {
-                const turn = this.gameState.turn || 0;
-                const duration = offer.type === DIPLOMACY_STATES.NAP ? 15 :
-                                offer.type === DIPLOMACY_STATES.CEASEFIRE ? 8 : 0;
-                setRelation(diplo, 'player', offer.from, offer.type, turn, duration);
+                setRelation(diplo, 'player', offer.from, offer.type);
                 if (offer.type === DIPLOMACY_STATES.TRADE_PACT) {
                     getRelation(diplo, 'player', offer.from).tradeAmount = 10;
                 }
@@ -2526,57 +2478,6 @@ export class Game {
         }
         sfx.click();
         this.ui.showDiplomacyPanel();
-    }
-
-    /** Award grievances when a city is captured. Former owner gets the biggest
-     *  grievance; neutral cities within NEUTRAL_CITY_GRUDGE_RADIUS of a faction's
-     *  city also generate a smaller grievance (Civ6 border tension). */
-    _awardCaptureGrievances(cityTile, newOwner, prevOwner, wasNeutral) {
-        const diplo = this.gameState.diplomacy;
-        const other = newOwner;
-        // Former owner gets +25 grievance for losing a city
-        if (prevOwner && prevOwner !== other) {
-            addGrievance(diplo, prevOwner, other, 25, 'city captured');
-        }
-        // Neutral capture: factions with cities within the grudge radius
-        // see it as an aggressive land grab.
-        if (wasNeutral && NEUTRAL_CITY_GRUDGE_RADIUS > 0) {
-            for (const f of FACTIONS) {
-                if (f === other || (this.gameState.eliminated && this.gameState.eliminated.has(f))) continue;
-                // Check if this faction has a city within the grievance radius
-                for (const t of this.tiles.values()) {
-                    if (t.terrain === 'CITY' && t.owner === f) {
-                        const dist = Math.abs(t.x - cityTile.x) + Math.abs(t.z - cityTile.z);
-                        if (dist <= NEUTRAL_CITY_GRUDGE_RADIUS) {
-                            addGrievance(diplo, f, other, 20, 'aggressive settlement');
-                            break; // one grievance per faction per capture
-                        }
-                    }
-                }
-            }
-        }
-        this._invalidateDiploCache();
-    }
-
-    /** Award a grievance to any neighbor with a city within MIN_CITY_SPACING of
-     *  a freshly-founded city (Civ6 border tension from settling too close).
-     *  Called after a successful foundCity on both the player and AI paths. */
-    _awardFoundGrievances(cityTile, founder) {
-        if (MIN_CITY_SPACING <= 0) return;
-        const diplo = this.gameState.diplomacy;
-        for (const f of FACTIONS) {
-            if (f === founder || (this.gameState.eliminated && this.gameState.eliminated.has(f))) continue;
-            for (const t of this.tiles.values()) {
-                if (t.terrain === 'CITY' && t.owner === f) {
-                    const dist = Math.abs(t.x - cityTile.x) + Math.abs(t.z - cityTile.z);
-                    if (dist <= MIN_CITY_SPACING) {
-                        addGrievance(diplo, f, founder, 15, 'founded city too close');
-                        break; // one grievance per neighbor per founding
-                    }
-                }
-            }
-        }
-        this._invalidateDiploCache();
     }
 
     /** Joint war: declaring war on a faction drags the declarer's allies into
@@ -2814,30 +2715,12 @@ export class Game {
         const cities = {};
         for (const f of FACTIONS) { power[f] = 0; cities[f] = []; }
         for (const u of this.gameState.units.values()) {
-            if (u.boarded || power[u.owner] === undefined) continue;
-            const type = u.type;
-            if (type === 'SETTLER' || type === 'WORKER') continue; // non-combat
-            const def = UNIT_TYPE[type];
-            if (def && def.naval) continue; // ships counted separately below
-            let weight = 1;
-            if (type === 'SCOUT') weight = 0.5;
-            else if (type === 'CAVALRY' || type === 'CATAPHRACT') weight = 1.5;
-            else if (type === 'SIEGE' || type === 'ARTILLERY' || type === 'CATAPULT' || type === 'TREBUCHET') weight = 2;
-            else if (type === 'LONGBOWMAN') weight = 1.2;
-            power[u.owner] += weight;
-        }
-        // Lord power: each lord adds 3 (kings are special targets)
-        for (const l of (this.gameState.lords || [])) {
-            if (power[l.owner] !== undefined) power[l.owner] += 3;
+            if (!u.boarded && power[u.owner] !== undefined) power[u.owner]++;
         }
         for (const t of this.tiles.values()) {
             if (t.terrain === 'CITY' && t.owner && cities[t.owner] !== undefined) {
                 cities[t.owner].push(t);
-                // Base city presence, plus fortification level and walled-city
-                // bonuses so power reflects actual defenses, not just city count.
-                power[t.owner] += 2 + (t.fortMax || 0) * 3;
-                const bs = this.gameState.buildings && this.gameState.buildings.get(`${t.x},${t.z}`);
-                if (Array.isArray(bs) && bs.includes('WALLS')) power[t.owner] += 5;
+                power[t.owner] += 2;
             }
         }
         for (const f of FACTIONS) {
@@ -2974,13 +2857,6 @@ export class Game {
             if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) return { other, score: -Infinity };
             score += (100 - theirPower) * 0.1;
             if (other === PLAYER_FACTION) score += 10;
-            // Grievance tension: the angrier we are, the more we want war
-            const tension = getTension(this.gameState.diplomacy, faction, other);
-            score += tension * 0.3;
-            // Grievance precondition: once tension crosses the war threshold and
-            // we're not badly outmatched, this is a strong candidate to strike
-            // first (Civ6 "grievance builds until war").
-            if (tension >= GRIEVANCE_WAR_THRESHOLD && ratio >= 0.8) score += 50;
             return { other, score };
         });
         scored.sort((a, b) => b.score - a.score);
@@ -2989,28 +2865,14 @@ export class Game {
             const rel = getRelation(this.gameState.diplomacy, faction, other);
             const theirPower = Math.max(1, this._factionPower(other));
             const ratio = myPower / theirPower;
-            const distance = this._factionDistance(faction, other);
-            const isNeighbor = distance <= 8;
-            const tension = getTension(this.gameState.diplomacy, faction, other);
-            if (!aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension)) continue;
-            const prevState = rel.state;
-            const turn = this.gameState.turn || 0;
-            setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR, turn);
-            // The act of declaring war angers the target (+10). The breach
-            // grievance for breaking an active treaty is awarded centrally by
-            // setRelation (mutual, scaled for early NAP/ceasefire breaks).
-            addGrievance(this.gameState.diplomacy, other, faction, 10, 'war declared');
-            if (this.gameState.reputation) {
-                const hit = prevState === DIPLOMACY_STATES.ALLIANCE ? 30
-                    : prevState === DIPLOMACY_STATES.NAP ? 20
-                    : prevState === DIPLOMACY_STATES.CEASEFIRE ? 15
-                    : prevState === DIPLOMACY_STATES.PEACE ? 15
-                    : prevState === DIPLOMACY_STATES.TRADE_PACT ? 10
-                    : prevState === DIPLOMACY_STATES.NEUTRAL ? 5 : 0;
-                if (hit > 0) {
-                    this.gameState.reputation[faction] = Math.max(0,
-                        (this.gameState.reputation[faction] == null ? 50 : this.gameState.reputation[faction]) - hit);
-                }
+            if (!aiDecideWar(personality, ratio)) continue;
+            const wasAllied = rel.state === DIPLOMACY_STATES.ALLIANCE;
+            const wasTreaty = rel.state !== DIPLOMACY_STATES.WAR;
+            setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR);
+            if (wasTreaty && this.gameState.reputation) {
+                const hit = wasAllied ? 25 : 10;
+                this.gameState.reputation[faction] = Math.max(0,
+                    (this.gameState.reputation[faction] == null ? 50 : this.gameState.reputation[faction]) - hit);
             }
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             this.log(`${factionName} has declared war on ${otherName}! (power ${myPower} vs ${theirPower})`);
@@ -3034,13 +2896,6 @@ export class Game {
         const diplo = this.gameState.diplomacy;
         const alive = (o) => !(this.gameState.eliminated && this.gameState.eliminated.has(o));
 
-        // Stale offer cleanup: remove pending offers from this faction older than
-        // 10 turns so the UI doesn't accumulate dead entries.
-        if (diplo.pendingOffers) {
-            diplo.pendingOffers = diplo.pendingOffers.filter(o =>
-                o.from !== faction || (this.gameState.turn - (o.turnProposed || 0)) <= 10);
-        }
-
         // Build a scored list of candidates for treaties
         const candidates = [];
         for (const other of FACTIONS) {
@@ -3053,7 +2908,7 @@ export class Game {
             const isNeighbor = distance <= 8;
             const isDistant = distance > 12;
 
-            let allianceScore = 0, tradeScore = 0, peaceScore = 0, napScore = 0, ceasefireScore = 0;
+            let allianceScore = 0, tradeScore = 0, peaceScore = 0;
 
             // --- WAR -> PEACE ---
             if (rel.state === DIPLOMACY_STATES.WAR) {
@@ -3091,40 +2946,18 @@ export class Game {
                 if (rel.state === DIPLOMACY_STATES.TRADE_PACT) tradeScore = -Infinity; // already have it
             }
 
-            // Grievance tension between these two factions (directed: ours vs theirs)
-            const tension = getTension(diplo, faction, other);
-
-            // --- NAP scoring (propose when neutral with decent relations) ---
-            if (rel.state === DIPLOMACY_STATES.NEUTRAL) {
-                if (isNeighbor && (rel.relationship || 0) > -20) napScore += 40;
-                if (sharedEnemy) napScore += 20;
-                if (distance > 12) napScore += 10; // NAP with distant is cheap insurance
-                if (tension > GRIEVANCE_WAR_THRESHOLD * 0.5) napScore -= 50; // too tense for NAP
-            }
-
-            // --- CEASEFIRE scoring (propose during war when peace is too much) ---
-            if (rel.state === DIPLOMACY_STATES.WAR && peaceScore > 0 && peaceScore < 60) {
-                ceasefireScore = peaceScore * 0.6;
-                if (tension > GRIEVANCE_WAR_THRESHOLD * 0.8) ceasefireScore -= 30;
-                if (rel.turnsAtWar > 15) ceasefireScore += 20; // war-weariness
-            } else if (rel.state === DIPLOMACY_STATES.WAR && peaceScore <= 0) {
-                if (rel.turnsAtWar > 20) ceasefireScore = 30; // war-weariness alone
-            }
-
-            candidates.push({ other, ratio, theirPower, distance, sharedEnemy, isNeighbor, isDistant, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, rel });
+            candidates.push({ other, ratio, theirPower, distance, sharedEnemy, isNeighbor, isDistant, allianceScore, tradeScore, peaceScore, rel });
         }
 
         // Sort by best opportunity
-        candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore, b.napScore, b.ceasefireScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore, a.napScore, a.ceasefireScore));
+        candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore));
 
         for (const c of candidates) {
-            const { other, ratio, theirPower, rel, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
+            const { other, ratio, theirPower, rel, allianceScore, tradeScore, peaceScore, sharedEnemy, isDistant } = c;
             let type = null;
 
             // Pick best treaty type based on strategic scores
-            if (ceasefireScore > 40) type = DIPLOMACY_STATES.CEASEFIRE;
-            else if (peaceScore > 60) type = DIPLOMACY_STATES.PEACE;
-            else if (napScore > 40 && Math.random() < 0.5) type = DIPLOMACY_STATES.NAP;
+            if (peaceScore > 60) type = DIPLOMACY_STATES.PEACE;
             else if (allianceScore > 40 && Math.random() < 0.3 + (allianceScore / 200)) type = DIPLOMACY_STATES.ALLIANCE;
             else if (tradeScore > 30 && Math.random() < 0.35) type = DIPLOMACY_STATES.TRADE_PACT;
 
@@ -3132,8 +2965,6 @@ export class Game {
             if (!type) {
                 if (rel.state === DIPLOMACY_STATES.WAR) {
                     if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) type = DIPLOMACY_STATES.PEACE;
-                } else if (rel.state === DIPLOMACY_STATES.NEUTRAL) {
-                    if ((rel.relationship || 0) > 0 && Math.random() < 0.2) type = DIPLOMACY_STATES.NAP;
                 } else if (rel.state === DIPLOMACY_STATES.PEACE) {
                     if ((rel.relationship || 0) > 40 && Math.random() < 0.2) type = DIPLOMACY_STATES.ALLIANCE;
                     else if ((rel.relationship || 0) > 0 && Math.random() < 0.3) type = DIPLOMACY_STATES.TRADE_PACT;
@@ -3146,10 +2977,7 @@ export class Game {
 
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             const label = type === DIPLOMACY_STATES.PEACE ? 'peace'
-                : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact'
-                : type === DIPLOMACY_STATES.NAP ? 'a non-aggression pact'
-                : type === DIPLOMACY_STATES.CEASEFIRE ? 'a ceasefire'
-                : 'an alliance';
+                : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact' : 'an alliance';
 
             if (other === PLAYER_FACTION) {
                 const dup = diplo.pendingOffers.some(o =>
@@ -3164,24 +2992,11 @@ export class Game {
             // AI-AI: both sides must agree
             const otherDef = this.factionDefs[other];
             const otherPers = (otherDef && otherDef.aiPersonality) || 'DEFENSIVE';
-            const theirGriev = rel.grievances || 0;
-            const bt = rel.brokenTreaties || 0;
-            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, 0, false, theirGriev);
-            const b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0);
+            const b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0);
             if (a && b) {
-                const turn = this.gameState.turn || 0;
-                const duration = type === DIPLOMACY_STATES.NAP ? 15 :
-                                type === DIPLOMACY_STATES.CEASEFIRE ? 8 : 0;
-                setRelation(diplo, faction, other, type, turn, duration);
-                if (type === DIPLOMACY_STATES.TRADE_PACT) {
-                    rel.tradeAmount = 10;
-                    // Pick export material based on resource surplus
-                    const myRes = this.gameState.resources[faction] || {};
-                    if ((myRes.iron || 0) > 50) rel.tradeMaterial = 'IRON';
-                    else if ((myRes.wood || 0) > 50) rel.tradeMaterial = 'WOOD';
-                    else if ((myRes.food || 0) > 50) rel.tradeMaterial = 'FOOD';
-                    else rel.tradeMaterial = 'GOLD';
-                }
+                setRelation(diplo, faction, other, type);
+                if (type === DIPLOMACY_STATES.TRADE_PACT) rel.tradeAmount = 10;
                 const reason = sharedEnemy ? ' (shared enemy!)' : '';
                 this.log(`${factionName} and ${otherName} signed ${label}.${reason}`);
             }
@@ -3374,10 +3189,7 @@ export class Game {
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
                     (canCaptureTile(faction, destTile, pool) || this.siegeTowerAdjacentTo(destTile, faction))) {
                     pool.gold -= CAPTURE_COST;
-                    const prevOwner = destTile.owner;
-                    const wasNeutral = !prevOwner;
                     captureCityTerritory(this.tiles, destTile, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
-                    this._awardCaptureGrievances(destTile, faction, prevOwner, wasNeutral);
                     this.checkVictory();
                 }
             }
@@ -3481,11 +3293,8 @@ export class Game {
                         if (SIEGE_ENGINES.includes(action.unitType) &&
                             !(this.gameState.buildings.get(action.tileKey) || []).includes('SIEGE_WORKSHOP')) break;
                         // Ships require a Harbor in this city.
-                        if (NAVAL_UNITS.includes(action.unitType)) {
-                            if (!(this.gameState.buildings.get(action.tileKey) || []).includes('HARBOR')) break;
-                            // 6c — Enemy warship blockade blocks ship production.
-                            if (this._isHarborBlockaded(tile.x, tile.z)) break;
-                        }
+                        if (NAVAL_UNITS.includes(action.unitType) &&
+                            !(this.gameState.buildings.get(action.tileKey) || []).includes('HARBOR')) break;
                         const unitCap = getUnitCap(this.tiles, faction);
                         const count = [...this.gameState.units.values()].filter(u => u.owner === faction).length;
                         const hasBarracks = (this.gameState.buildings.get(action.tileKey) || []).includes('BARRACKS');
@@ -3572,10 +3381,7 @@ export class Game {
                         if (dest && dest.terrain === 'CITY' && dest.owner !== faction &&
                             (canCaptureTile(faction, dest, pool) || this.siegeTowerAdjacentTo(dest, faction))) {
                             pool.gold -= CAPTURE_COST;
-                            const prevOwner = dest.owner;
-                            const wasNeutral = !prevOwner;
                             captureCityTerritory(this.tiles, dest, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
-                            this._awardCaptureGrievances(dest, faction, prevOwner, wasNeutral);
                         }
                         // An enemy fall trap on the destination springs now.
                         this._checkFallTrap(unit);
@@ -3618,10 +3424,7 @@ export class Game {
                     // earlier in this same action loop.
                     if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction && pool.gold >= CAPTURE_COST) {
                         pool.gold -= CAPTURE_COST;
-                        const prevOwner = tile.owner;
-                        const wasNeutral = !prevOwner;
                         captureCityTerritory(this.tiles, tile, faction, this.gameState.structures).forEach(m => this.log(`${factionName}: ${m}`));
-                        this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
                         // Garrison the capturing unit on the city tile.
                         unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
                         this.renderer.updateTileTerrain(tile);
@@ -3648,39 +3451,10 @@ export class Game {
                             msgs.forEach(m => this.log(`${factionName}: ${m}`));
                             sfx.capture();
                             this.renderer.updateTileTerrain(tile);
-                            this._awardFoundGrievances(tile, faction);
                             this.gameState.units.delete(unit.id);
                             removeUnitFromArmies(this.gameState.lords, unit.id);
                         } else if (msgs.length) {
                             this.log(`${factionName}: ${msgs[0]}`);
-                        }
-                    }
-                    break;
-                }
-                case 'levelUpCity': {
-                    // AI invests resources to grow a city a level (mirrors the
-                    // player's handleLevelUpCity). Ownership re-checked in case
-                    // the city changed hands since the action was planned.
-                    const tile = this.tiles.get(action.tileKey);
-                    if (tile && tile.terrain === 'CITY' && tile.owner === faction &&
-                        (tile.cityLevel || 1) < CITY_MAX_LEVEL) {
-                        const lvl = tile.cityLevel || 1;
-                        const cost = {
-                            gold: CITY_LEVEL_UP_COST.gold * lvl,
-                            food: CITY_LEVEL_UP_COST.food * lvl,
-                            production: CITY_LEVEL_UP_COST.production * lvl
-                        };
-                        if (pool.gold >= cost.gold && pool.food >= cost.food &&
-                            (pool.production || 0) >= cost.production) {
-                            pool.gold -= cost.gold;
-                            pool.food -= cost.food;
-                            pool.production = (pool.production || 0) - cost.production;
-                            tile.cityLevel = lvl + 1;
-                            tile.fortMax = 2 + tile.cityLevel;
-                            tile.fortification = tile.fortMax;
-                            const claimed = expandCityTerritory(this.tiles, tile, faction);
-                            this.renderer.updateTileTerrain(tile);
-                            this.log(`${factionName}: city at [${tile.x}, ${tile.z}] leveled up to Lv.${tile.cityLevel}${claimed ? ` (+${claimed} tiles)` : ''}.`);
                         }
                     }
                     break;
@@ -3965,7 +3739,6 @@ export class Game {
     }
 
     checkVictory() {
-        if (this.spectateMode) return; // no victory/defeat in spectate mode
         if (this.gameState.gameOver) return;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
         // Elimination runs in spectate mode too — a faction that loses its
