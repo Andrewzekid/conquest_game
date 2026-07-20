@@ -11,7 +11,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
           MARKET_RATES, CITY_LEVEL_UP_COST, CITY_MAX_LEVEL } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
-import { sellAtMarket } from './economy.js';
+import { sellAtMarket, getUnitCap } from './economy.js';
 import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
@@ -82,7 +82,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const myCityCount = owned.filter(t => t.terrain === 'CITY').length;
     const hasBarracks = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('BARRACKS'));
     const trainCount = () => actions.filter(a => a.type === 'train').length;
-    const capRoom = () => myUnits.length + trainCount() < AI_MAX_UNITS;
+    // Unit cap: match the engine's per-city cap (5 + (level-1)*2 per city) so a
+    // large empire can field a bigger army and a small one doesn't waste planning
+    // on trains the engine will drop. AI_MAX_UNITS is a raised sanity ceiling so
+    // a huge empire doesn't bankrupt itself on upkeep chasing an unbounded cap.
+    const aiUnitCap = Math.min(getUnitCap(tiles, owner), AI_MAX_UNITS);
+    const capRoom = () => myUnits.length + trainCount() < aiUnitCap;
 
     // `moved` tracks tiles claimed this turn (avoids two units stacking on the
     // same destination); `acted` tracks unit ids that already have an action.
@@ -369,7 +374,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         : activeObjectives.defensive ? 0.12
         : 0.15;
     const siegeCap = Math.max(activeObjectives.siege ? 4 : 2,
-        Math.round(AI_MAX_UNITS * siegeRatio));
+        Math.round(aiUnitCap * siegeRatio));
     if (siegeOptions.length && siegeCount < siegeCap) {
         // When siege workshop exists, prioritize artillery (CATAPULT/TREBUCHET)
         // over basic siege units for their AOE capabilities.
@@ -471,7 +476,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const settlerCap = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency));
     const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION * settlerUrgency));
     let queuedSettlers = 0;
-    while (queuedSettlers < settlersPerTurn && myCityCount < settlerTarget && capRoom() && roster.includes('SETTLER')) {
+    while (queuedSettlers < settlersPerTurn && myCityCount < settlerTarget && capRoom() && fullRoster.includes('SETTLER')) {
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         if (liveSettlers + queuedSettlers >= settlerCap) break;
         // A second queued settler requires a defensive floor so the army isn't
@@ -496,7 +501,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const scoutCount = myUnits.filter(u => u.type === 'SCOUT').length;
     const militaryCount = myUnits.filter(u => u.type !== 'SCOUT' && u.type !== 'SETTLER' && u.type !== 'WORKER').length;
     const scoutCap = 2; // Hard cap at 2 scouts
-    if (scoutCount < scoutCap && militaryCount >= 4 && capRoom() && roster.includes('SCOUT')) {
+    if (scoutCount < scoutCap && militaryCount >= 4 && capRoom() && fullRoster.includes('SCOUT')) {
         const scoutCost = getUnitCostFor('SCOUT', factionDef);
         if (canAfford('SCOUT', res, scoutCost)) {
             const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
@@ -545,7 +550,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     cap. Keeps a gold buffer when a capture is imminent so the walk-in
     //     capture isn't starved (see step 0). Runs after ships so a small fleet
     //     is guaranteed room before the army fills the cap.
-    while (myUnits.length + trainCount() < AI_MAX_UNITS) {
+    while (myUnits.length + trainCount() < aiUnitCap) {
         if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
         const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives);
         if (!trainable) break;
@@ -571,9 +576,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 3. One economy building per turn if affordable (farms/lumbermills/mines/markets).
+    // 3. Economy buildings per turn if affordable (farms/lumbermills/mines/markets).
+    //    The build budget is shared with the military-structure builds above
+    //    (Barracks/Siege Workshop/Harbor/Walls), so a faction that just raised two
+    //    military structures would otherwise get zero economy improvements this
+    //    turn. Allow up to 3 builds/turn so economy keeps moving alongside military
+    //    construction. The engine enforces affordability per-build, so this only
+    //    spends what the treasury can cover.
     for (const t of owned) {
-        if (actions.filter(a => a.type === 'build').length >= 2) break;
+        if (actions.filter(a => a.type === 'build').length >= 3) break;
         if (!canBuildAt(t)) continue;
         const existing = buildings.get(`${t.x},${t.z}`) || [];
         const pick = pickEconomyBuilding(t, existing, res);

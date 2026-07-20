@@ -283,7 +283,10 @@ export const UNIT_XP_PER_KILL = 12;
 export const UNIT_XP_PER_LEVEL = 30;
 
 // AI settings
-export const AI_MAX_UNITS = 18;
+// Raised to 40: it is now a sanity ceiling only. The AI trains up to the
+// engine's per-city unit cap (getUnitCap: 5 + (level-1)*2 per city), capped here
+// so a huge empire doesn't bankrupt itself on upkeep chasing an unbounded cap.
+export const AI_MAX_UNITS = 40;
 
 // --- Economy ---
 export const MARKET_RATES = {

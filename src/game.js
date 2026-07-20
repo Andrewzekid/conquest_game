@@ -928,6 +928,13 @@ export class Game {
                 if (t && t.terrain === 'CITY' && t.owner !== lord.owner && (t.fortification || 0) > 0) {
                     reach.delete(key);
                 }
+                // Lords/kings are land units — they cannot walk on water, and
+                // rivers are only passable where a bridge has been built. (Same
+                // rule path.js applies to land units.) Without this, a player
+                // could click a water tile and teleport a lord across the sea.
+                if (t && (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge))) {
+                    reach.delete(key);
+                }
             }
             this.gameState.moveTargets = reach;
         } else {
@@ -964,11 +971,15 @@ export class Game {
     }
 
     moveLord(lord, x, z) {
+        const destTile = this.tiles.get(`${x},${z}`);
+        // Land units only: never let a lord/king step onto water or an unbridged
+        // river, even if a stale move-target set slipped through.
+        if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) {
+            return;
+        }
         lord.x = x;
         lord.z = z;
         lord.hasMovedThisTurn = true;
-
-        const destTile = this.tiles.get(`${x},${z}`);
         const pool = this.gameState.resources[lord.owner];
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner &&
             (canCaptureTile(lord.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
