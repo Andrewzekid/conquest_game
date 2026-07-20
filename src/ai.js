@@ -237,15 +237,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
     // 0ab. Engineer bridges. Rivers are impassable without a bridge, so an
     //      engineer adjacent to an unbridged river that blocks the path to its
-    //      objective (nearest at-war enemy city) builds a bridge now — BEFORE
-    //      the unit-training spree drains the treasury. The cost is reserved
-    //      (subtracted from `res`) so later spending can't starve it. This is
-    //      the AI's only way across rivers; without it engineers stop at the
-    //      bank and armies never reach enemy cities across water.
+    //      objective builds a bridge now — BEFORE the unit-training spree drains
+    //      the treasury. The cost is reserved (subtracted from `res`) so later
+    //      spending can't starve it. This is the AI's only way across rivers;
+    //      without it engineers stop at the bank and armies never reach enemy
+    //      cities across water. At war the objective is an enemy city; at peace
+    //      a settler in the field makes bridging serve expansion too.
+    const hasSettler = myUnits.some(u => u.type === 'SETTLER');
     for (const unit of myUnits) {
         if (unit.type !== 'ENGINEER' || unit.hasAttackedThisTurn) continue;
         if (!canAffordCost(res, BRIDGE_COST)) break; // out of funds — stop trying
-        const river = findBridgeTarget(unit, tiles, owner, isAtWar, atWar);
+        const river = findBridgeTarget(unit, tiles, owner, isAtWar, atWar, hasSettler);
         if (river) {
             actions.push({ type: 'buildBridge', unitId: unit.id, tileKey: `${river.x},${river.z}` });
             res = subtractCost(res, BRIDGE_COST);
@@ -438,7 +440,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     siege (Verdant, Storm) rely on engineers/towers as their ONLY siege
     //     path, so they keep a larger engineer corps at war.
     {
-        const engCap = Math.max(atWar ? (hasTrainableSiege ? 3 : 5) : 1, Math.ceil(myCityCount / 3));
+        // Engineer cap: a meaningful corps that scales with empire size and
+        // rises at war. Factions with no trainable siege rely on
+        // engineers/towers as their ONLY siege path, so they keep a larger
+        // corps. The old cap (1 at peace, 3-5 at war) left engineers a
+        // negligible fraction of a 40-unit army, so the army was almost
+        // entirely infantry and engineers never built traps/towers/bridges.
+        const engCap = Math.max(
+            atWar ? (hasTrainableSiege ? Math.max(3, Math.ceil(myCityCount / 2))
+                                       : Math.max(5, Math.ceil(myCityCount / 2)))
+                  : Math.max(2, Math.ceil(myCityCount / 2)),
+            2);
         const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
             actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
         if (engNow < engCap && capRoom()) {
@@ -449,6 +461,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     actions.push({ type: 'train', unitType: 'ENGINEER', tileKey: `${spawnTile.x},${spawnTile.z}` });
                     res = spendCost('ENGINEER', res, ec);
                 }
+            } else if (engNow < 1) {
+                // No engineers at all yet: reserve the cost so the spending
+                // spree can't keep pushing the first engineer out of reach
+                // (ENGINEER costs iron, which iron-poor factions never stock).
+                res = subtractCost(res, ec);
             }
         }
     }
@@ -771,6 +788,39 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                         moved.add(`${step.x},${step.z}`);
                         acted.add(unit.id);
                         continue;
+                    }
+                }
+            }
+            // a2b) Forward screening: even with no threatened home city, an
+            //      engineer standing on friendly soil near at-war enemies lays
+            //      a trap to screen the army's approach. This makes engineers
+            //      useful on the offensive too — not only when a home city is
+            //      under direct threat — so traps actually get built.
+            if (atWar) {
+                const here = tiles.get(`${unit.x},${unit.z}`);
+                const canSite = here && here.owner === owner &&
+                    here.terrain !== 'CITY' && here.terrain !== 'WATER' && here.terrain !== 'RIVER' &&
+                    !structures.has(`${unit.x},${unit.z}`) &&
+                    (!influence || influence.has(`${unit.x},${unit.z}`));
+                if (canSite) {
+                    let nearEnemy = 0, nearCavalry = 0;
+                    for (const o of units.values()) {
+                        if (o.owner === owner || !isAtWar(o.owner)) continue;
+                        const d = Math.abs(o.x - unit.x) + Math.abs(o.z - unit.z);
+                        if (d <= 3) {
+                            nearEnemy++;
+                            if (CAVALRY_TYPES.has(o.type)) nearCavalry++;
+                        }
+                    }
+                    if (nearEnemy > 0) {
+                        const sType = nearCavalry >= 2 ? 'SPIKES' : 'FALL_TRAP';
+                        const sCost = STRUCTURE_COST[sType] || {};
+                        if (canAffordCost(res, sCost)) {
+                            actions.push({ type: 'buildStructure', unitId: unit.id, structureType: sType });
+                            res = subtractCost(res, sCost);
+                            acted.add(unit.id);
+                            continue;
+                        }
                     }
                 }
             }
@@ -1229,11 +1279,25 @@ function findNearestEnemyCity(unit, tiles, owner, isAtWar) {
 
 /** River tile an engineer should bridge, or null. Returns an orthogonally-
  *  adjacent unbridged RIVER tile whose far side is passable land closer (by
- *  Manhattan distance) to the engineer's nearest at-war enemy city — i.e. the
- *  river is actually blocking the path forward, not a side branch. */
-function findBridgeTarget(unit, tiles, owner, isAtWar, atWar) {
-    if (!atWar) return null; // bridging is an offensive maneuver toward enemy cities
-    const objective = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+ *  Manhattan distance) to the engineer's objective — i.e. the river is actually
+ *  blocking the path forward, not a side branch.
+ *  At war the objective is the nearest at-war enemy city (offense). At peace
+ *  the objective is the nearest unowned passable tile (settler-led expansion /
+ *  exploration), gated on `allowPeaceBridge` so a faction with no settler
+ *  doesn't waste wood bridging rivers it has no reason to cross. */
+function findBridgeTarget(unit, tiles, owner, isAtWar, atWar, allowPeaceBridge) {
+    let objective = null;
+    if (atWar) objective = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+    if (!objective && allowPeaceBridge) {
+        let best = null, bestDist = Infinity;
+        for (const t of tiles.values()) {
+            if (t.owner === owner) continue;
+            if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
+            const d = manhattan(unit.x, unit.z, t.x, t.z);
+            if (d < bestDist) { bestDist = d; best = t; }
+        }
+        objective = best;
+    }
     if (!objective) return null;
     const curDist = manhattan(unit.x, unit.z, objective.x, objective.z);
     const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
@@ -1662,8 +1726,10 @@ function factionComposition(def, roster) {
 function roleDeficit(roster, counts, total, target) {
     const available = new Set();
     for (const t of roster) available.add(unitRole(t));
-    // Don't chase support units until the army has some mass.
-    if (total < 8) available.delete('support');
+    // Don't chase support units until the army has a little mass, but don't
+    // gate them behind total >= 8 either -- that starved the engineer corps
+    // (support) for most of the early game and left the army all-infantry.
+    if (total < 4) available.delete('support');
     let worstRole = 'melee', worstDeficit = -Infinity;
     for (const r of Object.keys(target)) {
         if (!available.has(r)) continue;
