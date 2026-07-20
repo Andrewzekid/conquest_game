@@ -123,10 +123,10 @@ export const UNIT_COST = {
     SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
-    GALLEY:      { gold: 55, food: 10, wood: 30, iron: 0,  production: 16 },
-    TRANSPORT:   { gold: 45, food: 5,  wood: 25, iron: 0,  production: 20 },
-    FRIGATE:     { gold: 80, food: 15, wood: 40, iron: 10, production: 24 },
-    GALLEON:     { gold: 120, food: 20, wood: 50, iron: 20, production: 30 }
+    GALLEY:      { gold: 70, food: 10, wood: 40, iron: 0,  production: 20 },
+    TRANSPORT:   { gold: 60, food: 5,  wood: 30, iron: 0,  production: 25 },
+    FRIGATE:     { gold: 100, food: 15, wood: 50, iron: 10, production: 28 },
+    GALLEON:     { gold: 150, food: 20, wood: 60, iron: 20, production: 35 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -304,7 +304,7 @@ export const BUILDING_TYPE = {
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY',
                   desc: '+10 production/turn. Units trained in this city start as veterans (Lv.2) and cost 25% less gold.' },
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
-    HARBOR:     { name: 'Harbor',     cost: { gold: 80, wood: 40, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
+    HARBOR:     { name: 'Harbor',     cost: { gold: 120, wood: 60, iron: 0 },   bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }
@@ -425,61 +425,17 @@ export const LORD_CLASSES = {
 };
 
 export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };
-export const LORD_RECRUIT_COST = { gold: 220, food: 80 };
+export const LORD_RECRUIT_COST = { gold: 300, food: 100 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
 
 // --- Diplomacy ---
 export const DIPLOMACY_STATES = {
-    NEUTRAL: 'neutral',          // default start; no attacks without formal war
-    NAP: 'non_aggression',       // no attacks, no vision, expires after N turns
-    CEASEFIRE: 'ceasefire',      // temporary peace with explicit expiry turn
     WAR: 'war',
     PEACE: 'peace',
     ALLIANCE: 'alliance',
     TRADE_PACT: 'trade_pact'
 };
-
-// --- Grievance / Tension System (Civ6-style) ---
-// Radius: capturing a neutral city within this distance of another faction's
-// city adds a grievance to that neighbor.
-export const NEUTRAL_CITY_GRUDGE_RADIUS = 8;
-// How much a single grievance decays per turn.
-export const GRIEVANCE_DECAY_PER_TURN = 1;
-// Tension above this threshold makes AI consider war.
-export const GRIEVANCE_WAR_THRESHOLD = 40;
-// Tension above this makes AI reject most treaties.
-export const GRIEVANCE_HOSTILE = 15;
-
-// --- AI Expansion (competitive settler behavior) ---
-// Minimum number of cities the AI wants before slowing settler production.
-export const AI_SETTLER_TARGET = 8; // base; scaled by map size
-// Per-city cap: AI limits settlers to (cityCount * factor + base).
-export const AI_SETTLER_CAP_FACTOR = 0.8;
-export const AI_SETTLER_CAP_BASE = 2;
-// Max settlers the AI will produce in a single turn.
-export const AI_SETTLERS_PER_TURN = 5;
-// Frontier bonus values (distance from nearest owned city).
-export const AI_FRONTIER_BONUS_CLOSE = 120;   // within 3 tiles
-export const AI_FRONTIER_BONUS_MID = 60;      // within 6 tiles
-export const AI_FRONTIER_BONUS_FAR = 20;      // beyond 6 tiles
-// Penalty for founding near a strong enemy city.
-export const AI_ENEMY_CITY_PROXIMITY_PENALTY = -60;
-// Bonus for sniping a weakly-defended enemy city (settle nearby to claim).
-export const AI_WEAK_CITY_SNIPE_BONUS = 80;
-// Power ratio below which we consider a city "weak" (garrison count / max).
-export const AI_WEAK_CITY_RATIO = 0.4;
-// Garrison count at/below which an enemy city is considered weak enough to snipe.
-export const WEAK_CITY_GARRISON_THRESHOLD = 2;
-// Global multiplier on AI settler ambition (target/cap/per-turn). >1 = more
-// aggressive expansion; data-driven so it can be tuned without touching ai.js.
-export const SETTLER_AGGRESSION = 1.0;
-// Bonus weight added when targeting a neutral (unowned) city, so the AI races
-// to grab free cities early (first-expander advantage).
-export const AI_NEUTRAL_RUSH_BONUS = 150;
-// Founding a city within this Manhattan distance of another faction's city is
-// treated as an aggressive land grab and awards the neighbor a grievance.
-export const MIN_CITY_SPACING = 6;
 
 // AI is now much more reluctant to accept peace/trade - wars are grinding and
 // breaking a treaty should be costly. The player must fight or offer significant
@@ -487,8 +443,7 @@ export const MIN_CITY_SPACING = 6;
 export const AI_PERSONALITIES = {
     AGGRESSIVE:  { warChance: 0.8,  acceptAlliance: 0.15, acceptTrade: 0.25, acceptPeace: 0.3 },
     DEFENSIVE:   { warChance: 0.3,  acceptAlliance: 0.25, acceptTrade: 0.4, acceptPeace: 0.5 },
-    ECONOMIC:    { warChance: 0.15, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 },
-    BALANCED:    { warChance: 0.5,  acceptAlliance: 0.2,  acceptTrade: 0.3,  acceptPeace: 0.4 }
+    ECONOMIC:    { warChance: 0.15, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 }
 };
 
 // Trade materials: specific resources that can be exchanged in trade pacts.
