@@ -158,12 +158,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         }
         // Reset lord per-turn flags (lords/kings can move and attack once per
         // turn, like units) and slowly regenerate their HP between battles.
+        // Kings resting inside one of their own cities recover faster.
         if (gameState.lords) {
             for (const lord of gameState.lords) {
                 lord.hasMovedThisTurn = false;
                 lord.hasAttackedThisTurn = false;
                 if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp < lord.maxHp) {
-                    lord.hp = Math.min(lord.maxHp, lord.hp + 2);
+                    const tile = gameState.tiles && gameState.tiles.get(`${lord.x},${lord.z}`);
+                    const inOwnCity = tile && tile.terrain === 'CITY' && tile.owner === lord.owner;
+                    const heal = (lord.isKing && inOwnCity) ? 5 : 2;
+                    lord.hp = Math.min(lord.maxHp, lord.hp + heal);
                 }
             }
         }
