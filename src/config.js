@@ -123,10 +123,10 @@ export const UNIT_COST = {
     SIEGE_TOWER: { gold: 70, food: 10, wood: 15, iron: 15, production: 25 },
     CATAPULT:    { gold: 120, food: 0,  wood: 15, iron: 30, production: 35 },
     TREBUCHET:   { gold: 150, food: 0,  wood: 20, iron: 40, production: 45 },
-    GALLEY:      { gold: 70, food: 10, wood: 40, iron: 0,  production: 20 },
-    TRANSPORT:   { gold: 60, food: 5,  wood: 30, iron: 0,  production: 25 },
-    FRIGATE:     { gold: 100, food: 15, wood: 50, iron: 10, production: 28 },
-    GALLEON:     { gold: 150, food: 20, wood: 60, iron: 20, production: 35 }
+    GALLEY:      { gold: 55, food: 10, wood: 30, iron: 0,  production: 16 },
+    TRANSPORT:   { gold: 45, food: 5,  wood: 25, iron: 0,  production: 20 },
+    FRIGATE:     { gold: 80, food: 15, wood: 40, iron: 10, production: 24 },
+    GALLEON:     { gold: 120, food: 20, wood: 50, iron: 20, production: 30 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -304,7 +304,7 @@ export const BUILDING_TYPE = {
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY',
                   desc: '+10 production/turn. Units trained in this city start as veterans (Lv.2) and cost 25% less gold.' },
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
-    HARBOR:     { name: 'Harbor',     cost: { gold: 120, wood: 60, iron: 0 },   bonus: { production: 5 }, terrain: 'CITY',
+    HARBOR:     { name: 'Harbor',     cost: { gold: 80, wood: 40, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Must be built in a coastal/river city (adjacent to water).' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 120, wood: 20, iron: 30 }, bonus: { production: 5 }, terrain: 'CITY',
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city.' }
@@ -425,7 +425,7 @@ export const LORD_CLASSES = {
 };
 
 export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };
-export const LORD_RECRUIT_COST = { gold: 300, food: 100 };
+export const LORD_RECRUIT_COST = { gold: 220, food: 80 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
 

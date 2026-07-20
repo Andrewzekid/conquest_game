@@ -1,6 +1,6 @@
 /** Main game orchestrator: wires all systems together. */
 import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
-         DIPLOMACY_STATES, LORD_RECRUIT_COST, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
+         DIPLOMACY_STATES, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
          SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
@@ -2692,6 +2692,44 @@ export class Game {
                 this.log(`${name}: King ${king.name} raises a ${UNIT_TYPE[g.type].name} from the dead!`);
                 break;
             }
+            case 'stampede':
+                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                this.log(`${name}: King ${king.name} calls a Stampede! +2 attack this turn.`);
+                break;
+            case 'ironwill': {
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
+                for (const t of this.tiles.values()) {
+                    if (t.terrain === 'CITY' && t.owner === faction) {
+                        t.fortification = (t.fortification || 0) + 3;
+                    }
+                }
+                this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification to all cities.`);
+                break;
+            }
+            case 'vanish':
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
+                this.log(`${name}: King ${king.name} Vanishes into shadow! +2 defense this turn.`);
+                break;
+            case 'tempest': {
+                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                let struck = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner === faction) continue;
+                    if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
+                    const close = [...this.gameState.units.values()].some(fu =>
+                        fu.owner === faction && Math.max(Math.abs(fu.x - u.x), Math.abs(fu.z - u.z)) <= 2);
+                    if (close) {
+                        u.hp = Math.max(0, (u.hp || 0) - 3);
+                        struck++;
+                    }
+                }
+                this.log(`${name}: King ${king.name} summons a Tempest! ${struck} enemy unit(s) struck for 3 damage.`);
+                break;
+            }
+            case 'wintersgrasp':
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
+                this.log(`${name}: King ${king.name} casts Winter's Grasp! +2 defense this turn.`);
+                break;
         }
         this.gameState.kingCooldowns[faction] = cd;
         if (faction === PLAYER_FACTION) {
@@ -3190,29 +3228,69 @@ export class Game {
     }
 
     /** Move AI lords/kings outward so they lead expansion and press the map
-     *  instead of sitting on the capital. Each lord steps toward the nearest
-     *  at-war enemy city; if none, toward the nearest unowned land tile (so the
-     *  empire expands into unsettled land); if none, toward the nearest enemy
-     *  tile. Lords share tiles with their own army, so own units never block. */
+     *  instead of sitting on the capital. Lords move before units so the army
+     *  can follow their lead, and their target depends on class and the position
+     *  of their army. Lords share tiles with their own army, so own units never
+     *  block. */
     _aiMoveLords(faction) {
         const lords = (this.gameState.lords || []).filter(l =>
             l.owner === faction && !l.hasMovedThisTurn);
         if (!lords.length) return;
         const atWar = (o) => canAttack(this.gameState.diplomacy, faction, o);
         const pool = this.gameState.resources[faction];
+        const ownCities = [...this.tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === faction);
 
-        const pickTarget = (lord) => {
+        const armyCentroid = (lord) => {
+            const army = (lord.army || []).map(id => this.gameState.units.get(id)).filter(Boolean);
+            if (!army.length) return { x: lord.x, z: lord.z };
+            const sx = army.reduce((a, u) => a + u.x, 0);
+            const sz = army.reduce((a, u) => a + u.z, 0);
+            return { x: Math.round(sx / army.length), z: Math.round(sz / army.length) };
+        };
+
+        const nearestEnemyCity = (ref) => {
             let target = null, best = Infinity;
-            // 1) Nearest at-war enemy city.
             for (const t of this.tiles.values()) {
                 if (t.terrain !== 'CITY' || !t.owner || t.owner === faction) continue;
                 if (!atWar(t.owner)) continue;
-                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
+                const d = Math.abs(t.x - ref.x) + Math.abs(t.z - ref.z);
                 if (d < best) { best = d; target = t; }
             }
-            if (target) return target;
-            // 2) Nearest unowned, settleable land tile (expansion).
-            best = Infinity;
+            return target;
+        };
+
+        const nearestThreatenedOwnCity = (lord) => {
+            let target = null, best = Infinity;
+            for (const c of ownCities) {
+                let threatened = false;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner === faction) continue;
+                    if (!atWar(u.owner)) continue;
+                    if (Math.abs(u.x - c.x) + Math.abs(u.z - c.z) <= 6) { threatened = true; break; }
+                }
+                if (!threatened) continue;
+                const d = Math.abs(c.x - lord.x) + Math.abs(c.z - lord.z);
+                if (d < best) { best = d; target = c; }
+            }
+            return target;
+        };
+
+        const pickTarget = (lord) => {
+            const cls = (lord.class && LORD_CLASSES[lord.class]) || {};
+            const bonus = cls.bonus || {};
+            const centroid = armyCentroid(lord);
+            // Guardian lords protect threatened cities; otherwise they hold near the capital.
+            if (lord.class === 'GUARDIAN') {
+                const threatened = nearestThreatenedOwnCity(lord);
+                if (threatened) return threatened;
+                const capital = ownCities.find(t => t.isCapital) || ownCities[0];
+                if (capital) return capital;
+            }
+            // Warlord / Conqueror / Grand Commander push toward the enemy.
+            const enemyCity = nearestEnemyCity(centroid) || nearestEnemyCity(lord);
+            if (enemyCity) return enemyCity;
+            // Fallback: nearest unowned land tile.
+            let best = Infinity, target = null;
             for (const t of this.tiles.values()) {
                 if (t.owner) continue;
                 if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
@@ -3220,8 +3298,7 @@ export class Game {
                 if (d < best) { best = d; target = t; }
             }
             if (target) return target;
-            // 3) Nearest enemy-owned tile (probe the frontier).
-            best = Infinity;
+            // Last resort: nearest enemy-owned tile.
             for (const t of this.tiles.values()) {
                 if (!t.owner || t.owner === faction) continue;
                 const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
@@ -3251,10 +3328,10 @@ export class Game {
         }
     }
 
-    /** Move an AI king. Kings stay safe: they retreat from immediate threats,
-     *  only join offensives when the army is large enough, and avoid camping
-     *  forever outside an enemy city they cannot take. They also capture
-     *  breached/unclaimed cities when the opportunity is clear. */
+    /** Move an AI king. The king is a powerful early-game combatant and should
+     *  be used aggressively: he intercepts enemy kings that harass friendly
+     *  territory, anchors to the main conquest group, supports siege attacks on
+     *  enemy cities, and retreats only when locally outmatched. */
     _aiMoveKing(lord, faction, atWar, pool) {
         const factionName = this.factionColors[faction] ? this.factionColors[faction].name : faction;
 
@@ -3272,16 +3349,25 @@ export class Game {
         };
 
         const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
-        const nearestEnemyDist = () => {
-            let best = Infinity;
-            for (const u of enemyUnits) {
-                const d = Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z));
-                if (d < best) best = d;
+        const enemyLords = this.gameState.lords.filter(l => l.owner !== faction && atWar(l.owner));
+
+        // Local power within Chebyshev radius (units + lords).
+        const localPower = (x, z, radius, friendly) => {
+            let power = 0;
+            for (const u of this.gameState.units.values()) {
+                if ((u.owner === faction) !== friendly) continue;
+                if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
+                power += (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0);
             }
-            return best;
+            for (const l of this.gameState.lords) {
+                if ((l.owner === faction) !== friendly) continue;
+                if (Math.max(Math.abs(l.x - x), Math.abs(l.z - z)) > radius) continue;
+                power += (l.hp || 1) + lordAttack(l);
+            }
+            return power;
         };
-        const friendlyNearKing = [...this.gameState.units.values()].filter(u =>
-            u.owner === faction && Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) <= 2).length;
+        const friendLocal = localPower(lord.x, lord.z, 3, true);
+        const foeLocal = localPower(lord.x, lord.z, 3, false);
 
         // 1) Capture a breached/unclaimed city that is within reach and empty.
         for (const t of this.tiles.values()) {
@@ -3295,15 +3381,54 @@ export class Game {
             return;
         }
 
-        // 2) Threatened by nearby enemies with little support → retreat to the
-        //    nearest own city immediately.
-        const threatDist = nearestEnemyDist();
-        if (threatDist <= 3 && friendlyNearKing < 2) {
+        // 2) Retreat when locally outmatched (power-ratio based, not a fixed count).
+        if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
 
-        // 3) Anti-camp: if the king is stuck beside an enemy city it cannot take,
+        // 3) Early-game harassment response: an enemy king is pressing our territory.
+        //    If our king can win locally, move to stop them instead of turtling.
+        const earlyGame = military.length < 8;
+        if (earlyGame && atWar) {
+            let harasser = null, bestD = Infinity;
+            for (const ek of enemyLords) {
+                if (!ek.isKing) continue;
+                const nearCity = ownCities.some(c => Math.abs(ek.x - c.x) + Math.abs(ek.z - c.z) <= 8);
+                if (!nearCity) continue;
+                const d = Math.abs(ek.x - lord.x) + Math.abs(ek.z - lord.z);
+                if (d < bestD) { bestD = d; harasser = ek; }
+            }
+            if (harasser && friendLocal > foeLocal * 0.8) {
+                this._aiStepLord(lord, harasser.x, harasser.z, faction, pool, factionName);
+                return;
+            }
+        }
+
+        // 4) Anchor to the main conquest group or military centroid once we have
+        //    a modest force (3+ military units). This gets the king into fights.
+        if (military.length >= 3) {
+            let anchor = null;
+            let bestArmy = null, bestSize = 1;
+            for (const l of this.gameState.lords) {
+                if (l.owner !== faction || l.isKing) continue;
+                const size = (l.army || []).length;
+                if (size >= 2 && size > bestSize) { bestSize = size; bestArmy = l; }
+            }
+            if (bestArmy) {
+                anchor = bestArmy;
+            } else {
+                let sx = 0, sz = 0;
+                for (const u of military) { sx += u.x; sz += u.z; }
+                anchor = { x: Math.round(sx / military.length), z: Math.round(sz / military.length) };
+            }
+            if (anchor && Math.max(Math.abs(lord.x - anchor.x), Math.abs(lord.z - anchor.z)) > 2) {
+                this._aiStepLord(lord, anchor.x, anchor.z, faction, pool, factionName);
+                return;
+            }
+        }
+
+        // 5) Anti-camp: if the king is stuck beside an enemy city it cannot take,
         //    count turns and move away before it creates a stalemate.
         const adjacentEnemyCity = [...this.tiles.values()].find(t =>
             t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
@@ -3322,34 +3447,7 @@ export class Game {
             lord.campTurns = 0;
         }
 
-        // 4) Only move the king out with a large army; otherwise keep him safe for
-        //    "other missions" (defense / joining the stack once it grows).
-        const armyLargeEnough = military.length >= 6;
-        let anchor = null;
-        if (armyLargeEnough) {
-            let bestArmy = null, bestSize = 1;
-            for (const l of this.gameState.lords) {
-                if (l.owner !== faction || l.isKing) continue;
-                const size = (l.army || []).length;
-                if (size >= 2 && size > bestSize) { bestSize = size; bestArmy = l; }
-            }
-            if (bestArmy) {
-                anchor = bestArmy;
-            } else if (military.length >= 4) {
-                let sx = 0, sz = 0;
-                for (const u of military) { sx += u.x; sz += u.z; }
-                anchor = { x: Math.round(sx / military.length), z: Math.round(sz / military.length) };
-            }
-        }
-
-        if (anchor) {
-            if (Math.max(Math.abs(lord.x - anchor.x), Math.abs(lord.z - anchor.z)) > 2) {
-                this._aiStepLord(lord, anchor.x, anchor.z, faction, pool, factionName);
-                return;
-            }
-        }
-
-        // 5) No objective / small army: stay within a few tiles of the nearest
+        // 6) No objective / tiny army: stay within a few tiles of the nearest
         //    own city so the king is available to defend.
         const home = nearestOwnCity();
         if (home && Math.max(Math.abs(lord.x - home.x), Math.abs(lord.z - home.z)) > 3) {
@@ -3385,29 +3483,34 @@ export class Game {
         lord.hasMovedThisTurn = true;
     }
 
-    /** An AI lord/king attacks an adjacent at-war enemy. Prefers the lowest-HP
-     *  enemy unit (most likely to kill); falls back to an exposed enemy lord.
+    /** An AI lord/king attacks an adjacent at-war enemy. Prioritizes exposed
+     *  enemy lords/kings, then vulnerable support units, then the weakest unit.
      *  Reuses the player's handleLordAttack so logging/cleanup are consistent. */
     _aiLordAttack(faction) {
         for (const lord of (this.gameState.lords || [])) {
             if (lord.owner !== faction || lord.hasAttackedThisTurn) continue;
-            let best = null, bestHp = Infinity;
+            let best = null, bestScore = -Infinity;
+            // Exposed enemy lords/kings are the highest-value targets.
+            for (const other of this.gameState.lords) {
+                if (other === lord || other.owner === faction) continue;
+                if (!canAttack(this.gameState.diplomacy, faction, other.owner)) continue;
+                if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
+                const guarded = [...this.gameState.units.values()]
+                    .some(u => u.owner === other.owner && u.x === other.x && u.z === other.z);
+                if (guarded) continue;
+                let score = 300 - (other.hp || 0);
+                if (other.isKing) score += 200;
+                if (score > bestScore) { bestScore = score; best = other; }
+            }
+            // Adjacent enemy units.
             for (const u of this.gameState.units.values()) {
                 if (u.owner === faction) continue;
                 if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
                 if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) > 1) continue;
-                if ((u.hp || 0) < bestHp) { bestHp = u.hp || 0; best = u; }
-            }
-            if (!best) {
-                for (const other of this.gameState.lords) {
-                    if (other === lord || other.owner === faction) continue;
-                    if (!canAttack(this.gameState.diplomacy, faction, other.owner)) continue;
-                    if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
-                    const guarded = [...this.gameState.units.values()]
-                        .some(u => u.owner === other.owner && u.x === other.x && u.z === other.z);
-                    if (guarded) continue;
-                    best = other; break;
-                }
+                let score = 100 - (u.hp || 0);
+                if (u.type === 'SETTLER' || u.type === 'WORKER' || u.type === 'SCOUT') score += 40;
+                else if (['ARCHER', 'LONGBOWMAN', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'MEDIC'].includes(u.type)) score += 20;
+                if (score > bestScore) { bestScore = score; best = u; }
             }
             if (best) this.handleLordAttack(lord, best);
         }
@@ -3431,6 +3534,46 @@ export class Game {
                 break;
             }
         }
+    }
+
+    /** Decide whether this AI faction should activate its king ability this turn.
+     *  Uses deterministic heuristics instead of random chance: offensive abilities
+     *  fire when pushing a city or outnumbered, defensive abilities fire when the
+     *  kingdom is threatened. */
+    _aiShouldActivateKing(faction, def) {
+        const king = this.gameState.lords.find(l => l.owner === faction && l.isKing);
+        if (!king || !king.active) return false;
+        const id = king.active.id;
+        const atWar = (o) => canAttack(this.gameState.diplomacy, faction, o);
+        const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
+        const ownCities = getOwnedCities(this.tiles, faction);
+        const threatened = ownCities.some(c => enemyUnits.some(u => Math.abs(u.x - c.x) + Math.abs(u.z - c.z) <= 5));
+        const enemyNearKing = enemyUnits.some(u => Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 3);
+        const enemyCityNear = [...this.tiles.values()].some(t =>
+            t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
+            Math.abs(t.x - king.x) + Math.abs(t.z - king.z) <= 8);
+        const res = this.gameState.resources[faction];
+
+        switch (id) {
+            case 'bloodlust':
+            case 'stampede':
+                return enemyCityNear || enemyUnits.length >= 3;
+            case 'bulwark':
+            case 'ironwill':
+            case 'wintersgrasp':
+            case 'vanish':
+                return threatened || enemyNearKing;
+            case 'tempest':
+                return enemyUnits.some(u => [...this.gameState.units.values()].some(fu =>
+                    fu.owner === faction && Math.max(Math.abs(fu.x - u.x), Math.abs(fu.z - u.z)) <= 2));
+            case 'harvest':
+                return (res.gold || 0) < 60 || (res.food || 0) < 50;
+            case 'raise':
+                return this.gameState.graveyard.some(g => g.owner === faction);
+            case 'scry':
+                return false; // AI already has full map knowledge; don't pollute player fog
+        }
+        return false;
     }
 
     runAITurn(faction) {
@@ -3466,8 +3609,8 @@ export class Game {
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy,
             this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures);
 
-        // AI king: activate when off cooldown (simple heuristic).
-        if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && Math.random() < 0.5) {
+        // AI king: activate when off cooldown and a heuristic trigger is met.
+        if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && this._aiShouldActivateKing(faction, def)) {
             this.activateKing(faction);
         }
 

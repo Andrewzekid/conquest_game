@@ -3,7 +3,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
          SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
          GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_VULN_TYPES,
-         EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST,
+         EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST, LORD_CLASSES,
          AI_SETTLER_TARGET, AI_SETTLER_CAP_FACTOR, AI_SETTLER_CAP_BASE, AI_SETTLERS_PER_TURN,
          AI_FRONTIER_BONUS_CLOSE, AI_FRONTIER_BONUS_MID, AI_FRONTIER_BONUS_FAR,
           AI_ENEMY_CITY_PROXIMITY_PENALTY, AI_WEAK_CITY_SNIPE_BONUS, AI_WEAK_CITY_RATIO,
@@ -15,7 +15,7 @@ import { sellAtMarket } from './economy.js';
 import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
-import { findCommandingLord, assignGovernance } from './lords.js';
+import { findCommandingLord, assignGovernance, canCommand, assignArmy } from './lords.js';
 
 /**
  * Compute a list of AI actions for one faction this turn.
@@ -62,6 +62,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const isAtWar = (other) => !diploState || canAttack(diploState, owner, other);
     const enemies = atWarFactions(diploState, owner);
     const atWar = enemies.length > 0;
+    const activeObjectives = detectActiveObjectives(units, tiles, owner, isAtWar);
 
     const canBuildAt = (t) => !influence || influence.has(`${t.x},${t.z}`);
     const owned = [...tiles.values()].filter(t => t.owner === owner);
@@ -81,7 +82,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const firstCity = owned.find(t => t.terrain === 'CITY');
     const homeMass = firstCity ? land.idOf.get(`${firstCity.x},${firstCity.z}`) : null;
     const homeMassSize = homeMass != null ? (land.sizes.get(homeMass) || 0) : 9999;
-    const isIslandFaction = homeMassSize < 30;
+    const totalLandTiles = [...land.sizes.values()].reduce((a, b) => a + b, 0);
+    const isIslandFaction = homeMassSize < 30 || (totalLandTiles > 0 && homeMassSize / totalLandTiles < 0.10);
 
     // 0. CAPTURE FIRST. Any unit already adjacent to a breached (fortification 0)
     //    capturable city takes it NOW — before gold is spent on training or
@@ -138,17 +140,47 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         res = subtractCost(res, LORD_RECRUIT_COST);
     }
 
-    // Governor assignment: lords with ADMINISTRATOR ability or no combat bonuses
-    // should govern the capital (best economic boost). Lords already governing
-    // are kept in place.
+    // Lord assignment: idle non-king lords first try to pick up nearby idle
+    // military units so they lead an army; only Administrator-style lords with
+    // no available units govern the capital.
     const lordsList = (lords || []).filter(l => l.owner === owner);
     const capital = owned.find(t => t.terrain === 'CITY' && t.isCapital);
     const bestCity = capital || owned.find(t => t.terrain === 'CITY' && t.cityLevel > 1) || owned.find(t => t.terrain === 'CITY');
     for (const lord of lordsList) {
         if (lord.isKing || lord.governingCity) continue; // already governing or is king
         if (!lord.army || lord.army.length === 0) {
-            // Lords with no army are perfect governors
-            if (bestCity) assignGovernance(lord, `${bestCity.x},${bestCity.z}`);
+            // Try to build an army from nearby idle military units.
+            const nearby = myUnits.filter(u =>
+                u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u) &&
+                !u.lordId && manhattan(u.x, u.z, lord.x, lord.z) <= 6);
+            nearby.sort((a, b) => manhattan(a.x, a.z, lord.x, lord.z) - manhattan(b.x, b.z, lord.x, lord.z));
+            for (const u of nearby) {
+                if (!canCommand(lord)) break;
+                assignArmy(lord, u.id);
+                u.lordId = lord.id;
+            }
+            // Only govern if this lord has no combat aptitude and no army.
+            if ((!lord.army || lord.army.length === 0) && bestCity) {
+                const cls = LORD_CLASSES[lord.class] || {};
+                const bonus = cls.bonus || {};
+                if ((bonus.attack || 0) === 0 && (bonus.defense || 0) === 0 && (bonus.siege || 0) === 0) {
+                    assignGovernance(lord, `${bestCity.x},${bestCity.z}`);
+                }
+            }
+        }
+    }
+
+    // 0h. Island factions: build a Harbor in the coastal capital ASAP. Ships are
+    //     the only way off a small landmass, so this takes priority over Barracks.
+    if (isIslandFaction && !atWar) {
+        const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+        if (!hasHarbor) {
+            const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
+                !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
+            if (coastal && canAffordBuilding('HARBOR', res)) {
+                actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
+                res = payBuilding('HARBOR', res);
+            }
         }
     }
 
@@ -213,8 +245,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
-    // Composition-aware siege cap: aim for ~15% siege in the total army.
-    const siegeCap = Math.max(2, Math.round(AI_MAX_UNITS * 0.15));
+    // Composition-aware siege cap: aim for ~15% siege normally, ~28% when
+    // actively besieging an enemy city.
+    const siegeCap = activeObjectives.siege
+        ? Math.max(3, Math.round(AI_MAX_UNITS * 0.28))
+        : Math.max(2, Math.round(AI_MAX_UNITS * 0.15));
     if (siegeOptions.length && siegeCount < siegeCap) {
         // When siege workshop exists, prioritize artillery (CATAPULT/TREBUCHET)
         // over basic siege units for their AOE capabilities.
@@ -321,12 +356,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 2b. SCOUT TRAINING. Train a small number of scouts (1-2 max) for exploration.
-    //     Only train scouts if we already have some military presence (3+ units).
+    //     Only train scouts if we already have a solid military presence (4+ units).
     //     This prevents overproduction of scouts at the expense of army.
     const scoutCount = myUnits.filter(u => u.type === 'SCOUT').length;
     const militaryCount = myUnits.filter(u => u.type !== 'SCOUT' && u.type !== 'SETTLER' && u.type !== 'WORKER').length;
     const scoutCap = 2; // Hard cap at 2 scouts
-    if (scoutCount < scoutCap && militaryCount >= 3 && capRoom() && roster.includes('SCOUT')) {
+    if (scoutCount < scoutCap && militaryCount >= 4 && capRoom() && roster.includes('SCOUT')) {
         const scoutCost = getUnitCostFor('SCOUT', factionDef);
         if (canAfford('SCOUT', res, scoutCost)) {
             const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
@@ -342,7 +377,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     isn't starved (see step 0).
     while (myUnits.length + trainCount() < AI_MAX_UNITS) {
         if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
-        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner);
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
@@ -359,11 +394,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
-            const navalCap = isIslandFaction ? 4 : 2;
+            const navalCap = isIslandFaction ? 6 : 2;
             if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
-                const hasTransport = myUnits.some(u => u.type === 'TRANSPORT') ||
-                    actions.some(a => a.type === 'train' && a.unitType === 'TRANSPORT');
-                const pick = (isIslandFaction && !hasTransport) ? 'TRANSPORT' : 'GALLEY';
+                const transportCount = myUnits.filter(u => u.type === 'TRANSPORT').length +
+                    actions.filter(a => a.type === 'train' && a.unitType === 'TRANSPORT').length;
+                const needsMoreTransports = isIslandFaction && transportCount < 2;
+                let pick = 'GALLEY';
+                if (isIslandFaction && transportCount === 0) pick = 'TRANSPORT';
+                else if (needsMoreTransports && Math.random() < 0.5) pick = 'TRANSPORT';
                 const pc = getUnitCostFor(pick, factionDef);
                 if (canAfford(pick, res, pc)) {
                     actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
@@ -447,7 +485,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 continue;
             }
             const myMass = land.idOf.get(`${unit.x},${unit.z}`);
-            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units);
+            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units, factionDef, res);
             if (spot) {
                 // Settler escort: if a non-settler military unit is within 5
                 // tiles and idle, make it follow the settler toward the spot.
@@ -1039,9 +1077,30 @@ function canFoundOn(tile, owner) {
     return true;
 }
 
+/** Compute per-terrain settlement weights based on what the faction actually
+ *  needs: cavalry/artillery/siege rosters crave iron, archer rosters want wood,
+ *  everyone wants food/gold. Low stockpiles amplify the matching terrain. */
+function resourceNeedWeights(factionDef, resources) {
+    const w = { PLAINS: 1, FOREST: 1, HILLS: 1, MOUNTAIN: 1, RIVER: 1, DESERT: 1, MARSH: 1, TUNDRA: 1, CITY: 1 };
+    if (!factionDef) return w;
+    const roster = factionDef.roster || [];
+    const needsIron = roster.some(t => ['CAVALRY', 'CATAPHRACT', 'ARTILLERY', 'SIEGE', 'CATAPULT', 'TREBUCHET', 'PIKEMAN', 'CHARIOT'].includes(t));
+    const needsWood = roster.some(t => ['ARCHER', 'LONGBOWMAN', 'SIEGE_TOWER', 'CATAPULT', 'TREBUCHET', 'CHARIOT'].includes(t));
+    const res = resources || {};
+    if (needsIron || (res.iron || 0) < 30) { w.MOUNTAIN += 1.5; w.HILLS += 1.0; }
+    if (needsWood || (res.wood || 0) < 40) { w.FOREST += 1.5; }
+    if ((res.food || 0) < 50) { w.PLAINS += 1.0; w.RIVER += 1.0; }
+    if ((res.gold || 0) < 60) { w.DESERT += 0.8; w.MOUNTAIN += 0.5; }
+    // Factions with lots of cavalry want open land + iron; archer factions want forests.
+    if (factionDef.id === 'golden' || factionDef.id === 'crimson') { w.PLAINS += 0.5; w.MOUNTAIN += 0.5; }
+    if (factionDef.id === 'shadow' || factionDef.id === 'verdant') { w.FOREST += 0.5; }
+    return w;
+}
+
 /** Nearest unowned land tile a settler can head toward to found a city.
  *  Scores candidate tiles by:
- *  - Resource density (food, wood, iron, gold) in surrounding area
+ *  - Resource density (food, wood, iron, gold) in surrounding area, weighted
+ *    by what the faction's roster and economy actually need
  *  - Natural wonders (huge bonus)
  *  - Frontier bonus: strongly prefers tiles FAR from existing friendly cities
  *    to encourage expansion into different regions
@@ -1049,7 +1108,7 @@ function canFoundOn(tile, owner) {
  *  - Safety (fewer nearby enemies is better)
  *  This makes the AI prioritize settling in resource-rich frontier areas,
  *  spreading into different map regions instead of clustering near home. */
-function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null) {
+function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null, factionDef = null, resources = null) {
     // Find the nearest friendly city distance for frontier scoring
     let nearestFriendlyCityDist = Infinity;
     for (const t of tiles.values()) {
@@ -1077,6 +1136,7 @@ function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = n
         let nearestEnemyCityDist = Infinity;
         let nearestEnemyCityGarrison = 0;
         let nearestEnemyCityMaxHP = 0;
+        const needWeights = resourceNeedWeights(factionDef, resources);
         
         for (let dx = -5; dx <= 5; dx++) {
             for (let dz = -5; dz <= 5; dz++) {
@@ -1116,16 +1176,17 @@ function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = n
                 // Resource scoring (only for tiles in influence range)
                 if (Math.abs(dx) <= 2 && Math.abs(dz) <= 2) {
                     const terrain = nt.terrain;
-                    if (terrain === 'PLAINS') resourceScore += 3;
-                    else if (terrain === 'FOREST') resourceScore += 4;
-                    else if (terrain === 'MOUNTAIN') resourceScore += 5;
-                    else if (terrain === 'HILLS') resourceScore += 3;
-                    else if (terrain === 'DESERT') resourceScore += 2;
-                    else if (terrain === 'MARSH') resourceScore += 2;
-                    else if (terrain === 'TUNDRA') resourceScore += 2;
-                    else if (terrain === 'RIVER') resourceScore += 3;
-                    else if (terrain === 'CITY') resourceScore += 8;
-                    
+                    const weight = needWeights[terrain] || 1;
+                    if (terrain === 'PLAINS') resourceScore += 3 * weight;
+                    else if (terrain === 'FOREST') resourceScore += 4 * weight;
+                    else if (terrain === 'MOUNTAIN') resourceScore += 5 * weight;
+                    else if (terrain === 'HILLS') resourceScore += 3 * weight;
+                    else if (terrain === 'DESERT') resourceScore += 2 * weight;
+                    else if (terrain === 'MARSH') resourceScore += 2 * weight;
+                    else if (terrain === 'TUNDRA') resourceScore += 2 * weight;
+                    else if (terrain === 'RIVER') resourceScore += 3 * weight;
+                    else if (terrain === 'CITY') resourceScore += 8 * weight;
+
                     if (nt.wonder) {
                         hasWonder = true;
                         resourceScore += 50;
@@ -1266,6 +1327,47 @@ function unitRole(type) {
     return 'other';
 }
 
+/** Detect what the faction is currently trying to do so training can match the
+ *  immediate need. Returns { siege, raid, defensive }. */
+function detectActiveObjectives(units, tiles, owner, isAtWar) {
+    const out = { siege: false, raid: false, defensive: false };
+    if (!isAtWar) return out;
+    const ownCities = [...tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === owner);
+    const enemyMil = [...units.values()].filter(u => u.owner !== owner && isAtWar(u.owner) &&
+        !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type));
+    // Siege: an at-war fortified enemy city is close to our territory or units.
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+        if (!isAtWar(t.owner)) continue;
+        if ((t.fortification || 0) <= 0) continue;
+        const cityDists = ownCities.map(c => manhattan(c.x, c.z, t.x, t.z));
+        const unitDists = enemyMil.map(u => manhattan(u.x, u.z, t.x, t.z));
+        const cityDist = cityDists.length ? Math.min(...cityDists) : Infinity;
+        const unitDist = unitDists.length ? Math.min(...unitDists) : Infinity;
+        if (cityDist <= 12 || unitDist <= 10) { out.siege = true; break; }
+    }
+    // Defensive: enemy military units are near an own city.
+    for (const c of ownCities) {
+        for (const u of enemyMil) {
+            if (manhattan(c.x, c.z, u.x, u.z) <= 6) { out.defensive = true; break; }
+        }
+        if (out.defensive) break;
+    }
+    // Raid: exposed enemy units in the open (not adjacent to an enemy city).
+    if (!out.defensive && !out.siege) {
+        for (const u of enemyMil) {
+            let nearCity = false;
+            for (const t of tiles.values()) {
+                if (t.terrain === 'CITY' && t.owner === u.owner && manhattan(t.x, t.z, u.x, u.z) <= 2) {
+                    nearCity = true; break;
+                }
+            }
+            if (!nearCity) { out.raid = true; break; }
+        }
+    }
+    return out;
+}
+
 function countByRole(units, actions, owner) {
     const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0, naval: 0 };
     for (const u of units) {
@@ -1339,10 +1441,30 @@ function roleDeficit(roster, counts, total, target) {
  *  then fills the biggest role deficit. Falls back to the strongest affordable
  *  *combat* unit (never SCOUT — scouts are exploration units capped at 2 by the
  *  dedicated scout block, so they don't crowd out the army). */
-function findAffordableUnit(resources, roster, factionDef, units, actions, owner) {
+function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    const target = factionComposition(factionDef, roster);
+    let target = factionComposition(factionDef, roster);
+    // Objective-driven composition tweaks.
+    if (objective) {
+        target = { ...target };
+        if (objective.siege) {
+            target.siege = Math.min(0.55, target.siege + 0.20);
+            target.cavalry = Math.max(0, target.cavalry - 0.05);
+            target.ranged = Math.max(0, target.ranged - 0.05);
+        } else if (objective.raid) {
+            target.cavalry = Math.min(0.50, target.cavalry + 0.20);
+            target.siege = Math.max(0, target.siege - 0.10);
+        } else if (objective.defensive) {
+            target.melee = Math.min(0.55, target.melee + 0.15);
+            target.ranged = Math.min(0.35, target.ranged + 0.10);
+            target.cavalry = Math.max(0, target.cavalry - 0.15);
+            target.siege = Math.max(0, target.siege - 0.10);
+        }
+        // Renormalize.
+        const sum = Object.values(target).reduce((a, b) => a + b, 0);
+        if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
+    }
     // Defense floor: first few units must be melee so expansion/siege don't
     // strip the army bare.
     if (total < 4 && roster.some(t => MELEE_TYPES.has(t))) {
@@ -1356,7 +1478,7 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
         if (role === 'melee') order.push('INFANTRY', 'PIKEMAN');
         else if (role === 'ranged') order.push('ARCHER', 'LONGBOWMAN');
         else if (role === 'cavalry') order.push('CATAPHRACT', 'CAVALRY');
-        else if (role === 'siege') order.push('SIEGE', 'ARTILLERY');
+        else if (role === 'siege') order.push('SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET');
         else if (role === 'support') order.push('ENGINEER', 'MEDIC');
         else if (role === 'naval') order.push('GALLEON', 'FRIGATE', 'GALLEY', 'TRANSPORT');
         for (const t of order) {
@@ -1365,8 +1487,17 @@ function findAffordableUnit(resources, roster, factionDef, units, actions, owner
     }
     // Fallback: strongest affordable combat unit (no SCOUT — prevents the
     // Shadow Court "20 spies" spam where a poor faction trains nothing but the
-    // cheapest unit).
-    const order = ['SIEGE', 'ARTILLERY', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+    // cheapest unit). Order depends on current objective.
+    let order;
+    if (objective && objective.siege) {
+        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+    } else if (objective && objective.raid) {
+        order = ['CATAPHRACT', 'CAVALRY', 'CHARIOT', 'SIEGE', 'ARTILLERY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+    } else if (objective && objective.defensive) {
+        order = ['PIKEMAN', 'INFANTRY', 'ARCHER', 'LONGBOWMAN', 'SIEGE', 'ARTILLERY', 'CATAPHRACT', 'CAVALRY'];
+    } else {
+        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CATAPHRACT', 'CAVALRY', 'PIKEMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+    }
     for (const t of order) {
         if (!roster.includes(t)) continue;
         if (canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
