@@ -2342,22 +2342,6 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     members.filter(u => isScreener(u)).forEach(advance);
     members.filter(u => !isScreener(u)).forEach(advance);
 
-    // 7.5) Lords follow their army's centroid if they haven't acted yet.
-    //      Prevents lords from being left behind when all their army units move.
-    for (const u of members) {
-        if (acted.has(u.id) || u.hasMovedThisTurn) continue;
-        const l = (lords || []).find(l => l.owner === owner && l.id === u.id);
-        if (!l) continue;
-        const centroid = groupCentroid(group);
-        if (manhattan(l.x, l.z, centroid.x, centroid.z) <= 2) continue; // already with the group
-        const step = stepToward(l, { x: centroid.x, z: centroid.z, terrain: l.terrain }, tiles, owner, units, moved, isAtWar);
-        if (step && !moved.has(`${step.x},${step.z}`)) {
-            out.push({ type: 'move', unitId: l.id, tx: step.x, tz: step.z });
-            acted.add(l.id);
-            moved.add(`${step.x},${step.z}`);
-        }
-    }
-
     return out;
 }
 
