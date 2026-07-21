@@ -17,7 +17,10 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS,
          GRIEVANCE_WAR_THRESHOLD, NEUTRAL_CITY_GRUDGE_RADIUS, MIN_CITY_SPACING,
           CITY_LEVEL_UP_COST, CITY_MAX_LEVEL,
-          MILITARY_BUILDING_LEVELS } from './config.js';
+          MILITARY_BUILDING_LEVELS, ESPIONAGE_GRIPERANCE, CITY_RAZE_GRIPERANCE,
+          WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
+          WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
+          WAR_OBJECTIVE_MIN_CITIES } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
@@ -41,6 +44,7 @@ import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
 import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
          getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
 import { initAIState, createAIState, serializeAIState, deserializeAIState, chooseVictoryTarget, reevaluateVictoryTarget } from './ai_goals.js';
+import { shouldDeclareWar } from './ai_diplomacy.js';
 import { addEvent as addEventEntry } from './eventlog.js';
 import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
 import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
@@ -1345,7 +1349,18 @@ export class Game {
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
         if (this.gameState.eliminated.has(f)) return;
         this.gameState.eliminated.add(f);
-        this.log(`${name}'s king has fallen �?${name} is eliminated!`);
+        this.log(`${name}'s king has fallen - ${name} is eliminated!`);
+        // City razing: all living factions get grievances against the killer.
+        // This models the international backlash against total conquest.
+        if (CITY_RAZE_GRIPERANCE > 0) {
+            const killer = king.attacker || null;
+            if (killer && killer !== f) {
+                for (const of2 of FACTIONS) {
+                    if (of2 === f || of2 === killer || (this.gameState.eliminated && this.gameState.eliminated.has(of2))) continue;
+                    addGrievance(this.gameState.diplomacy, of2, killer, CITY_RAZE_GRIPERANCE, 'faction eliminated');
+                }
+            }
+        } 
         // Remove the faction's remaining units and lords.
         for (const u of [...this.gameState.units.values()]) {
             if (u.owner === f) this._onUnitDeath(u);
@@ -3414,10 +3429,10 @@ export class Game {
     _getDiplomaticStrategy(personality) {
         const isSpectate = this.spectateMode;
         const strategies = {
-            AGGRESSIVE: { warThreshold: isSpectate ? 0.7 : 1.1, allyThreshold: 0.15, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: isSpectate ? 1.0 : 1.5, peaceCooldown: isSpectate ? 2 : 6 },
-            DEFENSIVE:  { warThreshold: isSpectate ? 1.0 : 1.6, allyThreshold: 0.25, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.2 : 2.0, peaceCooldown: isSpectate ? 3 : 6 },
-            ECONOMIC:   { warThreshold: isSpectate ? 1.2 : 2.0, allyThreshold: 0.35, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.5 : 2.5, peaceCooldown: isSpectate ? 3 : 6 },
-            BALANCED:   { warThreshold: isSpectate ? 0.9 : 1.3, allyThreshold: 0.2, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.1 : 1.8, peaceCooldown: isSpectate ? 2 : 6 }
+            AGGRESSIVE: { warThreshold: isSpectate ? 0.7 : 0.9, allyThreshold: 0.15, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: isSpectate ? 1.0 : 1.3, peaceCooldown: isSpectate ? 2 : 4 },
+            DEFENSIVE:  { warThreshold: isSpectate ? 1.0 : 1.3, allyThreshold: 0.25, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.2 : 1.7, peaceCooldown: isSpectate ? 3 : 5 },
+            ECONOMIC:   { warThreshold: isSpectate ? 1.2 : 1.6, allyThreshold: 0.35, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.5 : 2.0, peaceCooldown: isSpectate ? 3 : 5 },
+            BALANCED:   { warThreshold: isSpectate ? 0.9 : 1.1, allyThreshold: 0.2, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.1 : 1.5, peaceCooldown: isSpectate ? 2 : 4 }
         };
         return strategies[personality] || strategies.DEFENSIVE;
     }
@@ -3543,13 +3558,18 @@ export class Game {
             const ratio = myPower / theirPower;
             const distance = this._factionDistance(faction, other);
             let score = 0;
-            // "Attack close" �?prefer nearby targets
+            // "Attack close": prefer nearby targets. Neighbors are the most
+            // natural targets — they share borders, compete for land, and are
+            // reachable. The old values (30/15/-10) left distance as a minor
+            // factor vs power ratio (×20) and grievances (×0.3). We now
+            // heavily weight proximity so AI neighbors war far more often.
             if (strategy.preferNeighbors) {
-                if (distance <= 5) score += 30;
-                else if (distance <= 10) score += 15;
-                else score -= 10;
+                if (distance <= 4) score += 50;
+                else if (distance <= 7) score += 30;
+                else if (distance <= 12) score += 5;
+                else score -= 20;
             } else {
-                score -= distance * 0.5;
+                score -= distance * 0.8;
             }
             if (ratio < strategy.warThreshold) return { other, score: -Infinity };
             score += (ratio - 1) * 20;
@@ -3574,6 +3594,24 @@ export class Game {
                 if (targetRank.isDominant) score += 40;
                 if (targetRank.isLeading) score += 20;
             }
+            // Rivalry bonus: factions with the same personality are natural
+            // rivals (competing for the same playstyle). Also, factions that
+            // share a border and have similar power levels are geopolitical
+            // rivals. This adds a non-grievance reason to go to war.
+            const otherDef = this.factionDefs && this.factionDefs[other];
+            const otherPersonality = otherDef && otherDef.aiPersonality;
+            if (otherPersonality && otherPersonality === def.aiPersonality) {
+                score += 15; // same personality = natural rival
+            }
+            // Geopolitical rival: close, similar power, not allied
+            if (distance <= 6 && ratio >= 0.7 && ratio <= 1.4 && !isAlly) {
+                score += 10;
+            }
+            // Direct neighbor bonus: sharing a border is the strongest
+            // predictor of future conflict. A neighbor at peace is a threat;
+            // a neighbor at war is a conquest target. This makes neighbors
+            // the primary war targets regardless of other factors.
+            if (distance <= 5 && !isAlly) score += 25;
             return { other, score };
         });
         scored.sort((a, b) => b.score - a.score);
@@ -3585,7 +3623,13 @@ export class Game {
             const distance = this._factionDistance(faction, other);
             const isNeighbor = distance <= 8;
             const tension = getTension(this.gameState.diplomacy, faction, other);
-            if (!aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension, this.spectateMode)) continue;
+            // Strategic war decision: if we have a conquest goal targeting this
+            // faction and we're strong enough, declare war immediately without
+            // the random roll. This makes goal-driven wars more reliable.
+            const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+            const strategic = shouldDeclareWar(aiSt, this.gameState.diplomacy, faction, other, ratio);
+            const shouldWar = strategic.declare || aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension, this.spectateMode);
+            if (!shouldWar) continue;
             const prevState = rel.state;
             const turn = this.gameState.turn || 0;
             setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR, turn);
@@ -3969,6 +4013,12 @@ export class Game {
         }
 
         // 2) Retreat when locally outmatched (power-ratio based, not a fixed count).
+        // Also retreat if king's HP is critically low (< 40%) to preserve the king.
+        const kingHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
+        if (kingHpFrac < 0.4) {
+            const home = nearestOwnCity();
+            if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
+        }
         if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
@@ -5122,6 +5172,10 @@ export class Game {
         if (result.relationPenalty) {
             const rel = getRelation(this.gameState.diplomacy, spy.owner, targetFaction);
             rel.relationship = Math.max(-100, (rel.relationship || 0) - result.relationPenalty);
+        }
+        // Espionage grievance: detected spy actions generate grievances
+        if (result.detected && ESPIONAGE_GRIPERANCE > 0) {
+            addGrievance(this.gameState.diplomacy, targetFaction, spy.owner, ESPIONAGE_GRIPERANCE, 'espionage detected');
         }
         this.addEvent('spy', result.message);
         return result;

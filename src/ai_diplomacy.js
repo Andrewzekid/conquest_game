@@ -105,16 +105,19 @@ export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powe
         return { declare: false, reason: 'already_at_war' };
     }
 
-    // Conquest goal targeting this faction: declare if we're stronger.
-    if (topGoal && topGoal.kind === 'conquest' && topGoal.targetFaction === targetFaction) {
-        if (powerRatio >= 1.2) {
-            return { declare: true, reason: 'conquest_goal_stronger' };
+    // Conquest / war objective goals targeting this faction: declare if we're
+    // strong enough. This covers 'conquest', 'take-key-city', 'disrupt-victory',
+    // and 'resource-war' — all war-driven goal kinds.
+    const warGoalKinds = new Set(['conquest', 'take-key-city', 'disrupt-victory', 'resource-war']);
+    if (topGoal && warGoalKinds.has(topGoal.kind) && topGoal.targetFaction === targetFaction) {
+        if (powerRatio >= 1.1) {
+            return { declare: true, reason: `${topGoal.kind}_goal_stronger` };
         }
-        return { declare: false, reason: 'conquest_goal_but_weaker' };
+        return { declare: false, reason: `${topGoal.kind}_goal_but_weaker` };
     }
 
     // No conquest goal: only declare if we're much stronger and aggressive.
-    if (powerRatio >= 1.8) {
+    if (powerRatio >= 1.5) {
         const personality = aiState && aiState.personality || 'BALANCED';
         if (personality === 'AGGRESSIVE') {
             return { declare: true, reason: 'aggressive_power_advantage' };

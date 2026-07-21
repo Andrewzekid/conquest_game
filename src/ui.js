@@ -518,7 +518,7 @@ export function bindUI(gameState, callbacks) {
                 const wtile = gameState.tiles.get(`${unit.x},${unit.z}`);
                 if (wtile && wtile.owner === PLAYER_FACTION) {
                     const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
-                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.tech)
+                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.techState)
                         .filter(b => b.canBuild && b.type !== 'HARBOR' && b.type !== 'SIEGE_WORKSHOP' &&
                             b.type !== 'MARKET' && b.type !== 'BARRACKS' && b.type !== 'WALLS');
                     if (opts.length) {
@@ -743,7 +743,7 @@ export function bindUI(gameState, callbacks) {
         }
         const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
         const inInfluence = influence.has(`${tile.x},${tile.z}`);
-        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.tech);
+        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.techState);
         if (els.buildMenu) {
             els.buildMenu.innerHTML = '';
             const desc = document.createElement('div');

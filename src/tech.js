@@ -8,21 +8,21 @@
 export const TECHS = {
     // === ANCIENT ERA (free starting techs) ===
     ARCHERY: {
-        id: 'ARCHERY', name: 'Archery', era: 'ancient', cost: 40,
+        id: 'ARCHERY', name: 'Archery', era: 'ancient', cost: 25,
         prerequisites: [],
         unlocks: [{ type: 'unit', id: 'ARCHER' }, { type: 'unit', id: 'LONGBOWMAN' }],
         bonus: {},
         desc: 'Unlocks Archer and Longbowman units.'
     },
     BRONZE_WORKING: {
-        id: 'BRONZE_WORKING', name: 'Bronze Working', era: 'ancient', cost: 40,
+        id: 'BRONZE_WORKING', name: 'Bronze Working', era: 'ancient', cost: 25,
         prerequisites: [],
         unlocks: [{ type: 'unit', id: 'PIKEMAN' }, { type: 'unit', id: 'LEGIONNAIRE' }],
         bonus: {},
         desc: 'Unlocks Pikeman and Legionnaire units and Mine improvement efficiency.'
     },
     ANIMAL_HUSBANDRY: {
-        id: 'ANIMAL_HUSBANDRY', name: 'Animal Husbandry', era: 'ancient', cost: 40,
+        id: 'ANIMAL_HUSBANDRY', name: 'Animal Husbandry', era: 'ancient', cost: 25,
         prerequisites: [],
         unlocks: [{ type: 'unit', id: 'CAVALRY' }],
         bonus: {},
@@ -31,28 +31,28 @@ export const TECHS = {
 
     // === CLASSICAL ERA ===
     MATHEMATICS: {
-        id: 'MATHEMATICS', name: 'Mathematics', era: 'classical', cost: 80,
+        id: 'MATHEMATICS', name: 'Mathematics', era: 'classical', cost: 50,
         prerequisites: ['ARCHERY'],
         unlocks: [{ type: 'unit', id: 'CATAPULT' }, { type: 'building', id: 'MARKET' }],
         bonus: {},
         desc: 'Unlocks Catapult and Market building.'
     },
     ENGINEERING: {
-        id: 'ENGINEERING', name: 'Engineering', era: 'classical', cost: 80,
+        id: 'ENGINEERING', name: 'Engineering', era: 'classical', cost: 50,
         prerequisites: ['BRONZE_WORKING'],
         unlocks: [],
         bonus: { engineerBuildSpeed: 1.5, canBuildBridge: true },
         desc: 'Engineers build 50% faster. Bridges can be constructed.'
     },
     NAVAL_ENGINEERING: {
-        id: 'NAVAL_ENGINEERING', name: 'Naval Engineering', era: 'classical', cost: 80,
+        id: 'NAVAL_ENGINEERING', name: 'Naval Engineering', era: 'classical', cost: 50,
         prerequisites: ['ANIMAL_HUSBANDRY'],
         unlocks: [{ type: 'building', id: 'HARBOR' }, { type: 'unit', id: 'GALLEY' }, { type: 'unit', id: 'TRANSPORT' }],
         bonus: {},
         desc: 'Unlocks Harbor building, Galley, and Transport ships.'
     },
     SIEGE_CRAFT: {
-        id: 'SIEGE_CRAFT', name: 'Siege Craft', era: 'classical', cost: 80,
+        id: 'SIEGE_CRAFT', name: 'Siege Craft', era: 'classical', cost: 50,
         prerequisites: ['BRONZE_WORKING', 'MATHEMATICS'],
         unlocks: [{ type: 'building', id: 'SIEGE_WORKSHOP' }, { type: 'unit', id: 'TREBUCHET' }],
         bonus: {},
@@ -61,28 +61,28 @@ export const TECHS = {
 
     // === MEDIEVAL ERA ===
     FORTIFICATION: {
-        id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 150,
+        id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 90,
         prerequisites: ['ENGINEERING'],
         unlocks: [{ type: 'building', id: 'WALLS' }, { type: 'unit', id: 'CROSSBOWMAN' }, { type: 'unit', id: 'VARANGIAN_GUARD' }],
         bonus: { cityDefenseBonus: 2 },
         desc: 'Unlocks Walls, Crossbowman, and Varangian Guard. Cities gain +2 defense.'
     },
     CHIVALRY: {
-        id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 150,
+        id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 90,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
         unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }],
         bonus: { lordXpBonus: 0.25 },
         desc: 'Unlocks Cataphract, Chariot, Berserker, and Winged Hussar. Lords gain 25% more XP.'
     },
     CARTOGRAPHY: {
-        id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 150,
+        id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 90,
         prerequisites: ['NAVAL_ENGINEERING'],
         unlocks: [{ type: 'unit', id: 'FRIGATE' }, { type: 'unit', id: 'GALLEON' }],
         bonus: { navalVisionBonus: 2 },
         desc: 'Unlocks Frigate and Galleon. Naval units gain +2 vision.'
     },
     FEUDALISM: {
-        id: 'FEUDALISM', name: 'Feudalism', era: 'medieval', cost: 150,
+        id: 'FEUDALISM', name: 'Feudalism', era: 'medieval', cost: 90,
         prerequisites: ['SIEGE_CRAFT'],
         unlocks: [{ type: 'unit', id: 'SIEGE_TOWER' }],
         bonus: { cityLoyaltyBonus: 1 },
@@ -91,28 +91,28 @@ export const TECHS = {
 
     // === INDUSTRIAL ERA ===
     GUNPOWDER: {
-        id: 'GUNPOWDER', name: 'Gunpowder', era: 'industrial', cost: 250,
+        id: 'GUNPOWDER', name: 'Gunpowder', era: 'industrial', cost: 150,
         prerequisites: ['SIEGE_CRAFT', 'CHIVALRY'],
         unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'CONQUISTADOR' }],
         bonus: { rangedDamageBonus: 1 },
         desc: 'Unlocks Artillery and Conquistador. Ranged units deal +1 damage.'
     },
     MEDICINE: {
-        id: 'MEDICINE', name: 'Medicine', era: 'industrial', cost: 250,
+        id: 'MEDICINE', name: 'Medicine', era: 'industrial', cost: 150,
         prerequisites: ['FEUDALISM'],
         unlocks: [{ type: 'unit', id: 'MEDIC' }],
         bonus: { medicHealBonus: 2, starvationReduction: 1 },
         desc: 'Unlocks Medic. Healers heal +2 more. Starvation reduced.'
     },
     MACHINERY: {
-        id: 'MACHINERY', name: 'Machinery', era: 'industrial', cost: 250,
+        id: 'MACHINERY', name: 'Machinery', era: 'industrial', cost: 150,
         prerequisites: ['ENGINEERING', 'FORTIFICATION'],
         unlocks: [{ type: 'unit', id: 'WORKER' }],
         bonus: { workerBuildSpeed: 2 },
         desc: 'Unlocks Worker improvements. Workers build twice as fast.'
     },
     MASS_PRODUCTION: {
-        id: 'MASS_PRODUCTION', name: 'Mass Production', era: 'industrial', cost: 250,
+        id: 'MASS_PRODUCTION', name: 'Mass Production', era: 'industrial', cost: 150,
         prerequisites: ['CARTOGRAPHY', 'MEDICINE'],
         unlocks: [],
         bonus: { settlerCostReduction: 0.3, extraTradeRoute: 1 },
@@ -121,21 +121,21 @@ export const TECHS = {
 
     // === RENAISSANCE ERA (400 pts) ===
     MATCHLOCK: {
-        id: 'MATCHLOCK', name: 'Matchlock', era: 'renaissance', cost: 400,
+        id: 'MATCHLOCK', name: 'Matchlock', era: 'renaissance', cost: 250,
         prerequisites: ['GUNPOWDER'],
         unlocks: [{ type: 'unit', id: 'MUSKETEER' }, { type: 'unit', id: 'ARQUEBUSIER' }, { type: 'unit', id: 'PINNACE' }],
         bonus: { rangedDamageBonus: 1 },
         desc: 'Unlocks Musketman, Arquebusier, and Pinnace. Ranged units deal +1 damage.'
     },
     BASTION_FORT: {
-        id: 'BASTION_FORT', name: 'Bastion Fort', era: 'renaissance', cost: 400,
+        id: 'BASTION_FORT', name: 'Bastion Fort', era: 'renaissance', cost: 250,
         prerequisites: ['FORTIFICATION', 'GUNPOWDER'],
         unlocks: [{ type: 'building', id: 'CITADEL' }],
         bonus: { cityDefenseBonus: 3 },
         desc: 'Unlocks Citadel building. Cities gain +3 defense.'
     },
     OCEAN_NAVIGATION: {
-        id: 'OCEAN_NAVIGATION', name: 'Ocean Navigation', era: 'renaissance', cost: 400,
+        id: 'OCEAN_NAVIGATION', name: 'Ocean Navigation', era: 'renaissance', cost: 250,
         prerequisites: ['CARTOGRAPHY', 'GUNPOWDER'],
         unlocks: [{ type: 'unit', id: 'MAN_OF_WAR' }, { type: 'unit', id: 'GALLEASS' }],
         bonus: { navalVisionBonus: 2 },
@@ -144,28 +144,28 @@ export const TECHS = {
 
     // === ENLIGHTENMENT ERA (600 pts) ===
     FLINTLOCK: {
-        id: 'FLINTLOCK', name: 'Flintlock', era: 'enlightenment', cost: 600,
+        id: 'FLINTLOCK', name: 'Flintlock', era: 'enlightenment', cost: 350,
         prerequisites: ['MATCHLOCK'],
         unlocks: [{ type: 'unit', id: 'LINE_INFANTRY' }, { type: 'unit', id: 'DRAGOON' }, { type: 'unit', id: 'CORVETTE' }],
         bonus: { infantryAttackBonus: 1 },
         desc: 'Unlocks Line Infantry, Dragoon, and Corvette. Infantry gain +1 attack.'
     },
     METALLURGY: {
-        id: 'METALLURGY', name: 'Metallurgy', era: 'enlightenment', cost: 600,
+        id: 'METALLURGY', name: 'Metallurgy', era: 'enlightenment', cost: 350,
         prerequisites: ['MATCHLOCK', 'MACHINERY'],
         unlocks: [{ type: 'unit', id: 'CANNON' }, { type: 'unit', id: 'MORTAR' }, { type: 'unit', id: 'FROLIC' }],
         bonus: { siegePowerBonus: 2 },
         desc: 'Unlocks Cannon, Mortar, and Frolic. Siege units gain +2 siege power.'
     },
     ACADEMY: {
-        id: 'ACADEMY', name: 'Academy', era: 'enlightenment', cost: 600,
+        id: 'ACADEMY', name: 'Academy', era: 'enlightenment', cost: 350,
         prerequisites: ['MEDICINE', 'MATCHLOCK'],
         unlocks: [{ type: 'building', id: 'UNIVERSITY' }],
         bonus: { researchSpeedBonus: 0.25 },
         desc: 'Unlocks University building. Research speed +25%.'
     },
     BANKING: {
-        id: 'BANKING', name: 'Banking', era: 'enlightenment', cost: 600,
+        id: 'BANKING', name: 'Banking', era: 'enlightenment', cost: 350,
         prerequisites: ['MASS_PRODUCTION'],
         unlocks: [{ type: 'building', id: 'BANK' }, { type: 'unit', id: 'MERCHANTMAN' }],
         bonus: { goldIncomeBonus: 0.15 },
@@ -174,63 +174,63 @@ export const TECHS = {
 
     // === MODERN ERA (800 pts) ===
     RIFLED_MUSKET: {
-        id: 'RIFLED_MUSKET', name: 'Rifled Musket', era: 'modern', cost: 800,
+        id: 'RIFLED_MUSKET', name: 'Rifled Musket', era: 'modern', cost: 500,
         prerequisites: ['FLINTLOCK', 'METALLURGY'],
         unlocks: [{ type: 'unit', id: 'RIFLEMAN' }, { type: 'unit', id: 'SHARPSHOOTER' }],
         bonus: { rangedRangeBonus: 1 },
         desc: 'Unlocks Rifleman and Sharpshooter. Ranged units gain +1 range.'
     },
     STEAM_ENGINE: {
-        id: 'STEAM_ENGINE', name: 'Steam Engine', era: 'modern', cost: 800,
+        id: 'STEAM_ENGINE', name: 'Steam Engine', era: 'modern', cost: 500,
         prerequisites: ['METALLURGY', 'BANKING'],
         unlocks: [{ type: 'unit', id: 'IRONCLAD' }, { type: 'unit', id: 'STEAM_TRANSPORT' }, { type: 'unit', id: 'GUNBOAT' }],
         bonus: { navalMoveBonus: 1 },
         desc: 'Unlocks Ironclad, Steam Transport, and Gunboat. Naval units gain +1 move.'
     },
     RAILROAD: {
-        id: 'RAILROAD', name: 'Railroad', era: 'modern', cost: 800,
+        id: 'RAILROAD', name: 'Railroad', era: 'modern', cost: 500,
         prerequisites: ['STEAM_ENGINE', 'ACADEMY'],
         unlocks: [{ type: 'unit', id: 'RAILGUN' }, { type: 'unit', id: 'ARMORED_TRAIN' }],
         bonus: { roadMoveBonus: 1 },
         desc: 'Unlocks Railgun and Armored Train. Units gain +1 move on roads.'
     },
     TELEGRAPH: {
-        id: 'TELEGRAPH', name: 'Telegraph', era: 'modern', cost: 800,
+        id: 'TELEGRAPH', name: 'Telegraph', era: 'modern', cost: 500,
         prerequisites: ['ACADEMY', 'BANKING'],
         unlocks: [{ type: 'building', id: 'COMMAND_POST' }],
         bonus: { lordCommandBonus: 2 },
         desc: 'Unlocks Command Post building. Lords gain +2 command range.'
     },
     EXPLOSIVES: {
-        id: 'EXPLOSIVES', name: 'Explosives', era: 'modern', cost: 800,
+        id: 'EXPLOSIVES', name: 'Explosives', era: 'modern', cost: 500,
         prerequisites: ['METALLURGY', 'FLINTLOCK'],
         unlocks: [{ type: 'unit', id: 'DEMOLITION_SQUAD' }, { type: 'unit', id: 'SIEGE_CANNON' }],
         bonus: { cityDamageBonus: 3 },
         desc: 'Unlocks Demolition Squad and Siege Cannon. +3 damage vs cities.'
     },
     FIELD_ARTILLERY: {
-        id: 'FIELD_ARTILLERY', name: 'Field Artillery', era: 'modern', cost: 800,
+        id: 'FIELD_ARTILLERY', name: 'Field Artillery', era: 'modern', cost: 500,
         prerequisites: ['CANNON', 'RAILROAD'],
         unlocks: [{ type: 'unit', id: 'FIELD_GUN' }, { type: 'unit', id: 'HORSE_ARTILLERY' }],
         bonus: { artilleryMoveBonus: 1 },
         desc: 'Unlocks Field Gun and Horse Artillery. Artillery gain +1 move.'
     },
     IRONCLADS: {
-        id: 'IRONCLADS', name: 'Ironclads', era: 'modern', cost: 800,
+        id: 'IRONCLADS', name: 'Ironclads', era: 'modern', cost: 500,
         prerequisites: ['STEAM_ENGINE', 'OCEAN_NAVIGATION'],
         unlocks: [{ type: 'unit', id: 'IRONCLAD_FRIGATE' }, { type: 'unit', id: 'MONITOR' }, { type: 'unit', id: 'FRIGATE_2' }],
         bonus: { navalHpBonus: 2 },
         desc: 'Unlocks Ironclad Frigate, Monitor, and Frigate II. Naval units gain +2 HP.'
     },
     ELECTRICITY: {
-        id: 'ELECTRICITY', name: 'Electricity', era: 'modern', cost: 800,
+        id: 'ELECTRICITY', name: 'Electricity', era: 'modern', cost: 500,
         prerequisites: ['TELEGRAPH', 'ACADEMY'],
         unlocks: [{ type: 'building', id: 'POWER_PLANT' }],
         bonus: { productionBonus: 0.20 },
         desc: 'Unlocks Power Plant building. Production +20%.'
     },
     SUBMARINE: {
-        id: 'SUBMARINE', name: 'Submarine', era: 'modern', cost: 800,
+        id: 'SUBMARINE', name: 'Submarine', era: 'modern', cost: 500,
         prerequisites: ['IRONCLADS', 'EXPLOSIVES'],
         unlocks: [{ type: 'unit', id: 'SUBMARINE' }, { type: 'unit', id: 'TORPEDO_BOAT' }],
         bonus: { navalStealth: true },

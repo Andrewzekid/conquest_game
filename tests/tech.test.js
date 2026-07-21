@@ -262,7 +262,7 @@ describe('Tech Tree Module', () => {
 
     describe('getResearchCost', () => {
         it('returns cost for valid tech', () => {
-            expect(getResearchCost('MATHEMATICS')).toBe(80);
+            expect(getResearchCost('MATHEMATICS')).toBe(50);
         });
 
         it('returns Infinity for invalid tech', () => {

@@ -647,7 +647,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     } else {
         // Non-science: build one university for general research benefit
         const hasUni = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('UNIVERSITY'));
-        if (!hasUni && myCityCount >= 2) {
+        if (!hasUni && myCityCount >= 1) {
             const site = findBuildSite('UNIVERSITY', owned, buildings, tiles);
             if (site && canAffordBuilding('UNIVERSITY', res)) {
                 actions.push({ type: 'build', buildingType: 'UNIVERSITY', tileKey: `${site.x},${site.z}` });
@@ -1216,6 +1216,30 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 res = subtractCost(res, SIEGE_TOWER_COST);
                 acted.add(unit.id);
                 continue;
+            }
+            // Siege engine field construction: when we have a conquest goal and
+            // no siege engines in our army, engineers build CATAPULT/TREBUCHET
+            // in the field. This is the only way non-roster-siege factions can
+            // get long-range siege (they can't train it). Also fires for any
+            // faction with a conquest goal that lacks siege, regardless of
+            // distance from enemy city.
+            const hasSiegeEngine = myUnits.some(u => u.type === 'CATAPULT' || u.type === 'TREBUCHET');
+            const warGoal = goalKind === 'conquest' || goalKind === 'take-key-city';
+            if (!hasSiegeEngine && warGoal && fullRoster.includes('CATAPULT') && !unit.hasAttackedThisTurn) {
+                const here = tiles.get(`${unit.x},${unit.z}`);
+                if (here && here.owner === owner && here.terrain !== 'WATER' && here.terrain !== 'RIVER' && here.terrain !== 'MOUNTAIN') {
+                    const siegeTypes = ['CATAPULT', 'TREBUCHET'].filter(t => fullRoster.includes(t));
+                    for (const stype of siegeTypes) {
+                        const sc = getUnitCostFor(stype, factionDef);
+                        if (canAffordCost(res, sc)) {
+                            actions.push({ type: 'buildSiegeEngine', unitId: unit.id, engineType: stype, tx: unit.x, tz: unit.z });
+                            res = subtractCost(res, sc);
+                            acted.add(unit.id);
+                            break;
+                        }
+                    }
+                    if (acted.has(unit.id)) continue;
+                }
             }
             // Defensive structures: fortify the approach to a threatened city.
             const homeCity = nearestFriendlyCity(unit, tiles, owner);
@@ -3243,10 +3267,10 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     if (atWar) {
         for (const u of members) {
             if (acted.has(u.id)) continue;
-            const nearDeath = (u.hp || 0) < (u.maxHp || 1) * 0.2;
+            const nearDeath = (u.hp || 0) < (u.maxHp || 1) * 0.35;
             const wounded = (u.hp || 0) < (u.maxHp || 1) * 0.5;
             if (nearDeath) {
-                // Universal retreat: any unit below 20% HP flees.
+                // Universal retreat: any unit below 35% HP flees.
                 if (u.hasMovedThisTurn) continue;
                 const goal = nearestFriendlyCity(u, tiles, owner);
                 if (!goal) continue;

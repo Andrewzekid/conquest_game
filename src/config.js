@@ -745,6 +745,19 @@ export const GRIEVANCE_WAR_THRESHOLD = 40;
 // Tension above this makes AI reject most treaties.
 export const GRIEVANCE_HOSTILE = 15;
 
+// --- New Grievance Sources ---
+// Victory threat: per-turn grievance when a faction leads in victory progress.
+// Scaled by how far ahead the leader is (capped per turn).
+export const VICTORY_THREAT_GRIPERANCE_PER_TURN = 3;
+// Military buildup: per-turn grievance for stacking units near a border.
+export const BORDER_BUILDUP_GRIPERANCE_PER_TURN = 3;
+// Razing a city: massive grievance to all living factions.
+export const CITY_RAZE_GRIPERANCE = 40;
+// Espionage detected: grievance when spy action is discovered.
+export const ESPIONAGE_GRIPERANCE = 15;
+// Resource monopoly: per-turn grievance if a faction blocks our only source of a critical resource.
+export const RESOURCE_MONOPOLY_GRIPERANCE_PER_TURN = 2;
+
 // --- AI Expansion (competitive settler behavior) ---
 // Minimum number of cities the AI wants before slowing settler production.
 export const AI_SETTLER_TARGET = 8; // base; scaled by map size
@@ -778,14 +791,26 @@ export const AI_NEUTRAL_RUSH_BONUS = 150;
 // treated as an aggressive land grab and awards the neighbor a grievance.
 export const MIN_CITY_SPACING = 6;
 
+// --- War Objectives ---
+// Bonus score for targeting a faction's capital city.
+export const WAR_OBJECTIVE_CAPITAL_BONUS = 40;
+// Bonus score for targeting a city with valuable buildings (UNIVERSITY, BANK, etc.).
+export const WAR_OBJECTIVE_KEY_BUILDING_BONUS = 25;
+// Bonus score for targeting a faction leading in victory progress.
+export const WAR_OBJECTIVE_VICTORY_LEADER_BONUS = 50;
+// Bonus score for targeting a faction that controls a resource we critically need.
+export const WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS = 30;
+// Minimum city count before the AI considers "take key city" objectives.
+export const WAR_OBJECTIVE_MIN_CITIES = 3;
+
 // AI is now much more reluctant to accept peace/trade - wars are grinding and
 // breaking a treaty should be costly. The player must fight or offer significant
 // value to get anything but the most temporary truces.
 export const AI_PERSONALITIES = {
     AGGRESSIVE:  { warChance: 0.8,  acceptAlliance: 0.15, acceptTrade: 0.25, acceptPeace: 0.3 },
-    DEFENSIVE:   { warChance: 0.3,  acceptAlliance: 0.25, acceptTrade: 0.4, acceptPeace: 0.5 },
-    ECONOMIC:    { warChance: 0.15, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 },
-    BALANCED:    { warChance: 0.5,  acceptAlliance: 0.2,  acceptTrade: 0.3,  acceptPeace: 0.4 }
+    DEFENSIVE:   { warChance: 0.4,  acceptAlliance: 0.25, acceptTrade: 0.4, acceptPeace: 0.5 },
+    ECONOMIC:    { warChance: 0.25, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 },
+    BALANCED:    { warChance: 0.6,  acceptAlliance: 0.2,  acceptTrade: 0.3,  acceptPeace: 0.4 }
 };
 
 // --- AI goal-sequence system (see src/ai_goals.js) ---

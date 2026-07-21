@@ -1,7 +1,7 @@
 /** Turn manager: phase FSM (player -> each AI faction -> player) */
 import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth,
          processUnrest, applyFactionUnrest, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
-import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
+import { PLAYER_FACTION, UNIT_TYPE, VICTORY_THREAT_GRIPERANCE_PER_TURN, BORDER_BUILDUP_GRIPERANCE_PER_TURN } from './config.js';
 import { regenFortification } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
          processWarWeariness } from './diplomacy.js';
@@ -26,6 +26,40 @@ function processMedicHeal(units) {
             if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
         }
     }
+}
+
+/** Simple power ranking for victory threat grievance. Returns the leading
+ *  faction and its score relative to the second-place faction. */
+function calculateSimpleRankings(gameState, tiles) {
+    const factions = {};
+    let totalTiles = 0;
+    for (const t of tiles.values()) {
+        totalTiles++;
+        if (t.owner) {
+            if (!factions[t.owner]) factions[t.owner] = { cities: 0, tiles: 0, score: 0 };
+            factions[t.owner].tiles++;
+            if (t.terrain === 'CITY') factions[t.owner].cities++;
+        }
+    }
+    // Also count units and gold
+    for (const u of (gameState.units || new Map()).values()) {
+        if (factions[u.owner]) factions[u.owner].score += 2;
+    }
+    for (const [f, data] of Object.entries(factions)) {
+        const gold = (gameState.resources && gameState.resources[f] && gameState.resources[f].gold) || 0;
+        data.score += data.cities * 20 + data.tiles + Math.floor(gold / 50);
+    }
+    let leader = null, leaderScore = 0, secondScore = 0;
+    for (const [f, data] of Object.entries(factions)) {
+        if (data.score > leaderScore) {
+            secondScore = leaderScore;
+            leaderScore = data.score;
+            leader = f;
+        } else if (data.score > secondScore) {
+            secondScore = data.score;
+        }
+    }
+    return leader ? { leader, leaderScore, secondScore, factions } : null;
 }
 
 export function createTurnManager(gameState, factions, onPhaseChange, runAI, renderAll, spectateMode = false) {
@@ -127,8 +161,14 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                     autoSelectResearch(aiTs, personality);
                 }
                 const researchPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
-                if (researchPts > 0) {
-                    const completed = addResearch(aiTs, researchPts);
+                // AI research bonus: AI factions get +2 flat research per turn
+                // on top of their university-based research. This ensures AI
+                // tech progresses even when they have few universities, matching
+                // the player's tendency to heavily invest in science.
+                const aiResearchBonus = 2;
+                const totalResearch = researchPts + aiResearchBonus;
+                if (totalResearch > 0) {
+                    const completed = addResearch(aiTs, totalResearch);
                     if (completed && completed.length && logger) {
                         const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;
                         for (const techId of completed) {
@@ -210,6 +250,59 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 const existing = getRelation(gameState.diplomacy, t.owner, u.owner).grievances || 0;
                 const amount = grievanceLevel(existing) === 'hostile' || grievanceLevel(existing) === 'furious' ? 4 : 2;
                 addGrievance(gameState.diplomacy, t.owner, u.owner, amount, 'troops in territory');
+            }
+        }
+
+        // Victory threat: factions that are leading in victory progress generate
+        // grievances from all other living factions. This models the Civ6
+        // "backlash against the leader" mechanic — the world resents whoever
+        // is closest to winning.
+        if (gameState.diplomacy && VICTORY_THREAT_GRIPERANCE_PER_TURN > 0) {
+            const rankings = calculateSimpleRankings(gameState, gameState.tiles);
+            if (rankings) {
+                const { leader, leaderScore, secondScore } = rankings;
+                if (leader && leaderScore > secondScore * 1.3) {
+                    // Leader is significantly ahead — other factions get grievances
+                    for (const f of Object.keys(rankings.factions || {})) {
+                        if (f === leader) continue;
+                        if (gameState.eliminated && gameState.eliminated.has(f)) continue;
+                        const rel = getRelation(gameState.diplomacy, f, leader);
+                        if (rel.state === 'war') continue;
+                        addGrievance(gameState.diplomacy, f, leader, VICTORY_THREAT_GRIPERANCE_PER_TURN, 'victory threat');
+                    }
+                }
+            }
+        }
+
+        // Border buildup: if a faction stacks military units adjacent to another
+        // faction's cities in peacetime, this generates grievances. More intense
+        // than the existing "troops in territory" check — targets specific
+        // border concentrations.
+        if (gameState.diplomacy && BORDER_BUILDUP_GRIPERANCE_PER_TURN > 0) {
+            const unitCounts = new Map(); // key: "owner:cityKey" -> count
+            for (const u of gameState.units.values()) {
+                if (gameState.eliminated && gameState.eliminated.has(u.owner)) continue;
+                if (!UNIT_TYPE[u.type] || UNIT_TYPE[u.type].isNaval) continue; // only land units
+                // Check if within 3 tiles of any enemy/neutral city
+                for (const t of gameState.tiles.values()) {
+                    if (t.terrain !== 'CITY' || !t.owner || t.owner === u.owner) continue;
+                    const d = Math.abs(u.x - t.x) + Math.abs(u.z - t.z);
+                    if (d <= 3) {
+                        const key = `${u.owner}:${t.x},${t.z}`;
+                        unitCounts.set(key, (unitCounts.get(key) || 0) + 1);
+                    }
+                }
+            }
+            for (const [key, count] of unitCounts) {
+                if (count < 3) continue; // only meaningful buildups (3+ units)
+                const [owner, cityKey] = key.split(':');
+                const [cx, cz] = cityKey.split(',').map(Number);
+                const cityTile = gameState.tiles.get(`${cx},${cz}`);
+                if (!cityTile || !cityTile.owner) continue;
+                const rel = getRelation(gameState.diplomacy, cityTile.owner, owner);
+                if (rel.state === 'war') continue;
+                const amount = Math.min(6, BORDER_BUILDUP_GRIPERANCE_PER_TURN + Math.floor((count - 3) / 2));
+                addGrievance(gameState.diplomacy, cityTile.owner, owner, amount, 'border buildup');
             }
         }
 

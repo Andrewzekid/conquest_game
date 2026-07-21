@@ -13,11 +13,15 @@
  `selectGoals`; nothing else is touched. This keeps it unit-testable without a
  Game instance (mirrors the rest of the codebase's pure-logic layer).
 */
-import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT } from './config.js';
+import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
+         WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
+         WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
+         WAR_OBJECTIVE_MIN_CITIES } from './config.js';
 
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
-    'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king'];
+    'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king',
+    'take-key-city', 'disrupt-victory', 'resource-war'];
 
 // Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
 // conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
@@ -28,7 +32,7 @@ const PERSONALITY_WEIGHTS = {
                   diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4 },
     DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6 },
-    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.0, 'expand-islands': 0.9, 'develop-economy': 1.4,
+    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
                   diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7 },
     BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0 },
@@ -38,6 +42,7 @@ const PERSONALITY_WEIGHTS = {
 const BASE_SCORE = {
     conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
     diplomacy: 40, spy: 35, chokepoint: 45, scout: 55, 'attack-king': 85,
+    'take-key-city': 75, 'disrupt-victory': 90, 'resource-war': 65,
 };
 
 function manhattan(ax, az, bx, bz) {
@@ -166,6 +171,15 @@ function goalValid(goal, ctx) {
             // Valid while at war with the target faction. If the king died or
             // the war ended, the goal is dropped on the next replan.
             return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : ctx.enemies.size > 0;
+        case 'take-key-city':
+            // Valid while at war with a faction that has key cities.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'disrupt-victory':
+            // Valid while at war with a faction that's leading in victory progress.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'resource-war':
+            // Valid while at war with a faction that controls contested resources.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
         default:
             return false;
     }
@@ -182,6 +196,24 @@ function nearestEnemyCity(enemyCities, homeAnchor) {
         if (d < bestD) { bestD = d; best = c; }
     }
     return best;
+}
+
+/** Check if a path between two tiles crosses water (for goal water-barrier
+ *  filtering). Uses a simple line-of-sight check: if any tile along the
+ *  Chebyshev-1 path is WATER, the target is considered water-separated.
+ *  This prevents lords from trying to walk to targets across the sea. */
+function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
+    if (!tiles) return false;
+    const dx = Math.sign(toX - fromX);
+    const dz = Math.sign(toZ - fromZ);
+    let x = fromX, z = fromZ;
+    while (x !== toX || z !== toZ) {
+        if (x !== toX) x += dx;
+        else if (z !== toZ) z += dz;
+        const t = tiles.get(`${x},${z}`);
+        if (t && t.terrain === 'WATER') return true;
+    }
+    return false;
 }
 
 /**
@@ -220,6 +252,7 @@ export function selectGoals(input) {
         neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
         unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
         enemyKings = [],
+        tiles = null, myUnits = [],
     } = input;
 
     const enemySet = new Set(enemies || []);
@@ -257,8 +290,12 @@ export function selectGoals(input) {
     };
 
     // Conquest: at least one at-war enemy. Target nearest enemy city.
+    // Skip cities across water if we have no transport (lords can't walk there).
     if (enemySet.size > 0) {
-        const tgt = nearestEnemyCity(enemyCities, homeAnchor);
+        const hasTransport = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
+        const landCities = hasTransport ? enemyCities : enemyCities.filter(c =>
+            !pathCrossesWater(tiles, homeAnchor ? homeAnchor.x : 0, homeAnchor ? homeAnchor.z : 0, c.x, c.z));
+        const tgt = nearestEnemyCity(landCities.length ? landCities : enemyCities, homeAnchor);
         push('conquest',
             BASE_SCORE.conquest * weights.conquest,
             tgt ? `${tgt.x},${tgt.z}` : null,
@@ -266,6 +303,61 @@ export function selectGoals(input) {
             'short',
             { cityX: tgt ? tgt.x : null, cityZ: tgt ? tgt.z : null });
     }
+
+    // War Objectives: targeted strategic goals that make wars more meaningful
+    // and drive AI to pursue specific objectives beyond generic conquest.
+
+    // Take Key City: target a high-value enemy city (capital, or city with
+    // important buildings). Higher priority than generic conquest when we
+    // have enough cities to warrant strategic targeting.
+    if (enemySet.size > 0 && myCityCount >= WAR_OBJECTIVE_MIN_CITIES) {
+        for (const ec of enemyCities) {
+            const isCapital = ec.isCapital;
+            const hasKeyBuilding = ec.hasKeyBuilding;
+            if (!isCapital && !hasKeyBuilding) continue;
+            const bonus = (isCapital ? WAR_OBJECTIVE_CAPITAL_BONUS : 0)
+                + (hasKeyBuilding ? WAR_OBJECTIVE_KEY_BUILDING_BONUS : 0);
+            const score = (BASE_SCORE['take-key-city'] + bonus) * weights.conquest;
+            push('take-key-city',
+                score,
+                `${ec.x},${ec.z}`,
+                ec.owner,
+                'short',
+                { cityX: ec.x, cityZ: ec.z, isCapital, hasKeyBuilding });
+            break; // one take-key-city goal per plan
+        }
+    }
+
+    // Disrupt Victory: target a faction that's leading in victory progress.
+    // This gives other factions a strategic reason to war the leader.
+    if (enemySet.size > 0 && input.victoryLeader && input.victoryLeader !== factionDef.id) {
+        const leaderCities = enemyCities.filter(c => c.owner === input.victoryLeader);
+        if (leaderCities.length > 0) {
+            const tgt = leaderCities[0];
+            push('disrupt-victory',
+                (BASE_SCORE['disrupt-victory'] + WAR_OBJECTIVE_VICTORY_LEADER_BONUS) * weights.conquest,
+                `${tgt.x},${tgt.z}`,
+                input.victoryLeader,
+                'medium',
+                { cityX: tgt.x, cityZ: tgt.z, reason: 'victory threat' });
+        }
+    }
+
+    // Resource War: target a faction that controls a resource we critically
+    // need but don't have. Gives wars an economic justification.
+    if (enemySet.size > 0 && input.contestedResourceFaction) {
+        const rcities = enemyCities.filter(c => c.owner === input.contestedResourceFaction);
+        if (rcities.length > 0) {
+            const tgt = rcities[0];
+            push('resource-war',
+                (BASE_SCORE['resource-war'] + WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS) * weights.conquest,
+                `${tgt.x},${tgt.z}`,
+                input.contestedResourceFaction,
+                'short',
+                { cityX: tgt.x, cityZ: tgt.z, resource: input.contestedResource });
+        }
+    }
+
     // Defense: an own city is threatened.
     if (activeObjectives.defensive && threatenedOwnCity) {
         push('defense',
@@ -346,13 +438,17 @@ export function selectGoals(input) {
     const vt = (aiState && aiState.victoryTarget) || 'domination';
     const vtModifiers = {
         domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
-                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3 },
+                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3,
+                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1 },
         science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
-                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9 },
+                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9,
+                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9 },
         economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
-                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8 },
+                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8,
+                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4 },
         score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
-                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1 }
+                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1,
+                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0 }
     };
     const vtMod = vtModifiers[vt] || vtModifiers.domination;
     for (const c of candidates) {
@@ -364,11 +460,14 @@ export function selectGoals(input) {
     const phase = computeGamePhase(turn);
     const phaseMod = {
         early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
-                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9 },
+                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9,
+                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8 },
         mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1 },
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1,
+                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0 },
         late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
-                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3 },
+                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3,
+                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2 },
     };
     const pm = phaseMod[phase] || phaseMod.mid;
     for (const c of candidates) {
