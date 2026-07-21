@@ -594,9 +594,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // cavalry fallthrough that engineer-counting was originally added to
     // solve, so it is safe to count only actual siege engines here.
     const siegeCount = myUnits.filter(u => u.type === 'SIEGE' || u.type === 'ARTILLERY' ||
-        u.type === 'CATAPULT' || u.type === 'TREBUCHET').length;
+        u.type === 'CATAPULT' || u.type === 'TREBUCHET' ||
+        u.type === 'CANNON' || u.type === 'MORTAR' || u.type === 'FIELD_GUN' ||
+        u.type === 'HORSE_ARTILLERY' || u.type === 'SIEGE_CANNON' || u.type === 'RAILGUN').length;
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
-    const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY');
+    const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY' ||
+        t === 'CANNON' || t === 'MORTAR' || t === 'FIELD_GUN' ||
+        t === 'HORSE_ARTILLERY' || t === 'SIEGE_CANNON' || t === 'RAILGUN');
     if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
     // Composition-aware siege cap: the siege ratio depends on the army's
     // current objective. A faction actively besieging an enemy city fields far
@@ -2026,12 +2030,13 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence, resources
 }
 
 /** Composition role buckets for the AI army. */
-const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD']);
-const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN']);
-const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'CONQUISTADOR']);
-const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER']);
+const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD']);
+const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER']);
+const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'CONQUISTADOR', 'DRAGOON', 'HORSE_ARTILLERY']);
+const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'ARMORED_TRAIN']);
 const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
-const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON']);
+const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT']);
+const FRAGILE_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'RAILGUN', 'SIEGE_CANNON', 'RIFLEMAN', 'SHARPSHOOTER', 'WORKER', 'SETTLER', 'SCOUT']);
 
 function unitRole(type) {
     if (MELEE_TYPES.has(type)) return 'melee';
@@ -2271,12 +2276,12 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         // has them trains them (the roster filter skips units a faction lacks);
         // the canAfford gate means early/cheap armies still fall back to cheaper
         // units when the signature is too expensive.
-        if (role === 'melee') order.push('LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'PIKEMAN', 'INFANTRY');
-        else if (role === 'ranged') order.push('CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER');
-        else if (role === 'cavalry') order.push('WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'CAVALRY', 'CHARIOT');
-        else if (role === 'siege') order.push('SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET');
+        if (role === 'melee') order.push('LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD', 'PIKEMAN', 'INFANTRY');
+        else if (role === 'ranged') order.push('RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'ARQUEBUSIER', 'LONGBOWMAN', 'DRAGOON', 'ARCHER');
+        else if (role === 'cavalry') order.push('WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'CAVALRY', 'CHARIOT');
+        else if (role === 'siege') order.push('SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY');
         else if (role === 'support') order.push('ENGINEER', 'MEDIC');
-        else if (role === 'naval') order.push('GALLEON', 'FRIGATE', 'GALLEY', 'TRANSPORT');
+        else if (role === 'naval') order.push('MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN');
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }
@@ -2288,15 +2293,15 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     // them can still reach them via the fallback.
     let order;
     if (objective && objective.siege) {
-        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'BERSERKER', 'CAVALRY', 'PIKEMAN', 'CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+        order = ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'LINE_INFANTRY', 'BERSERKER', 'CAVALRY', 'PIKEMAN', 'CROSSBOWMAN', 'RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     } else if (objective && objective.decisive) {
-        order = ['WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'CAVALRY', 'CHARIOT', 'BERSERKER', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'PIKEMAN', 'INFANTRY', 'CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER', 'SIEGE', 'ARTILLERY'];
+        order = ['WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'CAVALRY', 'CHARIOT', 'DRAGOON', 'BERSERKER', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'LINE_INFANTRY', 'PIKEMAN', 'INFANTRY', 'RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER', 'SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY'];
     } else if (objective && objective.raid) {
-        order = ['WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'CAVALRY', 'CHARIOT', 'BERSERKER', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'PIKEMAN', 'LEGIONNAIRE', 'CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+        order = ['WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'CAVALRY', 'CHARIOT', 'DRAGOON', 'HORSE_ARTILLERY', 'BERSERKER', 'SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'PIKEMAN', 'LEGIONNAIRE', 'LINE_INFANTRY', 'CROSSBOWMAN', 'RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     } else if (objective && objective.defensive) {
-        order = ['VARANGIAN_GUARD', 'LEGIONNAIRE', 'PIKEMAN', 'INFANTRY', 'CROSSBOWMAN', 'ARCHER', 'LONGBOWMAN', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'WINGED_HUSSAR', 'CATAPHRACT', 'CAVALRY'];
+        order = ['VARANGIAN_GUARD', 'LEGIONNAIRE', 'LINE_INFANTRY', 'PIKEMAN', 'INFANTRY', 'DEMOLITION_SQUAD', 'CROSSBOWMAN', 'RIFLEMAN', 'MUSKETEER', 'SHARPSHOOTER', 'ARCHER', 'LONGBOWMAN', 'SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'WINGED_HUSSAR', 'CATAPHRACT', 'CAVALRY'];
     } else {
-        order = ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'BERSERKER', 'CAVALRY', 'PIKEMAN', 'CROSSBOWMAN', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
+        order = ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'ENGINEER', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'VARANGIAN_GUARD', 'LEGIONNAIRE', 'LINE_INFANTRY', 'BERSERKER', 'CAVALRY', 'PIKEMAN', 'CROSSBOWMAN', 'RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'LONGBOWMAN', 'ARCHER', 'INFANTRY'];
     }
     for (const t of order) {
         if (!roster.includes(t)) continue;
@@ -2508,11 +2513,6 @@ function manhattan(x1, z1, x2, z2) {
 // Army-group coordination helpers
 // ============================================================
 
-/** Unit roles for group planning. */
-const FRAGILE_TYPES = new Set([
-    'ARCHER', 'LONGBOWMAN', 'ARTILLERY', 'CATAPULT', 'TREBUCHET',
-    'SIEGE', 'MEDIC', 'SETTLER', 'ENGINEER', 'WORKER'
-]);
 function isFragile(u) { return !!u && FRAGILE_TYPES.has(u.type); }
 /** Ranged units fire from a distance (attackRange > 1 or `ranged`). */
 function isRanged(u) {
@@ -3020,6 +3020,88 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
+    // 2c) MUSKETEER volley formation: group MUSKETEERs adjacent for +1 atk each.
+    //     Idle MUSKETEERs move adjacent to other friendly MUSKETEERs before firing.
+    if (atWar) {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+            if (u.type !== 'MUSKETEER') continue;
+            // Count adjacent friendly MUSKETEERs
+            let adjacentMusketters = 0;
+            let nearestAlly = null, nearestDist = Infinity;
+            for (const other of units.values()) {
+                if (other.owner !== owner || other.type !== 'MUSKETEER' || other.id === u.id) continue;
+                const dist = Math.abs(other.x - u.x) + Math.abs(other.z - u.z);
+                if (dist === 1) adjacentMusketters++;
+                else if (dist <= 3 && dist < nearestDist) { nearestDist = dist; nearestAlly = other; }
+            }
+            // Already in formation (2+ adjacent) - don't move
+            if (adjacentMusketters >= 2) continue;
+            // Try to move adjacent to another MUSKETEER for volley
+            if (nearestAlly && !u.hasMovedThisTurn) {
+                const step = nextStepToward(tiles, units, u, nearestAlly, 200, owner);
+                if (step && !moved.has(`${step.x},${step.z}`)) {
+                    out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                    acted.add(u.id);
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+        }
+    }
+
+    // 2d) LINE_INFANTRY formation: +2 def when 2+ friendly infantry adjacent.
+    //     LINE_INFANTRY moves toward other infantry to form defensive lines.
+    if (atWar && stance !== 'retreat') {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+            if (u.type !== 'LINE_INFANTRY') continue;
+            const infantryTypes = new Set(['INFANTRY', 'LINE_INFANTRY', 'RIFLEMAN', 'MUSKETEER']);
+            let adjacentInfantry = 0;
+            let nearestAlly = null, nearestDist = Infinity;
+            for (const other of units.values()) {
+                if (other.owner !== owner || other.id === u.id || !infantryTypes.has(other.type)) continue;
+                const dist = Math.abs(other.x - u.x) + Math.abs(other.z - u.z);
+                if (dist === 1) adjacentInfantry++;
+                else if (dist <= 3 && dist < nearestDist) { nearestDist = dist; nearestAlly = other; }
+            }
+            // Already in formation (2+ adjacent) - hold position
+            if (adjacentInfantry >= 2) continue;
+            // Try to move adjacent to another infantry unit
+            if (nearestAlly && !u.hasMovedThisTurn) {
+                const step = nextStepToward(tiles, units, u, nearestAlly, 200, owner);
+                if (step && !moved.has(`${step.x},${step.z}`)) {
+                    out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                    acted.add(u.id);
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+        }
+    }
+
+    // 2e) RAILGUN reload: after firing, RAILGUN must reload for 2 turns.
+    //     Track reload state and skip action during reload period.
+    if (atWar) {
+        for (const u of members) {
+            if (u.type !== 'RAILGUN') continue;
+            // Decrement reload counter if > 0
+            if (u.reloadTurns && u.reloadTurns > 0) {
+                u.reloadTurns--;
+                // During reload, don't attempt to attack (can still move defensively)
+                if (u.reloadTurns > 0) {
+                    acted.add(u.id); // Skip all actions during reload
+                }
+            }
+            // After firing (hasAttackedThisTurn), set reload counter
+            if (u.hasAttackedThisTurn && !u.reloadTurns) {
+                u.reloadTurns = 2; // Must reload for 2 turns
+            }
+        }
+    }
+
+    // 2f) ARMORED_TRAIN mobile: can move and fire same turn.
+    //     No special action needed - just don't restrict movement after attack.
+    //     The unit's `mobile: true` flag is checked in getAttackTargets().
+
     // 3) Conceal (ambush setup) for any military unit on conceal terrain near
     //    the front, out of enemy vision, with no adjacent enemy to fight.
     //    A unit that is ALREADY concealing/concealed is skipped (don't reset its
@@ -3101,6 +3183,8 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     // 5) Ranged fire: ranged units attack only on favorable terms. Prefer the
     //    group's focused target, then type-matched targets, then highest value.
     //    Siege engines with AOE get a bonus against clustered enemies.
+    //    Ability-aware scoring: SHARPSHOOTER targets lords, TORPEDO_BOAT targets
+    //    ships, RIFLEMAN targets high-defense, CANNON/DEMOLITION_SQUAD target cities.
     if (atWar) {
         for (const u of members) {
             if (acted.has(u.id) || u.hasAttackedThisTurn) continue;
@@ -3122,6 +3206,49 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                             Math.abs(other.x - e.x) + Math.abs(other.z - e.z) <= 1) splashCount++;
                     }
                     if (splashCount >= 2) score += 30;
+                }
+                // === ABILITY-AWARE SCORING ===
+                // SHARPSHOOTER: +8 vs lords, +6 vs settlers/engineers (sniper bonus)
+                if (u.type === 'SHARPSHOOTER') {
+                    if (e._isLord || e.lordId) score += 8;
+                    else if (e.type === 'SETTLER' || e.type === 'ENGINEER') score += 6;
+                    else if (e.type === 'MEDIC') score += 4;
+                }
+                // TORPEDO_BOAT: +10 vs naval units (torpedo bonus)
+                if (u.type === 'TORPEDO_BOAT') {
+                    const eDef = UNIT_TYPE[e.type];
+                    if (eDef && eDef.naval) score += 10;
+                }
+                // RIFLEMAN: prefer high-defense targets (accurate - ignores 50% defense)
+                if (u.type === 'RIFLEMAN') {
+                    const eDef = UNIT_TYPE[e.type];
+                    if (eDef && eDef.defense >= 6) score += 4;
+                    else if (eDef && eDef.defense >= 4) score += 2;
+                }
+                // CANNON: +5 vs cities (cannonball barrage)
+                if (u.type === 'CANNON') {
+                    const eTile = tiles.get(`${e.x},${e.z}`);
+                    if (eTile && eTile.terrain === 'CITY') score += 5;
+                }
+                // MORTAR: prefer clustered enemies (AOE splash)
+                if (u.type === 'MORTAR') {
+                    let clusterCount = 0;
+                    for (const other of units.values()) {
+                        if (other.owner !== owner && other.id !== e.id &&
+                            Math.abs(other.x - e.x) + Math.abs(other.z - e.z) <= 2) clusterCount++;
+                    }
+                    if (clusterCount >= 2) score += 4;
+                }
+                // DEMOLITION_SQUAD: +5 vs cities/buildings (demolish bonus)
+                if (u.type === 'DEMOLITION_SQUAD') {
+                    const eTile = tiles.get(`${e.x},${e.z}`);
+                    if (eTile && eTile.terrain === 'CITY') score += 5;
+                    else if (buildings && buildings.get(`${e.x},${e.z}`)?.length > 0) score += 3;
+                }
+                // SIEGE_CANNON: +6 vs cities (fort buster)
+                if (u.type === 'SIEGE_CANNON') {
+                    const eTile = tiles.get(`${e.x},${e.z}`);
+                    if (eTile && eTile.terrain === 'CITY') score += 6;
                 }
                 if (score > bestScore) { bestScore = score; best = e; }
             }
@@ -3154,6 +3281,111 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
                 acted.add(u.id);
                 moved.add(`${step.x},${step.z}`);
+            }
+        }
+    }
+
+    // 6b) Naval intelligence: ability-aware positioning for special naval units.
+    //     - IRONCLAD: lead formations (tank ranged fire, absorb punishment)
+    //     - SUBMARINE: stay submerged, ambush high-value targets
+    //     - MONITOR: hold chokepoints (no firing direction penalty)
+    //     - GUNBOAT: patrol rivers (shallow water access)
+    //     - MAN_OF_WAR: stay near other ships (flagship +1 atk aura)
+    if (atWar) {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+            const uDef = UNIT_TYPE[u.type];
+            if (!uDef || !uDef.naval) continue;
+            // IRONCLAD: move to front of formation (tank position)
+            if (u.type === 'IRONCLAD' || u.type === 'IRONCLAD_FRIGATE') {
+                // Find friendly warships behind us
+                let hasAllyBehind = false;
+                for (const other of units.values()) {
+                    if (other.owner !== owner || other.id === u.id) continue;
+                    const oDef = UNIT_TYPE[other.type];
+                    if (!oDef || !oDef.naval) continue;
+                    // Check if other is behind us relative to the nearest enemy
+                    let nearestEnemy = null, nearestDist = Infinity;
+                    for (const e of units.values()) {
+                        if (e.owner === owner) continue;
+                        if (isAtWar && !isAtWar(e.owner)) continue;
+                        const dist = Math.abs(e.x - u.x) + Math.abs(e.z - u.z);
+                        if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
+                    }
+                    if (nearestEnemy) {
+                        const ourDist = Math.abs(nearestEnemy.x - u.x) + Math.abs(nearestEnemy.z - u.z);
+                        const otherDist = Math.abs(nearestEnemy.x - other.x) + Math.abs(nearestEnemy.z - other.z);
+                        if (otherDist > ourDist) hasAllyBehind = true;
+                    }
+                }
+                // If we're the tank and have allies behind, advance toward enemy
+                if (hasAllyBehind) {
+                    let nearestEnemy = null, nearestDist = Infinity;
+                    for (const e of units.values()) {
+                        if (e.owner === owner) continue;
+                        if (isAtWar && !isAtWar(e.owner)) continue;
+                        const dist = Math.abs(e.x - u.x) + Math.abs(e.z - u.z);
+                        if (dist < nearestDist) { nearestDist = dist; nearestEnemy = e; }
+                    }
+                    if (nearestEnemy && nearestDist > 1) {
+                        const step = nextStepToward(tiles, units, u, nearestEnemy, 200, owner);
+                        if (step && !moved.has(`${step.x},${step.z}`)) {
+                            out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                            acted.add(u.id);
+                            moved.add(`${step.x},${step.z}`);
+                        }
+                    }
+                }
+            }
+            // MAN_OF_WAR: stay near other friendly ships (flagship aura)
+            if (u.type === 'MAN_OF_WAR') {
+                let nearbyAllies = 0;
+                for (const other of units.values()) {
+                    if (other.owner !== owner || other.id === u.id) continue;
+                    const oDef = UNIT_TYPE[other.type];
+                    if (!oDef || !oDef.naval) continue;
+                    if (Math.abs(other.x - u.x) + Math.abs(other.z - u.z) <= 2) nearbyAllies++;
+                }
+                // If no allies nearby, move toward the nearest friendly warship
+                if (nearbyAllies === 0) {
+                    let nearestAlly = null, nearestDist = Infinity;
+                    for (const other of units.values()) {
+                        if (other.owner !== owner || other.id === u.id) continue;
+                        const oDef = UNIT_TYPE[other.type];
+                        if (!oDef || !oDef.naval) continue;
+                        const dist = Math.abs(other.x - u.x) + Math.abs(other.z - u.z);
+                        if (dist < nearestDist) { nearestDist = dist; nearestAlly = other; }
+                    }
+                    if (nearestAlly && nearestDist > 2) {
+                        const step = nextStepToward(tiles, units, u, nearestAlly, 200, owner);
+                        if (step && !moved.has(`${step.x},${step.z}`)) {
+                            out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                            acted.add(u.id);
+                            moved.add(`${step.x},${step.z}`);
+                        }
+                    }
+                }
+            }
+            // GUNBOAT: prefer river tiles (shallow water access)
+            if (u.type === 'GUNBOAT') {
+                const here = tiles.get(`${u.x},${u.z}`);
+                if (here && here.terrain !== 'RIVER') {
+                    // Find nearest river tile
+                    let nearestRiver = null, nearestDist = Infinity;
+                    for (const t of tiles.values()) {
+                        if (t.terrain !== 'RIVER') continue;
+                        const dist = Math.abs(t.x - u.x) + Math.abs(t.z - u.z);
+                        if (dist < nearestDist) { nearestDist = dist; nearestRiver = t; }
+                    }
+                    if (nearestRiver && nearestDist > 1 && nearestDist <= 4) {
+                        const step = nextStepToward(tiles, units, u, nearestRiver, 200, owner);
+                        if (step && !moved.has(`${step.x},${step.z}`)) {
+                            out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                            acted.add(u.id);
+                            moved.add(`${step.x},${step.z}`);
+                        }
+                    }
+                }
             }
         }
     }
