@@ -189,3 +189,172 @@ export function getAttackTargets(unit, units) {
     }
     return targets;
 }
+
+// === SPECIAL UNIT ABILITY HELPERS ===
+
+/**
+ * Count adjacent friendly MUSKETEER units for volley fire bonus.
+ * MUSKETEER gets +1 attack per adjacent friendly MUSKETEER.
+ */
+export function countAdjacentMusketters(unit, units) {
+    if (!unit || unit.type !== 'MUSKETEER') return 0;
+    let count = 0;
+    for (const other of units.values()) {
+        if (other.owner !== unit.owner) continue;
+        if (other.type !== 'MUSKETEER') continue;
+        if (other.id === unit.id) continue;
+        const dist = Math.abs(other.x - unit.x) + Math.abs(other.z - unit.z);
+        if (dist === 1) count++;
+    }
+    return count;
+}
+
+/**
+ * Check if a MUSKETEER has fired this turn (for slow reload on ARQUEBUSIER).
+ */
+export function hasFiredThisTurn(unit) {
+    return unit && unit.hasAttackedThisTurn;
+}
+
+/**
+ * Count adjacent friendly infantry units for LINE_INFANTRY formation bonus.
+ * LINE_INFANTRY gets +2 defense when 2+ friendly infantry are adjacent.
+ */
+export function countAdjacentInfantry(unit, units) {
+    if (!unit || unit.type !== 'LINE_INFANTRY') return 0;
+    const infantryTypes = new Set(['INFANTRY', 'LINE_INFANTRY', 'RIFLEMAN', 'MUSKETEER']);
+    let count = 0;
+    for (const other of units.values()) {
+        if (other.owner !== unit.owner) continue;
+        if (!infantryTypes.has(other.type)) continue;
+        if (other.id === unit.id) continue;
+        const dist = Math.abs(other.x - unit.x) + Math.abs(other.z - unit.z);
+        if (dist === 1) count++;
+    }
+    return count;
+}
+
+/**
+ * Check if a unit can attack twice this turn (FIELD_GUN rapid fire).
+ */
+export function canRapidFire(unit) {
+    return unit && unit.type === 'FIELD_GUN' && !unit.hasAttackedThisTurn;
+}
+
+/**
+ * Check if a unit must reload after firing (RAILGUN devastating).
+ */
+export function mustReload(unit) {
+    if (!unit || unit.type !== 'RAILGUN') return false;
+    return unit.reloadTurns > 0;
+}
+
+/**
+ * Check if a unit can move and fire same turn (ARMORED_TRAIN mobile).
+ */
+export function canMoveAndFire(unit) {
+    return unit && unit.type === 'ARMORED_TRAIN';
+}
+
+/**
+ * Check if a unit ignores defense (RIFLEMAN accurate).
+ */
+export function ignoresDefense(unit) {
+    return unit && unit.type === 'RIFLEMAN';
+}
+
+/**
+ * Get bonus damage vs lords (SHARPSHOOTER sniper).
+ */
+export function getSniperBonus(unit, target) {
+    if (!unit || unit.type !== 'SHARPSHOOTER') return 0;
+    if (!target) return 0;
+    // Bonus vs lords or high-value targets
+    if (target.lordId || target.type === 'SETTLER' || target.type === 'ENGINEER') {
+        return 3;
+    }
+    return 0;
+}
+
+/**
+ * Get demolition bonus vs cities/buildings (DEMOLITION_SQUAD).
+ */
+export function getDemolishBonus(unit) {
+    if (!unit || unit.type !== 'DEMOLITION_SQUAD') return 0;
+    return 5;
+}
+
+/**
+ * Check if unit destroys fortifications in 2 hits (SIEGE_CANNON fortBuster).
+ */
+export function isFortBuster(unit) {
+    return unit && unit.type === 'SIEGE_CANNON';
+}
+
+/**
+ * Get flagship bonus for adjacent naval units (MAN_OF_WAR).
+ */
+export function getFlagshipBonus(unit) {
+    if (!unit || unit.type !== 'MAN_OF_WAR') return 0;
+    return 1;
+}
+
+/**
+ * Check if unit is immune to wind penalties (GALLEASS oared, STEAM_TRANSPORT steamPowered).
+ */
+export function isWindImmune(unit) {
+    if (!unit) return false;
+    return unit.type === 'GALLEASS' || unit.type === 'STEAM_TRANSPORT';
+}
+
+/**
+ * Check if unit can enter shallow waters/rivers (GUNBOAT shallowDraft).
+ */
+export function canEnterShallowWaters(unit) {
+    return unit && unit.type === 'GUNBOAT';
+}
+
+/**
+ * Check if unit is stealthy when submerged (SUBMARINE).
+ */
+export function isStealthy(unit) {
+    return unit && unit.type === 'SUBMARINE' && unit.submerged;
+}
+
+/**
+ * Get torpedo bonus vs ships (TORPEDO_BOAT).
+ */
+export function getTorpedoBonus(unit, target) {
+    if (!unit || unit.type !== 'TORPEDO_BOAT') return 0;
+    if (!target || !UNIT_TYPE[target.type]?.naval) return 0;
+    return 8;
+}
+
+/**
+ * Check if unit takes reduced ranged damage (IRONCLAD armored).
+ */
+export function hasArmored(unit) {
+    return unit && unit.type === 'IRONCLAD';
+}
+
+/**
+ * Check if unit takes 1 less damage from all sources (IRONCLAD_FRIGATE heavyArmor).
+ */
+export function hasHeavyArmor(unit) {
+    return unit && unit.type === 'IRONCLAD_FRIGATE';
+}
+
+/**
+ * Check if unit has no firing direction penalty (MONITOR turret).
+ */
+export function hasTurret(unit) {
+    return unit && unit.type === 'MONITOR';
+}
+
+/**
+ * Get trade bonus for MERCHANTMAN.
+ */
+export function getTradeBonus(unit) {
+    if (!unit || unit.type !== 'MERCHANTMAN') return 0;
+    return 10;
+}

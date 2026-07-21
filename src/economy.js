@@ -52,11 +52,12 @@ export function collectResources(tiles, owner, resources, buildings, lords, fact
  *  `collectResources` sums each resource's categories into the pool. */
 export function grossYields(tiles, owner, buildings, lords, factionDef) {
     const breakdown = {
-        gold: { city: 0, market: 0, terrain: 0, wonder: 0 },
+        gold: { city: 0, market: 0, terrain: 0, wonder: 0, bank: 0 },
         food: { city: 0, farm: 0, terrain: 0, wonder: 0, passive: 0 },
         wood: { city: 0, lumbermill: 0, terrain: 0, wonder: 0 },
         iron: { city: 0, mine: 0, terrain: 0, wonder: 0 },
-        production: { city: 0, barracks: 0, workshop: 0, harbor: 0, wonder: 0 },
+        production: { city: 0, barracks: 0, workshop: 0, harbor: 0, wonder: 0, commandPost: 0, powerPlant: 0 },
+        research: { city: 0, university: 0, wonder: 0 },
     };
     const add = (res, cat, amt) => { breakdown[res][cat] = (breakdown[res][cat] || 0) + amt; };
     const lordsArr = lords || [];
@@ -112,12 +113,20 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
             if (!bData || !bData.bonus) continue;
             for (const [res, bonus] of Object.entries(bData.bonus)) {
                 if (res === 'defense') continue;
-                if (res === 'gold') add('gold', bType === 'MARKET' ? 'market' : 'city', bonus);
-                else if (res === 'production') {
+                if (res === 'gold') {
+                    if (bType === 'MARKET') add('gold', 'market', bonus);
+                    else if (bType === 'BANK') add('gold', 'bank', bonus);
+                    else add('gold', 'city', bonus);
+                } else if (res === 'production') {
                     if (bType === 'BARRACKS') add('production', 'barracks', bonus);
                     else if (bType === 'SIEGE_WORKSHOP') add('production', 'workshop', bonus);
                     else if (bType === 'HARBOR') add('production', 'harbor', bonus);
+                    else if (bType === 'COMMAND_POST') add('production', 'commandPost', bonus);
+                    else if (bType === 'POWER_PLANT') add('production', 'powerPlant', bonus);
                     else add('production', 'city', bonus);
+                } else if (res === 'research') {
+                    if (bType === 'UNIVERSITY') add('research', 'university', bonus);
+                    else add('research', 'city', bonus);
                 } else {
                     add(res, 'city', bonus);
                 }

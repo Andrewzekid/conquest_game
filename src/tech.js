@@ -117,18 +117,139 @@ export const TECHS = {
         unlocks: [],
         bonus: { settlerCostReduction: 0.3, extraTradeRoute: 1 },
         desc: 'Settlers cost 30% less. Each city gets +1 trade route.'
+    },
+
+    // === RENAISSANCE ERA (400 pts) ===
+    MATCHLOCK: {
+        id: 'MATCHLOCK', name: 'Matchlock', era: 'renaissance', cost: 400,
+        prerequisites: ['GUNPOWDER'],
+        unlocks: [{ type: 'unit', id: 'MUSKETEER' }, { type: 'unit', id: 'ARQUEBUSIER' }, { type: 'unit', id: 'PINNACE' }],
+        bonus: { rangedDamageBonus: 1 },
+        desc: 'Unlocks Musketman, Arquebusier, and Pinnace. Ranged units deal +1 damage.'
+    },
+    BASTION_FORT: {
+        id: 'BASTION_FORT', name: 'Bastion Fort', era: 'renaissance', cost: 400,
+        prerequisites: ['FORTIFICATION', 'GUNPOWDER'],
+        unlocks: [{ type: 'building', id: 'CITADEL' }],
+        bonus: { cityDefenseBonus: 3 },
+        desc: 'Unlocks Citadel building. Cities gain +3 defense.'
+    },
+    OCEAN_NAVIGATION: {
+        id: 'OCEAN_NAVIGATION', name: 'Ocean Navigation', era: 'renaissance', cost: 400,
+        prerequisites: ['CARTOGRAPHY', 'GUNPOWDER'],
+        unlocks: [{ type: 'unit', id: 'MAN_OF_WAR' }, { type: 'unit', id: 'GALLEASS' }],
+        bonus: { navalVisionBonus: 2 },
+        desc: 'Unlocks Man-of-War and Galleass. Naval units gain +2 vision.'
+    },
+
+    // === ENLIGHTENMENT ERA (600 pts) ===
+    FLINTLOCK: {
+        id: 'FLINTLOCK', name: 'Flintlock', era: 'enlightenment', cost: 600,
+        prerequisites: ['MATCHLOCK'],
+        unlocks: [{ type: 'unit', id: 'LINE_INFANTRY' }, { type: 'unit', id: 'DRAGOON' }, { type: 'unit', id: 'CORVETTE' }],
+        bonus: { infantryAttackBonus: 1 },
+        desc: 'Unlocks Line Infantry, Dragoon, and Corvette. Infantry gain +1 attack.'
+    },
+    METALLURGY: {
+        id: 'METALLURGY', name: 'Metallurgy', era: 'enlightenment', cost: 600,
+        prerequisites: ['MATCHLOCK', 'MACHINERY'],
+        unlocks: [{ type: 'unit', id: 'CANNON' }, { type: 'unit', id: 'MORTAR' }, { type: 'unit', id: 'FROLIC' }],
+        bonus: { siegePowerBonus: 2 },
+        desc: 'Unlocks Cannon, Mortar, and Frolic. Siege units gain +2 siege power.'
+    },
+    ACADEMY: {
+        id: 'ACADEMY', name: 'Academy', era: 'enlightenment', cost: 600,
+        prerequisites: ['MEDICINE', 'MATCHLOCK'],
+        unlocks: [{ type: 'building', id: 'UNIVERSITY' }],
+        bonus: { researchSpeedBonus: 0.25 },
+        desc: 'Unlocks University building. Research speed +25%.'
+    },
+    BANKING: {
+        id: 'BANKING', name: 'Banking', era: 'enlightenment', cost: 600,
+        prerequisites: ['MASS_PRODUCTION'],
+        unlocks: [{ type: 'building', id: 'BANK' }, { type: 'unit', id: 'MERCHANTMAN' }],
+        bonus: { goldIncomeBonus: 0.15 },
+        desc: 'Unlocks Bank building and Merchantman. Gold income +15%.'
+    },
+
+    // === MODERN ERA (800 pts) ===
+    RIFLED_MUSKET: {
+        id: 'RIFLED_MUSKET', name: 'Rifled Musket', era: 'modern', cost: 800,
+        prerequisites: ['FLINTLOCK', 'METALLURGY'],
+        unlocks: [{ type: 'unit', id: 'RIFLEMAN' }, { type: 'unit', id: 'SHARPSHOOTER' }],
+        bonus: { rangedRangeBonus: 1 },
+        desc: 'Unlocks Rifleman and Sharpshooter. Ranged units gain +1 range.'
+    },
+    STEAM_ENGINE: {
+        id: 'STEAM_ENGINE', name: 'Steam Engine', era: 'modern', cost: 800,
+        prerequisites: ['METALLURGY', 'BANKING'],
+        unlocks: [{ type: 'unit', id: 'IRONCLAD' }, { type: 'unit', id: 'STEAM_TRANSPORT' }, { type: 'unit', id: 'GUNBOAT' }],
+        bonus: { navalMoveBonus: 1 },
+        desc: 'Unlocks Ironclad, Steam Transport, and Gunboat. Naval units gain +1 move.'
+    },
+    RAILROAD: {
+        id: 'RAILROAD', name: 'Railroad', era: 'modern', cost: 800,
+        prerequisites: ['STEAM_ENGINE', 'ACADEMY'],
+        unlocks: [{ type: 'unit', id: 'RAILGUN' }, { type: 'unit', id: 'ARMORED_TRAIN' }],
+        bonus: { roadMoveBonus: 1 },
+        desc: 'Unlocks Railgun and Armored Train. Units gain +1 move on roads.'
+    },
+    TELEGRAPH: {
+        id: 'TELEGRAPH', name: 'Telegraph', era: 'modern', cost: 800,
+        prerequisites: ['ACADEMY', 'BANKING'],
+        unlocks: [{ type: 'building', id: 'COMMAND_POST' }],
+        bonus: { lordCommandBonus: 2 },
+        desc: 'Unlocks Command Post building. Lords gain +2 command range.'
+    },
+    EXPLOSIVES: {
+        id: 'EXPLOSIVES', name: 'Explosives', era: 'modern', cost: 800,
+        prerequisites: ['METALLURGY', 'FLINTLOCK'],
+        unlocks: [{ type: 'unit', id: 'DEMOLITION_SQUAD' }, { type: 'unit', id: 'SIEGE_CANNON' }],
+        bonus: { cityDamageBonus: 3 },
+        desc: 'Unlocks Demolition Squad and Siege Cannon. +3 damage vs cities.'
+    },
+    FIELD_ARTILLERY: {
+        id: 'FIELD_ARTILLERY', name: 'Field Artillery', era: 'modern', cost: 800,
+        prerequisites: ['CANNON', 'RAILROAD'],
+        unlocks: [{ type: 'unit', id: 'FIELD_GUN' }, { type: 'unit', id: 'HORSE_ARTILLERY' }],
+        bonus: { artilleryMoveBonus: 1 },
+        desc: 'Unlocks Field Gun and Horse Artillery. Artillery gain +1 move.'
+    },
+    IRONCLADS: {
+        id: 'IRONCLADS', name: 'Ironclads', era: 'modern', cost: 800,
+        prerequisites: ['STEAM_ENGINE', 'OCEAN_NAVIGATION'],
+        unlocks: [{ type: 'unit', id: 'IRONCLAD_FRIGATE' }, { type: 'unit', id: 'MONITOR' }, { type: 'unit', id: 'FRIGATE_2' }],
+        bonus: { navalHpBonus: 2 },
+        desc: 'Unlocks Ironclad Frigate, Monitor, and Frigate II. Naval units gain +2 HP.'
+    },
+    ELECTRICITY: {
+        id: 'ELECTRICITY', name: 'Electricity', era: 'modern', cost: 800,
+        prerequisites: ['TELEGRAPH', 'ACADEMY'],
+        unlocks: [{ type: 'building', id: 'POWER_PLANT' }],
+        bonus: { productionBonus: 0.20 },
+        desc: 'Unlocks Power Plant building. Production +20%.'
+    },
+    SUBMARINE: {
+        id: 'SUBMARINE', name: 'Submarine', era: 'modern', cost: 800,
+        prerequisites: ['IRONCLADS', 'EXPLOSIVES'],
+        unlocks: [{ type: 'unit', id: 'SUBMARINE' }, { type: 'unit', id: 'TORPEDO_BOAT' }],
+        bonus: { navalStealth: true },
+        desc: 'Unlocks Submarine and Torpedo Boat. Naval units can stealth.'
     }
 };
 
 // Era progression order
-export const ERA_ORDER = ['ancient', 'classical', 'medieval', 'industrial'];
+export const ERA_ORDER = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern'];
 
 // Era display names
 export const ERA_NAMES = {
     ancient: 'Ancient Era',
     classical: 'Classical Era',
     medieval: 'Medieval Era',
-    industrial: 'Industrial Era'
+    industrial: 'Industrial Era',
+    renaissance: 'Renaissance Era',
+    enlightenment: 'Enlightenment Era',
+    modern: 'Modern Era'
 };
 
 // --- State management ---
@@ -243,7 +364,21 @@ export function getTechBonuses(state) {
         workerBuildSpeed: 1,
         settlerCostReduction: 0,
         extraTradeRoute: 0,
-        canBuildBridge: false
+        canBuildBridge: false,
+        // New bonus types for Renaissance/Enlightenment/Modern eras
+        infantryAttackBonus: 0,
+        siegePowerBonus: 0,
+        researchSpeedBonus: 0,
+        goldIncomeBonus: 0,
+        rangedRangeBonus: 0,
+        navalMoveBonus: 0,
+        roadMoveBonus: 0,
+        lordCommandBonus: 0,
+        cityDamageBonus: 0,
+        artilleryMoveBonus: 0,
+        navalHpBonus: 0,
+        productionBonus: 0,
+        navalStealth: false
     };
     for (const id of state.researched) {
         const tech = TECHS[id];
@@ -337,19 +472,47 @@ export function autoSelectResearch(state, personality) {
         AGGRESSIVE: ['CHIVALRY', 'GUNPOWDER', 'SIEGE_CRAFT', 'FORTIFICATION',
                      'MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'ANIMAL_HUSBANDRY',
                      'ARCHERY', 'BRONZE_WORKING', 'CARTOGRAPHY', 'FEUDALISM',
-                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION'],
+                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION',
+                     // Renaissance
+                     'MATCHLOCK', 'BASTION_FORT', 'OCEAN_NAVIGATION',
+                     // Enlightenment
+                     'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
+                     // Modern
+                     'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE'],
         DEFENSIVE:  ['FORTIFICATION', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
                      'BRONZE_WORKING', 'SIEGE_CRAFT', 'MATHEMATICS', 'ARCHERY',
                      'ANIMAL_HUSBANDRY', 'NAVAL_ENGINEERING', 'CHIVALRY', 'GUNPOWDER',
-                     'CARTOGRAPHY', 'MACHINERY', 'MASS_PRODUCTION'],
+                     'CARTOGRAPHY', 'MACHINERY', 'MASS_PRODUCTION',
+                     // Renaissance
+                     'BASTION_FORT', 'MATCHLOCK', 'OCEAN_NAVIGATION',
+                     // Enlightenment
+                     'METALLURGY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
+                     // Modern
+                     'EXPLOSIVES', 'RIFLED_MUSKET', 'IRONCLADS', 'TELEGRAPH',
+                     'STEAM_ENGINE', 'RAILROAD', 'FIELD_ARTILLERY', 'ELECTRICITY', 'SUBMARINE'],
         ECONOMIC:   ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
                      'CARTOGRAPHY', 'ARCHERY', 'ANIMAL_HUSBANDRY', 'BRONZE_WORKING',
                      'SIEGE_CRAFT', 'FORTIFICATION', 'CHIVALRY', 'GUNPOWDER',
-                     'MEDICINE', 'FEUDALISM', 'MACHINERY'],
+                     'MEDICINE', 'FEUDALISM', 'MACHINERY',
+                     // Renaissance
+                     'MATCHLOCK', 'OCEAN_NAVIGATION', 'BASTION_FORT',
+                     // Enlightenment
+                     'BANKING', 'ACADEMY', 'FLINTLOCK', 'METALLURGY',
+                     // Modern
+                     'ELECTRICITY', 'TELEGRAPH', 'STEAM_ENGINE', 'RAILROAD',
+                     'RIFLED_MUSKET', 'IRONCLADS', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'SUBMARINE'],
         BALANCED:   ['ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
                      'ENGINEERING', 'NAVAL_ENGINEERING', 'SIEGE_CRAFT', 'FORTIFICATION',
                      'CHIVALRY', 'CARTOGRAPHY', 'FEUDALISM', 'GUNPOWDER',
-                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION']
+                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION',
+                     // Renaissance
+                     'MATCHLOCK', 'BASTION_FORT', 'OCEAN_NAVIGATION',
+                     // Enlightenment
+                     'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
+                     // Modern
+                     'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE']
     };
     const list = priorities[personality] || priorities.BALANCED;
     for (const id of list) {

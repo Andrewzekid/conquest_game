@@ -33,13 +33,16 @@ describe('Tech Tree Module', () => {
             }
         });
 
-        it('has 4 eras', () => {
+        it('has 7 eras', () => {
             const eras = new Set(Object.values(TECHS).map(t => t.era));
-            expect(eras.size).toBe(4);
+            expect(eras.size).toBe(7);
             expect(eras.has('ancient')).toBe(true);
             expect(eras.has('classical')).toBe(true);
             expect(eras.has('medieval')).toBe(true);
             expect(eras.has('industrial')).toBe(true);
+            expect(eras.has('renaissance')).toBe(true);
+            expect(eras.has('enlightenment')).toBe(true);
+            expect(eras.has('modern')).toBe(true);
         });
 
         it('has no circular prerequisites', () => {

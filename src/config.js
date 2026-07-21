@@ -109,13 +109,61 @@ export const UNIT_TYPE = {
     // SPY: a stealth agent (Feature 11). Cannot fight directly; performs covert
     // actions (gather intel / sabotage / assassinate / incite unrest) from an
     // enemy or neutral tile. High vision, low HP.
-    SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 }
+    SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 },
+    // === RENAISSANCE ERA UNITS (1700-1800) ===
+    // MUSKETEER: early firearm infantry with volley fire mechanic.
+    MUSKETEER:   { name: 'Musketman', hp: 14, attack: 8, defense: 4, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
+    // ARQUEBUSIER: early rifle with slow reload - cannot attack turn after firing.
+    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 7, defense: 3, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
+    // RENAISSANCE NAVAL: wooden warships dominate the seas.
+    MAN_OF_WAR:  { name: 'Man-of-War', hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 6, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 6, flagship: true },
+    GALLEASS:    { name: 'Galleass', hp: 25, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, oared: true },
+    PINNACE:     { name: 'Pinnace', hp: 18, attack: 7, defense: 4, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 2, vision: 7 },
+    // === ENLIGHTENMENT ERA UNITS (1800-1850) ===
+    // LINE_INFANTRY: disciplined formation fighters with formation bonus.
+    LINE_INFANTRY: { name: 'Line Infantry', hp: 16, attack: 9, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
+    // DRAGOON: mounted ranged - hybrid cavalry that can charge or fire.
+    DRAGOON:     { name: 'Dragoon', hp: 14, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
+    // CANNON: heavy artillery with devastating siege power.
+    CANNON:      { name: 'Cannon', hp: 10, attack: 12, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 3, siegeBonus: 4 },
+    // MORTAR: indirect fire with AOE splash damage.
+    MORTAR:      { name: 'Mortar', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, aoeRadius: 2 },
+    // ENLIGHTENMENT NAVAL: faster sailing warships.
+    CORVETTE:    { name: 'Corvette', hp: 22, attack: 9, defense: 5, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 2, raider: true },
+    FROLIC:      { name: 'Frolic', hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, broadside: true },
+    MERCHANTMAN: { name: 'Merchantman', hp: 20, attack: 4, defense: 4, moveRange: 3, upkeep: { food: 4, gold: 6, wood: 3, iron: 1 }, naval: true, capacity: 3, tradeBonus: 10 },
+    // === MODERN ERA UNITS (1850-1880) ===
+    // RIFLEMAN: accurate firearm infantry that ignores defense.
+    RIFLEMAN:    { name: 'Rifleman', hp: 18, attack: 11, defense: 6, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
+    // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
+    SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
+    // RAILGUN: devastating railway artillery with long reload.
+    RAILGUN:     { name: 'Railgun', hp: 12, attack: 15, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 4, devastating: true },
+    // ARMORED_TRAIN: mobile railway fortress that can move and fire.
+    ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 10, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
+    // FIELD_GUN: rapid-fire artillery.
+    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 13, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 3, rapidFire: true },
+    // HORSE_ARTILLERY: fast-deploy mobile cannon.
+    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 2, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true },
+    // DEMOLITION_SQUAD: combat engineers with bonus vs cities.
+    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 8, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
+    // SIEGE_CANNON: heavy siege gun that destroys fortifications.
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 14, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 4, fortBuster: true },
+    // MODERN NAVAL: steam-powered iron warships.
+    IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
+    STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
+    GUNBOAT:     { name: 'Gunboat', hp: 18, attack: 10, defense: 5, moveRange: 4, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, naval: true, ranged: true, attackRange: 2, shallowDraft: true },
+    IRONCLAD_FRIGATE: { name: 'Ironclad Frigate', hp: 45, attack: 15, defense: 12, moveRange: 3, upkeep: { food: 8, gold: 14, wood: 2, iron: 7 }, naval: true, ranged: true, attackRange: 3, heavyArmor: true },
+    MONITOR:     { name: 'Monitor', hp: 35, attack: 16, defense: 14, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true },
+    FRIGATE_2:   { name: 'Frigate II', hp: 38, attack: 13, defense: 9, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 3, fastSail: true },
+    SUBMARINE:   { name: 'Submarine', hp: 25, attack: 12, defense: 6, moveRange: 3, upkeep: { food: 4, gold: 10, wood: 1, iron: 5 }, naval: true, ranged: true, attackRange: 3, stealth: true },
+    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 15, attack: 18, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
-// (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN'];
-export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'];
+// are unlocked per-city by a Harbor.
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON'];
+export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
 export const SIEGE_ENGINES = ['CATAPULT', 'TREBUCHET'];
@@ -161,7 +209,38 @@ export const UNIT_COST = {
     GALLEY:      { gold: 40, food: 10, wood: 20, iron: 0,  production: 16 },
     TRANSPORT:   { gold: 35, food: 5,  wood: 20, iron: 0,  production: 20 },
     FRIGATE:     { gold: 60, food: 15, wood: 30, iron: 10, production: 24 },
-    GALLEON:     { gold: 90, food: 20, wood: 40, iron: 20, production: 30 }
+    GALLEON:     { gold: 90, food: 20, wood: 40, iron: 20, production: 30 },
+    // === RENAISSANCE ERA UNIT COSTS ===
+    MUSKETEER:   { gold: 80, food: 15, wood: 10, iron: 15, production: 22 },
+    ARQUEBUSIER: { gold: 70, food: 10, wood: 10, iron: 12, production: 20 },
+    MAN_OF_WAR:  { gold: 120, food: 20, wood: 50, iron: 25, production: 35 },
+    GALLEASS:    { gold: 90, food: 15, wood: 40, iron: 15, production: 28 },
+    PINNACE:     { gold: 50, food: 8, wood: 25, iron: 5, production: 18 },
+    // === ENLIGHTENMENT ERA UNIT COSTS ===
+    LINE_INFANTRY: { gold: 100, food: 20, wood: 10, iron: 20, production: 28 },
+    DRAGOON:     { gold: 110, food: 25, wood: 10, iron: 18, production: 30 },
+    CANNON:      { gold: 120, food: 10, wood: 15, iron: 30, production: 35 },
+    MORTAR:      { gold: 100, food: 10, wood: 15, iron: 25, production: 30 },
+    CORVETTE:    { gold: 70, food: 12, wood: 35, iron: 10, production: 22 },
+    FROLIC:      { gold: 100, food: 18, wood: 45, iron: 15, production: 30 },
+    MERCHANTMAN: { gold: 80, food: 15, wood: 35, iron: 5, production: 25 },
+    // === MODERN ERA UNIT COSTS ===
+    RIFLEMAN:    { gold: 140, food: 25, wood: 10, iron: 30, production: 35 },
+    SHARPSHOOTER: { gold: 150, food: 20, wood: 10, iron: 25, production: 38 },
+    RAILGUN:     { gold: 160, food: 15, wood: 10, iron: 45, production: 42 },
+    ARMORED_TRAIN: { gold: 150, food: 20, wood: 15, iron: 40, production: 40 },
+    FIELD_GUN:   { gold: 140, food: 15, wood: 12, iron: 35, production: 38 },
+    HORSE_ARTILLERY: { gold: 145, food: 20, wood: 12, iron: 35, production: 40 },
+    DEMOLITION_SQUAD: { gold: 90, food: 10, wood: 15, iron: 10, production: 25 },
+    SIEGE_CANNON: { gold: 150, food: 10, wood: 15, iron: 40, production: 40 },
+    IRONCLAD:    { gold: 180, food: 25, wood: 20, iron: 50, production: 45 },
+    STEAM_TRANSPORT: { gold: 120, food: 15, wood: 25, iron: 30, production: 35 },
+    GUNBOAT:     { gold: 80, food: 10, wood: 20, iron: 15, production: 22 },
+    IRONCLAD_FRIGATE: { gold: 200, food: 30, wood: 20, iron: 60, production: 50 },
+    MONITOR:     { gold: 190, food: 25, wood: 15, iron: 55, production: 48 },
+    FRIGATE_2:   { gold: 130, food: 20, wood: 40, iron: 20, production: 32 },
+    SUBMARINE:   { gold: 160, food: 12, wood: 10, iron: 45, production: 40 },
+    TORPEDO_BOAT: { gold: 100, food: 8, wood: 10, iron: 30, production: 28 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -194,7 +273,23 @@ export const TYPE_ADVANTAGE = {
     CHARIOT:     { strongAgainst: 'ARCHER',    multiplier: 1.4 },
     // Naval type advantages
     FRIGATE:     { strongAgainst: 'GALLEY',    multiplier: 1.5 },
-    GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 }
+    GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 },
+    // Renaissance era type advantages
+    MUSKETEER:   { strongAgainst: 'CROSSBOWMAN', multiplier: 1.4 },
+    MAN_OF_WAR:  { strongAgainst: 'GALLEON',   multiplier: 1.5 },
+    // Enlightenment era type advantages
+    LINE_INFANTRY: { strongAgainst: 'MUSKETEER', multiplier: 1.3 },
+    CANNON:      { strongAgainst: 'MUSKETEER', multiplier: 1.5 },
+    MORTAR:      { strongAgainst: 'LINE_INFANTRY', multiplier: 1.5 },
+    CORVETTE:    { strongAgainst: 'TRANSPORT', multiplier: 1.6 },
+    FROLIC:      { strongAgainst: 'CORVETTE',  multiplier: 1.4 },
+    // Modern era type advantages
+    RIFLEMAN:    { strongAgainst: 'LINE_INFANTRY', multiplier: 1.4 },
+    IRONCLAD:    { strongAgainst: 'FRIGATE',   multiplier: 1.6 },
+    MONITOR:     { strongAgainst: 'IRONCLAD',  multiplier: 1.4 },
+    RAILGUN:     { strongAgainst: 'CANNON',    multiplier: 1.5 },
+    SUBMARINE:   { strongAgainst: 'MAN_OF_WAR', multiplier: 1.5 },
+    TORPEDO_BOAT: { strongAgainst: 'IRONCLAD', multiplier: 1.8 }
 };
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
@@ -349,7 +444,20 @@ export const BUILDING_TYPE = {
     HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.' }
+                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.' },
+    // === RENAISSANCE ERA BUILDINGS ===
+    CITADEL:     { name: 'Citadel',     cost: { gold: 120, wood: 40, iron: 30 }, bonus: { defense: 8 }, terrain: 'CITY', upgradesFrom: 'WALLS',
+                  desc: '+8 defense to units defending this tile. Upgrades Walls.' },
+    // === ENLIGHTENMENT ERA BUILDINGS ===
+    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 3 }, terrain: 'CITY',
+                  desc: '+3 research points per turn.' },
+    BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY',
+                  desc: '+20 gold per turn.' },
+    // === MODERN ERA BUILDINGS ===
+    COMMAND_POST:{ name: 'Command Post', cost: { gold: 180, wood: 50, iron: 40 }, bonus: { production: 8 }, terrain: 'CITY',
+                  desc: '+8 production per turn. Lords gain +2 command range.' },
+    POWER_PLANT: { name: 'Power Plant', cost: { gold: 250, wood: 60, iron: 50 }, bonus: { production: 12 }, terrain: 'CITY',
+                  desc: '+12 production per turn.' }
 };
 
 // Military structures outside cities can be attacked, damaged, and pillaged.

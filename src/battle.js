@@ -127,6 +127,57 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // WINGED_HUSSAR alpha strike is handled below as a damage multiplier (2x on
     // the first attack each turn) — it does not add raw attack here.
 
+    // === RENAISSANCE/ENLIGHTENMENT/MODERN ERA UNIT BONUSES ===
+    // MUSKETEER volley fire: +1 attack per adjacent friendly MUSKETEER.
+    if (attackerUnit.type === 'MUSKETEER' && units) {
+        let adjacentMusketters = 0;
+        for (const other of units.values()) {
+            if (other.owner !== attackerUnit.owner || other.type !== 'MUSKETEER' || other.id === attackerUnit.id) continue;
+            if (Math.abs(other.x - attackerUnit.x) + Math.abs(other.z - attackerUnit.z) === 1) adjacentMusketters++;
+        }
+        if (adjacentMusketters > 0) {
+            effectiveAttack += adjacentMusketters;
+            messages.push(`${combatName(attackerUnit)} volley fire: +${adjacentMusketters} atk (${adjacentMusketters} adjacent)`);
+        }
+    }
+    // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
+    // (Defense bonus applied below in defender section)
+
+    // CANNON siege bonus: additional +4 vs cities (stacks with base siegeBonus).
+    if (attackerUnit.type === 'CANNON' && isCity) {
+        effectiveAttack += 4;
+        messages.push(`${combatName(attackerUnit)} cannonball barrage: +4 vs city`);
+    }
+    // MORTAR AOE: splash damage handled separately in AOE section.
+
+    // RIFLEMAN accurate: ignores 50% of target defense.
+    if (attackerUnit.type === 'RIFLEMAN') {
+        effectiveDefense *= 0.5;
+        messages.push(`${combatName(attackerUnit)} rifled accuracy: target defense halved!`);
+    }
+    // SHARPSHOOTER sniper: +3 vs lords, settlers, engineers.
+    if (attackerUnit.type === 'SHARPSHOOTER' && defenderUnit) {
+        if (defenderUnit.lordId || defenderUnit._isLord || defenderUnit.type === 'SETTLER' || defenderUnit.type === 'ENGINEER') {
+            effectiveAttack += 3;
+            messages.push(`${combatName(attackerUnit)} precision shot: +3 vs high-value target`);
+        }
+    }
+    // DEMOLITION_SQUAD demolish: +5 vs cities and buildings.
+    if (attackerUnit.type === 'DEMOLITION_SQUAD' && (isCity || (buildings && buildings.get(tileKey)?.length > 0))) {
+        effectiveAttack += 5;
+        messages.push(`${combatName(attackerUnit)} demolition charge: +5 vs fortification`);
+    }
+    // SIEGE_CANNON fort buster: +6 vs cities.
+    if (attackerUnit.type === 'SIEGE_CANNON' && isCity) {
+        effectiveAttack += 6;
+        messages.push(`${combatName(attackerUnit)} fort buster: +6 vs city`);
+    }
+    // TORPEDO_BOAT torpedo: +8 vs naval units.
+    if (attackerUnit.type === 'TORPEDO_BOAT' && defStats.naval) {
+        effectiveAttack += 8;
+        messages.push(`${combatName(attackerUnit)} torpedo strike: +8 vs naval`);
+    }
+
     // Siege bonus: artillery vs cities, lord siege ability, or Conqueror class.
     const isCity = terrain === 'CITY';
     if (isCity) {
@@ -195,6 +246,31 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     if (byzFort > 0 && !defenderUnit.hasMovedThisTurn) {
         effectiveDefense += byzFort;
         messages.push(`${combatName(defenderUnit)} is fortified (+${byzFort} def)`);
+    }
+    // === RENAISSANCE/ENLIGHTENMENT/MODERN ERA DEFENDER BONUSES ===
+    // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
+    if (defenderUnit.type === 'LINE_INFANTRY' && units) {
+        const infantryTypes = new Set(['INFANTRY', 'LINE_INFANTRY', 'RIFLEMAN', 'MUSKETEER']);
+        let adjacentInfantry = 0;
+        for (const other of units.values()) {
+            if (other.owner !== defenderUnit.owner || other.id === defenderUnit.id) continue;
+            if (!infantryTypes.has(other.type)) continue;
+            if (Math.abs(other.x - defenderUnit.x) + Math.abs(other.z - defenderUnit.z) === 1) adjacentInfantry++;
+        }
+        if (adjacentInfantry >= 2) {
+            effectiveDefense += 2;
+            messages.push(`${combatName(defenderUnit)} formation discipline: +2 def (${adjacentInfantry} adjacent)`);
+        }
+    }
+    // IRONCLAD armored: reduces ranged damage taken by 50%.
+    if (defenderUnit.type === 'IRONCLAD' && atkStats.ranged) {
+        effectiveDefense += Math.floor(effectiveDefense * 0.5);
+        messages.push(`${combatName(defenderUnit)} armored hull: +50% effective defense vs ranged`);
+    }
+    // IRONCLAD_FRIGATE heavyArmor: takes 1 less damage from all sources.
+    if (defenderUnit.type === 'IRONCLAD_FRIGATE') {
+        effectiveDefense += 3;
+        messages.push(`${combatName(defenderUnit)} heavy armor: +3 defense`);
     }
     // Encircled defenders fight at a disadvantage (no room to maneuver).
     if (encircled) {

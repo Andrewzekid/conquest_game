@@ -91,6 +91,12 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
         return messages;
     }
 
+    // CITADEL requires WALLS to be present (it upgrades Walls)
+    if (buildingType === 'CITADEL' && !existing.includes('WALLS')) {
+        messages.push(`Cannot build ${bData.name}: requires Walls to be built first.`);
+        return messages;
+    }
+
     // Affordability
     for (const [res, amt] of Object.entries(bData.cost)) {
         if ((resources[res] || 0) < amt) {
