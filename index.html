@@ -144,6 +144,12 @@
         #build-menu { right: 20px; border-top: 3px solid var(--blue); }
         #diplomacy-panel { right: 280px; border-top: 3px solid var(--gold); }
         #lord-panel { right: 540px; border-top: 3px solid var(--gold); }
+        #victory-panel { left: 20px; border-top: 3px solid var(--green); }
+        .victory-section { margin-bottom: 12px; }
+        .victory-label { font-weight: 700; font-size: 12px; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .victory-detail { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+        .progress-track { height: 8px; background: #11182b; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #2e7d4f, #4caf6f); transition: width 0.3s ease; }
 
         /* Scrollbars */
         .panel-body::-webkit-scrollbar, #combat-log::-webkit-scrollbar { width: 9px; }
@@ -379,6 +385,10 @@
     <div id="ai-goals-panel" class="side-panel" style="display:none;">
         <div class="panel-drag-handle"><span>AI Goals</span><button class="panel-minimize" title="Minimize">−</button></div>
         <div id="ai-goals-panel-body" class="panel-body"></div>
+    </div>
+    <div id="victory-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>Victory Progress</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="victory-panel-body" class="panel-body"></div>
     </div>
     <div id="combat-log"></div>
 

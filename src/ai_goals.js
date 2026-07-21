@@ -47,6 +47,9 @@ export function createAIState() {
         progress: {},               // kind -> { since, attempts, lastTileKey }
         artilleryReserve: AI_ARTILLERY_RESERVE_DEFAULT,
         settlerScarcityTurns: 0,    // consecutive scarce turns (see ai.js settler block)
+        prevStock: null,            // last turn's resource stock snapshot (for flow calc)
+        drainingResource: null,     // worst per-turn-draining resource this turn (food/wood/iron/gold)
+        lastFlow: null,              // per-resource net change vs prevStock { gold, food, wood, iron }
     };
 }
 

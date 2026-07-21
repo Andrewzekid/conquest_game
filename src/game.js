@@ -27,16 +27,24 @@ import { computeAIActions, kingRangedResponse } from './ai.js';
 import { GameRenderer } from './renderer.js';
 import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
-import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey, getTension, addGrievance, grievanceLevel } from './diplomacy.js';
+import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey, getTension, addGrievance, grievanceLevel,
+         createPeaceDemand, evaluatePeaceDemand, getWarWeariness, applyWarWeariness, processWarWeariness, PEACE_DEMAND_LIMITS,
+         formCoalition, eligibleCoalitionAllies, declareCoalitionWar, getCoalition } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
-         lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp } from './lords.js';
+         lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp,
+         getAvailableSkills, investSkillPoint, getSkillEffects } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
-import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD } from './config.js';
-import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
+import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST } from './config.js';
+import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
+         createTradeRoute, validateTradeRoute, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
 import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
          getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
 import { initAIState, createAIState, serializeAIState, deserializeAIState } from './ai_goals.js';
+import { addEvent as addEventEntry } from './eventlog.js';
+import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
+import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
+import { buildMinimapData, getCityJumpList, getArmyComposition } from './ui_data.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
 import { saveGame, loadGame, loadSavedExists, clearSave } from './save.js';
 import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
@@ -209,6 +217,7 @@ export class Game {
             buildings: new Map(),
             buildingState: new Map(),
             tradeRoutes: [],
+            tradeRouteNextId: 1,
             resources: Object.fromEntries(FACTIONS.map(f => [f, { ...INITIAL_RESOURCES }])),
             diplomacy: createDiplomacyState(FACTIONS),
             turn: 1,
@@ -266,7 +275,11 @@ export class Game {
             // Game instance. Set here in initState so it always exists before
             // any reader — _initSpectateUI used to set it before gameState was
             // built, throwing "can't access spectateMode of undefined".
-            spectateMode: this.spectateMode
+            spectateMode: this.spectateMode,
+            // Feature 6: rolling event log (capped; oldest drop off).
+            eventLog: [],
+            // Feature 8: active difficulty preset key (defaults to NORMAL).
+            difficulty: this.difficulty || 'NORMAL'
         };
 
         // Tech tree state (4X feature): single-track research progress.
@@ -335,6 +348,23 @@ export class Game {
         this.factions = FACTIONS;
         this.gameState = state;
         this.tiles = state.tiles;
+        // Backfill city-unrest fields for saves made before the unrest system.
+        // calculateUnrest already tolerates undefined, but normalizing here keeps
+        // tile.unrest a stable number for the UI right after load.
+        if (this.tiles) {
+            for (const tile of this.tiles.values()) {
+                if (tile.terrain !== 'CITY') continue;
+                if (tile.unrest == null) tile.unrest = 0;
+                if (tile.lastConqueredTurn == null) tile.lastConqueredTurn = 0;
+                if (!Array.isArray(tile.unrestReasons)) tile.unrestReasons = [];
+            }
+        }
+        // Trade routes (Feature 3): backfill the array + id counter for old saves.
+        if (!Array.isArray(this.gameState.tradeRoutes)) this.gameState.tradeRoutes = [];
+        if (!this.gameState.tradeRouteNextId) this.gameState.tradeRouteNextId = this.gameState.tradeRoutes.length + 1;
+        // War-weariness store (Feature 2): backfill for old saves.
+        if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
+        if (!this.gameState.diplomacy.warWeariness) this.gameState.diplomacy.warWeariness = {};
         // Mirror the instance spectate flag onto gameState for pure render/UI
         // code (loaded games skip initState, where this is normally set).
         this.gameState.spectateMode = this.spectateMode;
@@ -350,7 +380,7 @@ export class Game {
         this.gameState.bridgeTargets = [];
         if (!this.gameState.production) this.gameState.production = new Map();
         if (!this.gameState.construction) this.gameState.construction = new Map();
-        if (!this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) this.gameState.structures = new Map();
+                        if (!this.gameState.structures) this.gameState.structures = new Map();
         if (!this.gameState.bridges) this.gameState.bridges = new Set();
         if (!this.gameState.scryRevealed) this.gameState.scryRevealed = new Set();
         if (!this.gameState.concealedUnits) this.gameState.concealedUnits = new Map();
@@ -380,6 +410,11 @@ export class Game {
         // pendingOffers may be absent on old saves.
         if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
         if (!this.gameState.diplomacy.pendingOffers) this.gameState.diplomacy.pendingOffers = [];
+        // Feature 6 event log + Feature 8 difficulty — absent on old saves.
+        if (!Array.isArray(this.gameState.eventLog)) this.gameState.eventLog = [];
+        if (!this.gameState.difficulty) this.gameState.difficulty = 'NORMAL';
+        // Feature 12 coalition store — absent on old saves.
+        if (!this.gameState.diplomacy.coalitions) this.gameState.diplomacy.coalitions = {};
         this.gameState.pendingAmbush = null;
         this.gameState.selectedUnit = null;
         this.gameState.selectedLord = null;
@@ -448,9 +483,13 @@ export class Game {
             onBuild: (buildingType, tile) => this.handleBuild(buildingType, tile),
             onTrain: (unitType, tile) => this.handleTrain(unitType, tile),
             onDiplomacy: (action, target) => this.handleDiplomacy(action, target),
+            onPeaceNegotiation: (target, demands) => this.handlePeaceNegotiation(target, demands),
             onRecruitLord: this.spectateMode ? null : () => this.handleRecruitLord(),
             onLevelUpCity: (tile) => this.handleLevelUpCity(tile),
+            onEstablishTrade: (cityKey, targetCityKey) => this.handleEstablishTrade(cityKey, targetCityKey),
             onActivateKing: (lord) => this.handleActivateKing(lord),
+            onSkillInvestment: (lordId, skillId) => this.handleSkillInvestment(lordId, skillId),
+            getVictoryProgress: () => this.getVictoryProgress(),
             onCancelGoal: (unit) => this.handleCancelGoal(unit),
             onFoundCity: (unit) => this.handleFoundCity(unit),
             onBuildSiegeTower: (unit) => this.handleBuildSiegeTower(unit),
@@ -1280,7 +1319,7 @@ export class Game {
             if (t.owner === f) { t.owner = null; t.loyalty = 0; }
         }
         // Its defensive structures collapse with the faction.
-        if (this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) {
+        if (this.gameState.structures) {
             for (const [skey, s] of [...this.gameState.structures]) {
                 if (s.owner === f) this.gameState.structures.delete(skey);
             }
@@ -2059,7 +2098,7 @@ export class Game {
      *  takes damage and is stunned (skips its next turn), and the trap is
      *  consumed. Friendly structures do nothing. */
     _checkFallTrap(unit) {
-        if (!unit || !this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) return;
+        if (!unit || !this.gameState.structures) return;
         const skey = `${unit.x},${unit.z}`;
         const s = this.gameState.structures.get(skey);
         if (!s || s.type !== 'FALL_TRAP' || s.owner === unit.owner) return;
@@ -2092,7 +2131,7 @@ export class Game {
      *  has enemy SPIKES, the charger is impaled before its blow lands.
      *  Returns true if the charger survives (false if the spikes killed it). */
     _applySpikesOnCharge(attacker) {
-        if (!attacker || !this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) return true;
+        if (!attacker || !this.gameState.structures) return true;
         const s = this.gameState.structures.get(`${attacker.x},${attacker.z}`);
         if (!s || s.type !== 'SPIKES' || s.owner === attacker.owner) return true;
         const dmg = (STRUCTURE_TYPE.SPIKES && STRUCTURE_TYPE.SPIKES.damageVsCavalry) || 4;
@@ -2272,7 +2311,7 @@ export class Game {
                     const skey = `${proj.x},${proj.z}`;
                     if (tile && tile.owner === faction &&
                         !(this.gameState.structures && this.gameState.structures.has(skey))) {
-                        if (!this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) this.gameState.structures = new Map();
+        if (!this.gameState.structures) this.gameState.structures = new Map();
                         const sName = (STRUCTURE_TYPE[proj.structureType] || {}).name || proj.structureType;
                         this.gameState.structures.set(skey, { type: proj.structureType, owner: faction });
                         this.log(`${factionName}: ${sName} completed at [${proj.x}, ${proj.z}]!`);
@@ -2715,6 +2754,127 @@ export class Game {
         this.ui.showDiplomacyPanel();
     }
 
+    /** Handle a player-proposed peace with demands (gold reparations, territory
+     *  cession, or ongoing tribute). The target AI evaluates the demand using
+     *  its personality, the power ratio, war weariness, and the relationship
+     *  score; on acceptance the demand is applied and peace is established. */
+    handlePeaceNegotiation(target, demands) {
+        const diplo = this.gameState.diplomacy;
+        const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        const rel = getRelation(diplo, PLAYER_FACTION, target);
+
+        if (rel.state !== DIPLOMACY_STATES.WAR) {
+            this.log(`Can only negotiate peace during war with ${nameOf(target)}.`);
+            sfx.click();
+            this.ui.showDiplomacyPanel();
+            return;
+        }
+
+        // Validate demand magnitude against the configured caps.
+        if (demands.type === 'gold' && demands.amount > PEACE_DEMAND_LIMITS.MAX_GOLD_DEMAND) {
+            this.log(`Gold demand capped at ${PEACE_DEMAND_LIMITS.MAX_GOLD_DEMAND}.`);
+            return;
+        }
+        if (demands.type === 'territory' && (demands.tiles || []).length > PEACE_DEMAND_LIMITS.MAX_TERRITORY_TILES) {
+            this.log(`Territory demand capped at ${PEACE_DEMAND_LIMITS.MAX_TERRITORY_TILES} tiles.`);
+            return;
+        }
+        if (demands.type === 'tribute') {
+            if (demands.perTurn > PEACE_DEMAND_LIMITS.MAX_TRIBUTE_PER_TURN ||
+                demands.duration > PEACE_DEMAND_LIMITS.MAX_TRIBUTE_DURATION) {
+                this.log(`Tribute capped at ${PEACE_DEMAND_LIMITS.MAX_TRIBUTE_PER_TURN}g for ${PEACE_DEMAND_LIMITS.MAX_TRIBUTE_DURATION} turns.`);
+                return;
+            }
+        }
+
+        const playerPower = this._factionPower(PLAYER_FACTION);
+        const targetPower = this._factionPower(target);
+        const powerRatio = playerPower / Math.max(1, targetPower);
+        const weariness = getWarWeariness(diplo, target);
+        const demand = createPeaceDemand(demands.type, demands);
+        const targetDef = this.factionDefs ? this.factionDefs[target] : null;
+        const personality = (targetDef && targetDef.aiPersonality) || 'DEFENSIVE';
+        const targetRes = this.gameState.resources && this.gameState.resources[target] || { gold: 0 };
+
+        const result = evaluatePeaceDemand(
+            demand, target, PLAYER_FACTION, diplo, targetRes, powerRatio, weariness, personality
+        );
+
+        if (result.accepted) {
+            if (demand.type === 'gold' && demand.amount > 0) {
+                const tr = this.gameState.resources[target];
+                const pr = this.gameState.resources[PLAYER_FACTION];
+                const paid = Math.min(demand.amount, (tr && tr.gold) || 0);
+                if (tr) tr.gold = Math.max(0, (tr.gold || 0) - paid);
+                if (pr) pr.gold = (pr.gold || 0) + paid;
+                this.log(`${nameOf(target)} pays ${paid} gold in reparations.`);
+            } else if (demand.type === 'territory') {
+                let transferred = 0;
+                for (const tileKey of demand.tiles) {
+                    const tile = this.tiles.get(tileKey);
+                    if (tile && tile.owner === target) {
+                        tile.owner = PLAYER_FACTION;
+                        transferred++;
+                    }
+                }
+                this.log(`${nameOf(target)} cedes ${transferred} tile(s).`);
+            } else if (demand.type === 'tribute') {
+                // Store the tribute on the relation; the turn manager pays it out
+                // each turn until the duration expires.
+                rel.tribute = { from: target, to: PLAYER_FACTION,
+                                perTurn: demand.perTurn, turnsLeft: demand.duration };
+                this.log(`${nameOf(target)} agrees to pay ${demand.perTurn} gold/turn for ${demand.duration} turns.`);
+            }
+            setRelation(diplo, PLAYER_FACTION, target, DIPLOMACY_STATES.PEACE, this.gameState.turn || 0);
+            this.log(`Peace established with ${nameOf(target)}.`);
+        } else {
+            this.log(`${nameOf(target)} rejects your peace terms (chance ${Math.round(result.chance * 100)}%).`);
+        }
+
+        sfx.click();
+        this.ui.showDiplomacyPanel();
+        this.renderAll();
+    }
+
+    /** Establish a trade route from one of the player's cities (≥ min level) to
+     *  a target city. Routes pay income per turn based on distance + both city
+     *  levels; enemy units on the route's path can raid and disrupt them. Each
+     *  established route also counts toward the economic victory threshold. */
+    handleEstablishTrade(cityKey, targetCityKey) {
+        const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        const fromTile = this.tiles.get(cityKey);
+        const toTile = this.tiles.get(targetCityKey);
+        if (!fromTile || !toTile) { this.log('Trade route: city not found.'); return; }
+        const targetOwner = toTile.owner;
+        if (!targetOwner) { this.log('Trade route: destination is not a founded city.'); return; }
+
+        const validation = validateTradeRoute(
+            this.tiles, this.gameState.diplomacy,
+            PLAYER_FACTION, targetOwner, cityKey, targetCityKey,
+            this.gameState.tradeRoutes
+        );
+        if (!validation.valid) { this.log(`Trade route rejected: ${validation.reason}`); sfx.click(); return; }
+
+        if (!this.gameState.tradeRouteNextId) this.gameState.tradeRouteNextId = 1;
+        const route = createTradeRoute({
+            id: this.gameState.tradeRouteNextId++,
+            from: { owner: PLAYER_FACTION, cityKey, x: fromTile.x, z: fromTile.z },
+            to: { owner: targetOwner, cityKey: targetCityKey, x: toTile.x, z: toTile.z },
+            fromLevel: fromTile.cityLevel || 1,
+            toLevel: toTile.cityLevel || 1,
+            turn: this.gameState.turn || 0
+        });
+        this.gameState.tradeRoutes.push(route);
+        // Economic victory counter: track routes per faction.
+        if (!this.gameState.victoryState) this.gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+        const vr = this.gameState.victoryState.tradeRoutes || (this.gameState.victoryState.tradeRoutes = {});
+        vr[PLAYER_FACTION] = (vr[PLAYER_FACTION] || 0) + 1;
+        this.log(`Trade route established to ${nameOf(targetOwner)}! +${route.income} gold/turn.`);
+        sfx.click();
+        this.ui.updateResourceBar();
+        this.renderAll();
+    }
+
     /** Award grievances when a city is captured. Former owner gets the biggest
      *  grievance; neutral cities within NEUTRAL_CITY_GRUDGE_RADIUS of a faction's
      *  city also generate a smaller grievance (Civ6 border tension). */
@@ -2730,6 +2890,13 @@ export class Game {
                 res.gold = (res.gold || 0) + plunder;
                 this.log(`${(conquerorDef && conquerorDef.name) || other} plunders ${plunder} gold from the conquered city!`);
             }
+        }
+        // City unrest: a freshly-captured city starts at elevated unrest and
+        // remembers the conquest turn (the recent-conquest spike decays over
+        // UNREST_INCREASE_RATES.RECENT_CONQUEST_DECAY_TURNS via calculateUnrest).
+        if (cityTile) {
+            cityTile.lastConqueredTurn = this.gameState.turn || 0;
+            cityTile.unrest = UNREST_INCREASE_RATES.CAPTURE_INITIAL;
         }
         // Former owner gets +25 grievance for losing a city
         if (prevOwner && prevOwner !== other) {
@@ -2833,6 +3000,21 @@ export class Game {
             return;
         }
         this.activateKing(PLAYER_FACTION);
+    }
+
+    /** Spend a lord's skill point on a skill-tree node (Feature 4). Only the
+     *  player's own lords can be invested in; AI lords auto-spend is handled
+     *  separately in runAITurn. */
+    handleSkillInvestment(lordId, skillId) {
+        const lord = this.gameState.lords.find(l => l.id === lordId);
+        if (!lord || lord.owner !== PLAYER_FACTION) { this.log('Lord not found.'); return; }
+        const result = investSkillPoint(lord, skillId);
+        this.log(result.message);
+        if (result.success) {
+            sfx.click();
+            this.ui.showLordInfo(lord);
+            this.renderAll();
+        }
     }
 
     /** Apply a faction's king active ability (player or AI). */
@@ -4329,6 +4511,9 @@ export class Game {
         this._aiUnitAttackLords(faction);
         this.updateFog();
         this.checkVictory();
+        // Feature 6: record a turn-summary event so the event log captures AI
+        // activity even when no specific combat/capture event fired.
+        this.addEvent('turn', `${factionName} completed turn ${this.gameState.turn || 0}.`);
     }
 
     updateFog() {
@@ -4541,6 +4726,105 @@ export class Game {
             scores[f] = score;
         }
         return scores;
+    }
+
+    /** Victory progress data for the tracker panel (Feature 5). Pulls the
+     *  same numbers `_checkPlayerVictory` and `_calculateScores` use, so the
+     *  tracker always agrees with the actual victory checks. */
+    getVictoryProgress() {
+        const gs = this.gameState;
+        const ts = gs.techState;
+        const vs = gs.victoryState || {};
+        const scores = this._calculateScores();
+        const totalTechs = Object.keys(TECHS).length;
+        const researchedTechs = ts && ts.researched ? ts.researched.size : 0;
+
+        const aiFactions = FACTIONS.filter(f => f !== PLAYER_FACTION);
+        const aiEliminated = aiFactions.filter(f => gs.eliminated && gs.eliminated.has(f)).length;
+        const playerGold = (gs.resources && gs.resources[PLAYER_FACTION] && gs.resources[PLAYER_FACTION].gold) || 0;
+        const playerRoutes = (vs.tradeRoutes && vs.tradeRoutes[PLAYER_FACTION]) || 0;
+        let bestAiScore = 0;
+        for (const f of aiFactions) bestAiScore = Math.max(bestAiScore, scores[f] || 0);
+        const playerScore = scores[PLAYER_FACTION] || 0;
+
+        return {
+            domination: {
+                eliminated: aiEliminated,
+                total: aiFactions.length,
+                progress: aiFactions.length ? aiEliminated / aiFactions.length : 0
+            },
+            science: {
+                researched: researchedTechs,
+                total: totalTechs,
+                currentTech: ts ? ts.current : null,
+                progress: totalTechs ? researchedTechs / totalTechs : 0
+            },
+            economic: {
+                gold: playerGold,
+                goldTarget: ECONOMIC_VICTORY_GOLD,
+                tradeRoutes: playerRoutes,
+                routeTarget: ECONOMIC_VICTORY_TRADE_ROUTES,
+                progress: Math.min(
+                    playerGold / Math.max(1, ECONOMIC_VICTORY_GOLD),
+                    playerRoutes / Math.max(1, ECONOMIC_VICTORY_TRADE_ROUTES)
+                )
+            },
+            score: {
+                playerScore,
+                aiScore: bestAiScore,
+                turn: gs.turn || 0,
+                maxTurn: SCORE_VICTORY_TURN,
+                progress: Math.min(1, (gs.turn || 0) / Math.max(1, SCORE_VICTORY_TURN))
+            }
+        };
+    }
+
+    /** Append an event to the rolling event log (Feature 6). The log is capped;
+     *  oldest entries drop off. Safe to call before gameState is built. */
+    addEvent(category, message) {
+        if (!this.gameState) return;
+        if (!Array.isArray(this.gameState.eventLog)) this.gameState.eventLog = [];
+        return addEventEntry(this.gameState.eventLog, category, message, this.gameState.turn || 0);
+    }
+
+    /** Set the active difficulty (Feature 8). Called from the start menu. */
+    setDifficulty(key) {
+        this.difficulty = key || 'NORMAL';
+        if (this.gameState) this.gameState.difficulty = this.difficulty;
+    }
+
+    /** Execute a spy action (Feature 11). `spy` is a SPY unit id; `targetFaction`
+     *  is the faction acted against. Spends gold, resolves success/detection,
+     *  applies the relationship penalty to the spy's owner→target relation, and
+     *  logs the outcome. Returns the spy result object. */
+    handleSpyAction(spyId, action, targetFaction, extra = {}) {
+        const spy = this.gameState.units.get(spyId);
+        if (!spy || !isSpyUnit(spy)) return { success: false, detected: false, message: 'No spy unit' };
+        const res = this.gameState.resources[spy.owner];
+        const cost = (SPY_ACTION_COST || { gold: 25 }).gold;
+        if (res && (res.gold || 0) < cost) return { success: false, detected: false, message: 'Not enough gold' };
+        if (res) res.gold -= cost;
+        const result = resolveSpyAction({
+            action, spy, targetFaction,
+            targetTileKey: extra.targetTileKey, targetLordId: extra.targetLordId, targetCityKey: extra.targetCityKey,
+            detectionBonus: extra.detectionBonus || 0, successBonus: extra.successBonus || 0,
+            rng: extra.rng
+        });
+        if (result.relationPenalty) {
+            const rel = getRelation(this.gameState.diplomacy, spy.owner, targetFaction);
+            rel.relationship = Math.max(-100, (rel.relationship || 0) - result.relationPenalty);
+        }
+        this.addEvent('spy', result.message);
+        return result;
+    }
+
+    /** Declare a coalition war (Feature 12). `leader` invites eligible allies
+     *  and all join the war against `target`. Returns the list of joiners. */
+    handleDeclareCoalitionWar(leader, target, candidateAllies) {
+        const allies = eligibleCoalitionAllies(this.gameState.diplomacy, leader, target, candidateAllies || FACTIONS);
+        const joiners = declareCoalitionWar(this.gameState.diplomacy, leader, target, allies, this.gameState.turn || 0);
+        this.addEvent('diplomacy', `${leader} formed a coalition war against ${target} with ${allies.join(', ') || 'no allies'}`);
+        return joiners;
     }
 
     endGame(result, victoryType) {

@@ -1,8 +1,10 @@
 /** Turn manager: phase FSM (player -> each AI faction -> player) */
-import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth } from './economy.js';
+import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth,
+         processUnrest, applyFactionUnrest, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
 import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
-import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel } from './diplomacy.js';
+import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
+         processWarWeariness } from './diplomacy.js';
 import { addResearch, calculateResearchOutput } from './tech.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
@@ -47,10 +49,58 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             // their cities automatically over time.
             const fname = (gameState.factionColors && gameState.factionColors[f] && gameState.factionColors[f].name) || f;
             processCityGrowth(gameState.tiles, f, gameState.resources[f], (m) => logger ? logger(`${fname}: ${m}`) : null);
+            // City unrest & loyalty: recompute each city's unrest, resolve
+            // rebellions, then apply a faction-wide yield penalty. Cities
+            // captured this turn (tile.lastConqueredTurn) get a recent-conquest
+            // spike that decays over the following turns.
+            if (!gameState.eliminated || !gameState.eliminated.has(f)) {
+                const { messages: unrestMsgs, rebellions } = processUnrest(
+                    gameState.tiles, f, gameState.units, gameState.lords, gameState.turn, gameState.buildings);
+                if (logger) unrestMsgs.forEach(m => logger(`${fname}: ${m}`));
+                if (rebellions && rebellions.length) {
+                    // A rebelled city may flip to a new owner; ownership change
+                    // is handled inside processUnrest. Re-check elimination is
+                    // done by the host game's victory check on the next render.
+                }
+                const penaltyMsgs = applyFactionUnrest(gameState.tiles, f, gameState.resources[f]);
+                if (logger) penaltyMsgs.forEach(m => logger(`${fname}: ${m}`));
+            }
         }
 
         // Neutral (unowned) cities also grow and expand influence over time.
         processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
+        // Trade routes: pay out income per faction, process raids (an enemy
+        // military unit on a route's path steals gold and disrupts it), then
+        // tick disruption timers. Run once per round after resources collected.
+        if (Array.isArray(gameState.tradeRoutes) && gameState.tradeRoutes.length) {
+            for (const f of factions) {
+                const inc = getTradeRouteIncome(gameState.tiles, f, gameState.tradeRoutes);
+                if (inc > 0 && gameState.resources[f]) {
+                    gameState.resources[f].gold = (gameState.resources[f].gold || 0) + inc;
+                }
+            }
+            for (const f of factions) {
+                const { raided, messages: rmsgs } = processTradeRouteRaids(gameState.tradeRoutes, gameState.units, f);
+                if (logger) rmsgs.forEach(m => logger(m));
+                for (const r of raided) {
+                    const stolen = r.stolen;
+                    if (gameState.resources[f]) gameState.resources[f].gold = (gameState.resources[f].gold || 0) + stolen;
+                    const victim = r.route.from.owner;
+                    if (victim !== f && gameState.resources[victim]) {
+                        // stolen gold is income that won't be paid; subtract from victim.
+                        gameState.resources[victim].gold = Math.max(0, (gameState.resources[victim].gold || 0) - stolen);
+                    }
+                }
+            }
+            // Disruption decay: disrupted routes recover after their timer ends.
+            for (const route of gameState.tradeRoutes) {
+                if (route.disrupted && route.disruptedTurnsLeft > 0) {
+                    route.disruptedTurnsLeft -= 1;
+                    if (route.disruptedTurnsLeft <= 0) route.disrupted = false;
+                }
+            }
+        }
 
         // Tech tree: accumulate research for the player each turn.
         if (gameState.techState) {
@@ -81,6 +131,27 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             }
             const tradeMsgs = processTradePacts(gameState.diplomacy, gameState.resources, harborFactions);
             if (logger) tradeMsgs.forEach(m => logger(m));
+            // War weariness: accumulate while at war, decay at peace. Drives
+            // peace-demand acceptance (weary factions concede more readily).
+            processWarWeariness(gameState.diplomacy, factions);
+            // Tribute payouts from accepted peace demands: the `from` faction
+            // pays `to` perTurn gold each turn until turnsLeft hits 0.
+            const rels = gameState.diplomacy.relations || {};
+            for (const rel of Object.values(rels)) {
+                if (!rel.tribute || rel.tribute.turnsLeft <= 0) continue;
+                const fromRes = gameState.resources[rel.tribute.from];
+                const toRes = gameState.resources[rel.tribute.to];
+                if (fromRes && toRes) {
+                    const paid = Math.min(rel.tribute.perTurn, fromRes.gold || 0);
+                    fromRes.gold = Math.max(0, (fromRes.gold || 0) - paid);
+                    toRes.gold = (toRes.gold || 0) + paid;
+                }
+                rel.tribute.turnsLeft -= 1;
+                if (rel.tribute.turnsLeft <= 0) {
+                    if (logger) logger(`Tribute from ${rel.tribute.from} to ${rel.tribute.to} has ended.`);
+                    rel.tribute = null;
+                }
+            }
         }
         // Reputation drift: a faction at peace with everyone slowly rebuilds
         // trust (+1/turn, capped 100). War stops the recovery; treaty breaks and
@@ -228,7 +299,13 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Clear selection
         gameState.selectedUnit = null;
+        gameState.selectedLord = null;
         gameState.moveTargets.clear();
+        gameState.attackTargets = [];
+        gameState.chargeTargets = [];
+        gameState.bridgeTargets = [];
+        gameState.siegeTowerTarget = null;
+        gameState.chariotChargeTargets = [];
 
         if (renderAll) renderAll();
         if (typeof onAutosave === 'function') onAutosave();

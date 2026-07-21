@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -12,6 +12,14 @@ const LORD_FALLBACK_STATS = { ranged: false, naval: false, siegeBonus: 0, besieg
 function combatStats(u) { return UNIT_TYPE[u.type] || LORD_FALLBACK_STATS; }
 /** Display name for combat log lines (lords use their proper name). */
 function combatName(u) { return u.name || u.type; }
+
+/** River-crossing penalty (Feature 10): a unit that crossed a river this turn
+ *  is bogged down and fights at a defense disadvantage until its next turn.
+ *  Returns the flat defense penalty (0 if the unit didn't cross). Pure. */
+export function riverCrossingDefensePenalty(unit) {
+    if (!unit || !unit.crossedRiverThisTurn) return 0;
+    return RIVER_CROSSING_DEFENSE_PENALTY;
+}
 
 /**
  * Is `defender` encircled? A defender is encircled when ALL four orthogonal
@@ -193,6 +201,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         effectiveDefense -= ENCIRCLEMENT_DEFENSE_PENALTY;
         messages.push(`${combatName(defenderUnit)} is encircled! (-${ENCIRCLEMENT_DEFENSE_PENALTY} def, no counter)`);
     }
+    // River-crossing penalty (Feature 10): a defender that crossed a river this
+    // turn is bogged down and easier to hit.
+    const defRiverPenalty = riverCrossingDefensePenalty(defenderUnit);
+    if (defRiverPenalty > 0) {
+        effectiveDefense -= defRiverPenalty;
+        messages.push(`${combatName(defenderUnit)} crossed a river this turn (-${defRiverPenalty} def)`);
+    }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
     // WINGED_HUSSAR: devastating alpha strike — the first attack each turn deals
@@ -252,7 +267,10 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         }
 
         const effectiveAttackDef = (defenderUnit.attack ?? defStats.attack) * defMultiplier + defLordBonus.attack;
-        const effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
+        let effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
+        // River-crossing penalty also applies to the attacker on the counter.
+        const atkRiverPenalty = riverCrossingDefensePenalty(attackerUnit);
+        if (atkRiverPenalty > 0) effectiveDefenseAtk -= atkRiverPenalty;
         const damageToAttacker = Math.max(1, Math.floor((effectiveAttackDef - effectiveDefenseAtk * 0.3) * COUNTER_ATTACK_MULTIPLIER));
         attackerUnit.hp -= damageToAttacker;
         messages.push(`${combatName(defenderUnit)} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);

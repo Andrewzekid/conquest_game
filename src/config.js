@@ -51,6 +51,7 @@ export const TERRAIN = {
     TUNDRA:   { key: 'TUNDRA',   color: 0xc6d4d0, name: 'Tundra',  resource: 'food',  amount: 1,  defense: 1 },
     WATER:    { key: 'WATER',    color: 0x2f6fb0, name: 'Water',    resource: null,    amount: 0,  defense: 0 },
     RIVER:    { key: 'RIVER',    color: 0x2f90d8, name: 'River',    resource: 'food',  amount: 1,  defense: 0 },
+    PASS:     { key: 'PASS',     color: 0x8a7a6b, name: 'Pass',     resource: 'iron',  amount: 1,  defense: 2 },
     CITY:     { key: 'CITY',     color: 0xc9b06b, name: 'City',     resource: 'gold',  amount: 5,  defense: 3, wood: 1 }
 };
 
@@ -104,7 +105,11 @@ export const UNIT_TYPE = {
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1, iron: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
     FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
-    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 }
+    GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 },
+    // SPY: a stealth agent (Feature 11). Cannot fight directly; performs covert
+    // actions (gather intel / sabotage / assassinate / incite unrest) from an
+    // enemy or neutral tile. High vision, low HP.
+    SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
@@ -499,6 +504,111 @@ export const LORD_RECRUIT_COST = { gold: 140, food: 60 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
 
+// --- Lord Skill Trees (Feature 4) ---
+// Each class has two branches of five skills (tier 1 → 3). Tier-1 skills have
+// no prerequisites; tier-2 skills require both tier-1 skills of their branch;
+// tier-3 skills require both tier-2 skills. A lord gains one skill point per
+// level. Effects are aggregated by getSkillEffects and consumed where relevant
+// (combat, economy, command capacity).
+export const LORD_SKILL_TREES = {
+    WARLORD: {
+        branches: {
+            combat: {
+                name: 'Blade Mastery',
+                skills: [
+                    { id: 'blade_master', name: 'Blade Master', tier: 1, prereqs: [], effect: { attack: 1 }, desc: '+1 attack' },
+                    { id: 'toughness', name: 'Toughness', tier: 1, prereqs: [], effect: { hp: 3 }, desc: '+3 HP' },
+                    { id: 'critical_strike', name: 'Critical Strike', tier: 2, prereqs: ['blade_master', 'toughness'], effect: { critChance: 0.15 }, desc: '15% chance for double damage' },
+                    { id: 'lifesteal', name: 'Lifesteal', tier: 2, prereqs: ['blade_master', 'toughness'], effect: { lifesteal: 0.2 }, desc: 'Heal 20% of damage dealt' },
+                    { id: 'berserker_fury', name: 'Berserker Fury', tier: 3, prereqs: ['critical_strike', 'lifesteal'], effect: { lowHpBonus: 3 }, desc: '+3 attack below 50% HP' }
+                ]
+            },
+            command: {
+                name: 'Command Presence',
+                skills: [
+                    { id: 'rally_cry', name: 'Rallying Cry', tier: 1, prereqs: [], effect: { adjacentAttackBonus: 1 }, desc: '+1 attack to adjacent units' },
+                    { id: 'inspire', name: 'Inspire', tier: 1, prereqs: [], effect: { xpGain: 0.25 }, desc: '+25% XP gain' },
+                    { id: 'inspiring_leader', name: 'Inspiring Leader', tier: 2, prereqs: ['rally_cry', 'inspire'], effect: { adjacentAttackBonus: 2 }, desc: '+2 attack to adjacent units' },
+                    { id: 'army_commander', name: 'Army Commander', tier: 2, prereqs: ['rally_cry', 'inspire'], effect: { commandBonus: 2 }, desc: '+2 army capacity' },
+                    { id: 'warlord_fury', name: "Warlord's Fury", tier: 3, prereqs: ['inspiring_leader', 'army_commander'], effect: { allUnitsAttackBonus: 1 }, desc: '+1 attack to ALL friendly units' }
+                ]
+            }
+        }
+    },
+    GUARDIAN: {
+        branches: {
+            defense: {
+                name: 'Iron Guard',
+                skills: [
+                    { id: 'iron_skin', name: 'Iron Skin', tier: 1, prereqs: [], effect: { defense: 1 }, desc: '+1 defense' },
+                    { id: 'fortify', name: 'Fortify', tier: 1, prereqs: [], effect: { fortBonus: 2 }, desc: '+2 defense in cities' },
+                    { id: 'shield_wall', name: 'Shield Wall', tier: 2, prereqs: ['iron_skin', 'fortify'], effect: { adjacentDefenseBonus: 1 }, desc: '+1 defense to adjacent units' },
+                    { id: 'unbreakable', name: 'Unbreakable', tier: 2, prereqs: ['iron_skin', 'fortify'], effect: { surviveLethal: true }, desc: 'Survive a fatal hit at 1 HP (once)' },
+                    { id: 'guardian_aura', name: 'Guardian Aura', tier: 3, prereqs: ['shield_wall', 'unbreakable'], effect: { adjacentDefenseBonus: 3 }, desc: '+3 defense to adjacent units' }
+                ]
+            },
+            healing: {
+                name: 'Restoration',
+                skills: [
+                    { id: 'field_medic', name: 'Field Medic', tier: 1, prereqs: [], effect: { healAdjacent: 1 }, desc: 'Heal adjacent units 1 HP/turn' },
+                    { id: 'rapid_recovery', name: 'Rapid Recovery', tier: 1, prereqs: [], effect: { healBonus: 1 }, desc: '+1 HP healed per turn' },
+                    { id: 'combat_medic', name: 'Combat Medic', tier: 2, prereqs: ['field_medic', 'rapid_recovery'], effect: { healAdjacent: 2 }, desc: 'Heal adjacent units 2 HP/turn' },
+                    { id: 'morale_boost', name: 'Morale Boost', tier: 2, prereqs: ['field_medic', 'rapid_recovery'], effect: { adjacentDefenseBonus: 1 }, desc: '+1 defense to adjacent units' },
+                    { id: 'life_ward', name: 'Life Ward', tier: 3, prereqs: ['combat_medic', 'morale_boost'], effect: { autoHeal: 3 }, desc: 'All units heal 3 HP/turn' }
+                ]
+            }
+        }
+    },
+    CONQUEROR: {
+        branches: {
+            siege: {
+                name: 'Siege Warfare',
+                skills: [
+                    { id: 'siege_expert', name: 'Siege Expert', tier: 1, prereqs: [], effect: { siegeBonus: 2 }, desc: '+2 siege damage' },
+                    { id: 'battering_ram', name: 'Battering Ram', tier: 1, prereqs: [], effect: { fortDamage: 1 }, desc: '+1 fortification damage' },
+                    { id: 'siege_master', name: 'Siege Master', tier: 2, prereqs: ['siege_expert', 'battering_ram'], effect: { siegeBonus: 3 }, desc: '+3 siege damage' },
+                    { id: 'city_breaker', name: 'City Breaker', tier: 2, prereqs: ['siege_expert', 'battering_ram'], effect: { cityAttackBonus: 2 }, desc: '+2 attack vs cities' },
+                    { id: 'total_war', name: 'Total War', tier: 3, prereqs: ['siege_master', 'city_breaker'], effect: { siegeBonus: 5, cityAttackBonus: 3 }, desc: '+5 siege, +3 vs cities' }
+                ]
+            },
+            expansion: {
+                name: 'Imperial Expansion',
+                skills: [
+                    { id: 'rapid_conquest', name: 'Rapid Conquest', tier: 1, prereqs: [], effect: { captureCostReduction: 5 }, desc: '-5 gold capture cost' },
+                    { id: 'annexation', name: 'Annexation', tier: 1, prereqs: [], effect: { loyaltyBonus: 1 }, desc: '+1 loyalty to captured cities' },
+                    { id: 'imperial_admin', name: 'Imperial Admin', tier: 2, prereqs: ['rapid_conquest', 'annexation'], effect: { cityYieldBonus: 0.1 }, desc: '+10% yields from conquered cities' },
+                    { id: 'governor_dispatch', name: 'Governor Dispatch', tier: 2, prereqs: ['rapid_conquest', 'annexation'], effect: { freeGovernor: true }, desc: 'Free governor when conquering' },
+                    { id: 'empire_builder', name: 'Empire Builder', tier: 3, prereqs: ['imperial_admin', 'governor_dispatch'], effect: { allCitiesYieldBonus: 0.05 }, desc: '+5% yields all cities' }
+                ]
+            }
+        }
+    },
+    GRAND_COMMANDER: {
+        branches: {
+            support: {
+                name: 'Command & Control',
+                skills: [
+                    { id: 'extended_command', name: 'Extended Command', tier: 1, prereqs: [], effect: { commandBonus: 1 }, desc: '+1 army capacity' },
+                    { id: 'tactical_mind', name: 'Tactical Mind', tier: 1, prereqs: [], effect: { adjacentAttackBonus: 1 }, desc: '+1 attack to adjacent units' },
+                    { id: 'master_strategist', name: 'Master Strategist', tier: 2, prereqs: ['extended_command', 'tactical_mind'], effect: { commandBonus: 2 }, desc: '+2 army capacity' },
+                    { id: 'field_marshal', name: 'Field Marshal', tier: 2, prereqs: ['extended_command', 'tactical_mind'], effect: { adjacentAttackBonus: 2, adjacentDefenseBonus: 1 }, desc: '+2 atk, +1 def to adjacent' },
+                    { id: 'supreme_commander', name: 'Supreme Commander', tier: 3, prereqs: ['master_strategist', 'field_marshal'], effect: { allUnitsBonus: { attack: 1, defense: 1 } }, desc: '+1 atk, +1 def to ALL units' }
+                ]
+            },
+            economy: {
+                name: 'Civil Administration',
+                skills: [
+                    { id: 'tax_collector', name: 'Tax Collector', tier: 1, prereqs: [], effect: { goldBonus: 0.1 }, desc: '+10% gold income' },
+                    { id: 'logistics', name: 'Logistics', tier: 1, prereqs: [], effect: { upkeepReduction: 0.1 }, desc: '-10% unit upkeep' },
+                    { id: 'trade_master', name: 'Trade Master', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { tradeRouteBonus: 5 }, desc: '+5 gold per trade route' },
+                    { id: 'resource_manager', name: 'Resource Manager', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { allResourceBonus: 0.1 }, desc: '+10% all resources' },
+                    { id: 'chancellor', name: 'Chancellor', tier: 3, prereqs: ['trade_master', 'resource_manager'], effect: { cityYieldBonus: 0.15 }, desc: '+15% yields all cities' }
+                ]
+            }
+        }
+    }
+};
+
 // --- Diplomacy ---
 export const DIPLOMACY_STATES = {
     NEUTRAL: 'neutral',          // default start; no attacks without formal war
@@ -578,6 +688,15 @@ export const AI_SETTLER_SCARCITY_TURN_THRESHOLD = 2;
 export const AI_SETTLER_SCARCE_CAP_RELAX = 2;
 export const AI_SETTLER_SCARCE_FLOOR_RELAX = 1;
 
+// Flow-aware scarcity: a resource counts as "strained" when its per-turn net
+// flow is at or below these (negative) thresholds — i.e. the faction is
+// bleeding that resource faster than it replenishes, a leading indicator
+// even when the stock is still above the floor. This adds to the stock-based
+// `scarce` count so a fast drain raises scarcity urgency before the stock
+// actually bottoms out, and the worst-draining resource biases where settlers
+// head (findFoundSpot weights that resource's terrain higher).
+export const SCARCITY_FLOW_THRESHOLDS = { gold: -10, food: -8, wood: -6, iron: -5 };
+
 // Trade materials: specific resources that can be exchanged in trade pacts.
 // Each trade pact specifies which material is traded and how much per turn.
 export const TRADE_MATERIALS = {
@@ -606,3 +725,154 @@ export const SCIENCE_VICTORY_BUILD_TURNS = 10; // turns to complete space progra
 export const ECONOMIC_VICTORY_GOLD = 2000;     // gold threshold
 export const ECONOMIC_VICTORY_TRADE_ROUTES = 6; // trade route count needed
 export const ECONOMIC_VICTORY_BONUS_TRADE_GOLD = 50; // bonus gold per turn near victory
+
+// --- City Unrest & Loyalty system ---
+// Unrest is a 0-100 per-city value. It rises with distance, foreign cultural
+// pressure, and recent conquest; it falls with garrisons, governors, walls,
+// and city level. High unrest cuts a city's yields; at 100 it can rebel.
+export const UNREST_THRESHOLDS = {
+    NONE: 0,        // no effect
+    LOW: 25,        // -25% yields
+    MEDIUM: 50,     // -50% yields, -1 attack to produced units
+    HIGH: 75,       // -75% yields, -2 attack to produced units
+    REBELLION: 100  // city may rebel
+};
+
+export const UNREST_DECAY_RATES = {
+    GARRISON: 3,           // per turn, a friendly unit sits on the city tile
+    GOVERNOR: 5,           // per turn, a lord is assigned as the city's governor
+    WALLS: 2,              // per turn, if WALLS building present on the city
+    CITY_LEVEL: 1          // per turn per city level
+};
+
+export const UNREST_INCREASE_RATES = {
+    DISTANCE: 2,           // per tile distance from the nearest same-owner city
+    NO_GARRISON: 5,        // per turn, no friendly unit on the city tile
+    CULTURAL_PRESSURE: 3,  // per adjacent enemy-owned city tile
+    RECENT_CONQUEST: 10,  // immediate on capture, decays 1/turn over 10 turns
+    RECENT_CONQUEST_DECAY_TURNS: 10,
+    OCCUPATION: 2,         // per turn while enemy units are on adjacent tiles
+    CAPTURE_INITIAL: 50   // captured cities start at this unrest
+};
+
+// Rebellion: at 100 unrest a city has this chance per turn to flip to the
+// most influential neighboring owner (or go independent).
+export const UNREST_REBEL_CHANCE = 0.3;
+
+// --- Peace Negotiations with Demands ---
+// War weariness accumulates while at war and decays at peace; a weary faction
+// is more willing to accept harsh peace terms.
+export const WAR_WEARINESS_RATES = {
+    PER_TURN: 2,              // base war weariness per turn at war
+    PER_UNIT_LOST: 10,        // per unit destroyed
+    PER_CITY_LOST: 5,         // per city lost
+    PER_BATTLE: 1,            // per battle participated in
+    DECAY_AT_PEACE: -5        // per turn at peace (recovering)
+};
+
+export const PEACE_DEMAND_LIMITS = {
+    MAX_GOLD_DEMAND: 500,
+    MAX_TRIBUTE_PER_TURN: 15,
+    MAX_TRIBUTE_DURATION: 20,  // turns
+    MAX_TERRITORY_TILES: 3
+};
+
+export const PEACE_ACCEPTANCE_MODIFIERS = {
+    POWER_RATIO_THRESHOLD: 0.7,  // below this, the target is more likely to accept
+    WEARINESS_THRESHOLD: 30,     // above this, the target is more likely to accept
+    RELATIONSHIP_BONUS: 0.002,   // per relationship point
+    TREATY_HISTORY_PENALTY: -0.1 // per broken treaty
+};
+
+// --- Trade Route Establishment ---
+// A trade route connects two cities (≥ min level) and pays its owner income
+// per turn based on distance + the levels of both endpoints. Enemy military
+// units standing on the route's path can raid it, disrupting income for a few
+// turns. Routes are capped per faction.
+export const TRADE_ROUTE_BASE_INCOME = 10;
+export const TRADE_ROUTE_DISTANCE_BONUS = 0.5;  // per tile of distance
+export const TRADE_ROUTE_CITY_LEVEL_BONUS = 2;  // per city level
+export const TRADE_ROUTE_MAX = 5;               // per faction
+export const TRADE_ROUTE_MIN_CITY_LEVEL = 2;     // both cities must be this level
+export const RAID_STEAL_PERCENT = 0.5;           // 50% of route income stolen
+export const RAID_DISRUPT_TURNS = 3;
+// ============================================================
+// Features 6-15 (abbreviated enhancements)
+// ============================================================
+
+// --- Feature 6: Turn Summary / Event Log ---
+// A rolling log of noteworthy events (combats, city captures, diplomacy,
+// unrest, etc.). Capped; oldest entries drop off. Each entry carries a
+// category so the UI can filter.
+export const EVENT_LOG_MAX = 80;
+export const EVENT_CATEGORIES = ['combat', 'city', 'diplomacy', 'economy', 'unrest', 'spy', 'turn', 'system'];
+
+// --- Feature 7: City Tile Yield Overlay ---
+// Per-tile worked yield, surfaced as an on-map overlay (toggle with 'Y').
+// The numbers come from economy.grossYields' per-tile contribution; this just
+// packages a single-tile preview for the renderer/UI.
+export const YIELD_OVERLAY_KEY = 'y';
+
+// --- Feature 8: Difficulty Settings ---
+// Multipliers applied to economy/AI behavior per difficulty. `playerFaction`
+// modifiers hit the human; `ai` modifiers hit every AI faction. Backwards
+// compatible: a missing/unknown difficulty falls back to NORMAL.
+export const DIFFICULTY_PRESETS = {
+    EASY:   { key: 'EASY',   label: 'Easy',   aiResourceMult: 0.8,  aiUpkeepMult: 0.9,  aiAggression: 0.7, playerUpkeepMult: 0.8,  playerYieldMult: 1.1, aiXpMult: 0.9 },
+    NORMAL: { key: 'NORMAL', label: 'Normal', aiResourceMult: 1.0,  aiUpkeepMult: 1.0,  aiAggression: 1.0, playerUpkeepMult: 1.0,  playerYieldMult: 1.0, aiXpMult: 1.0 },
+    HARD:   { key: 'HARD',   label: 'Hard',   aiResourceMult: 1.25, aiUpkeepMult: 0.9,  aiAggression: 1.3, playerUpkeepMult: 1.15, playerYieldMult: 0.9, aiXpMult: 1.2 },
+    BRUTAL: { key: 'BRUTAL', label: 'Brutal', aiResourceMult: 1.5,  aiUpkeepMult: 0.8,  aiAggression: 1.6, playerUpkeepMult: 1.3,  playerYieldMult: 0.8, aiXpMult: 1.4 }
+};
+export const DIFFICULTY_DEFAULT = 'NORMAL';
+
+// --- Feature 9: Mountain Passes ---
+// A PASS is a passable gap through otherwise-impassable MOUNTAIN terrain,
+// letting land routes cross mountain ranges. Generated after biomes by
+// carving a few mountain tiles that border two distinct land regions.
+export const PASS_TERRAIN_KEY = 'PASS';
+export const PASS_COUNT_PER_CONTINENT = { SMALL: 2, MEDIUM: 3, LARGE: 4 };
+export const PASS_DEFENSE = 2;        // partial mountain cover
+export const PASS_MOVE_COST = 2;      // extra move cost to traverse a pass
+
+// --- Feature 10: River Crossing Penalty ---
+// Crossing a river this turn (even via bridge) leaves a unit bogged down:
+// reduced defense until its next move and a higher move cost for the
+// crossing step itself.
+export const RIVER_CROSSING_DEFENSE_PENALTY = 2;   // flat defense lost this turn
+export const RIVER_CROSSING_MOVE_COST = 2;         // extra move points for the crossing step
+
+// --- Feature 11: Spy System ---
+// Spies are stealth units that can gather intel, sabotage production,
+// assassinate lords, or incite city unrest. Each action has a detection
+// chance; being detected damages the spy's owner's relationship with the
+// target and risks the spy itself.
+export const SPY_ACTION_COST = { gold: 25 };        // per spy action
+export const SPY_ACTIONS = {
+    GATHER_INTEL:  { key: 'GATHER_INTEL',  label: 'Gather Intel',  baseSuccess: 0.85, baseDetection: 0.15, relationPenalty: 5 },
+    SABOTAGE:      { key: 'SABOTAGE',      label: 'Sabotage',      baseSuccess: 0.55, baseDetection: 0.40, relationPenalty: 15 },
+    ASSASSINATE:   { key: 'ASSASSINATE',   label: 'Assassinate',   baseSuccess: 0.35, baseDetection: 0.60, relationPenalty: 25 },
+    INCITE_UNREST: { key: 'INCITE_UNREST', label: 'Incite Unrest', baseSuccess: 0.50, baseDetection: 0.45, relationPenalty: 20, unrestAmount: 30 }
+};
+export const SPY_DETECTION_RELATION_PENALTY = 10;  // extra penalty when caught red-handed
+
+// --- Feature 12: Coalition Wars ---
+// A coalition is a temporary alliance-of-convenience for a joint war. The
+// leader invites allies; all join the war against the target together and
+// share the war-declaration relationship/reputation penalties.
+export const COALITION_MAX_ALLIES = 3;
+export const COALITION_JOIN_RELATIONSHIP_THRESHOLD = 30;  // ally must be at least this friendly with the leader
+export const COALITION_SHARED_PENALTY = 0.5;  // each joiner takes this fraction of the leader's war penalty
+
+// --- Feature 13: Minimap ---
+// Compact per-tile summary for the minimap renderer: each tile's owner color
+// plus a flag if a unit sits on it. 1px per tile. The renderer draws this; the
+// pure builder here keeps it testable without a canvas.
+export const MINIMAP_SCALE = 1;  // pixels per tile
+
+// --- Feature 14: City Quick-Jump ---
+// Ordered list of the player's cities for the quick-jump cycle (click a city
+// name in the bar or press [ / ] to cycle the camera between them).
+
+// --- Feature 15: Army Composition Panel ---
+// Per-lord roster breakdown (unit-type -> count) for the army-composition
+// panel. Clicking a lord selects it on the map.

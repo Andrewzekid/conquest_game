@@ -1,7 +1,7 @@
 /** Map generation: terrain, ownership, starting positions.
  *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
  *  and per-faction city names. */
-import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS } from './config.js';
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY } from './config.js';
 import { getFactionDef } from './faction.js';
 
 // Per-faction city name counters
@@ -171,6 +171,48 @@ function assignBiomes(tiles) {
             }
         }
     }
+}
+
+/** Carve mountain passes (Feature 9): convert a few MOUNTAIN tiles that sit
+ *  between two distinct land regions into PASS terrain so land units can cross
+ *  mountain ranges. A tile qualifies if it is MOUNTAIN and has ≥2 orthogonal
+ *  non-mountain land neighbors; converting it joins the regions on either
+ *  side. `count` is the target number of passes; fewer may be carved if there
+ *  aren't enough qualifying tiles. Mutates `tiles` in place; returns the list
+ *  of carved pass tiles. */
+export function generatePasses(tiles, count) {
+    const arr = !tiles ? [] : Array.isArray(tiles) ? tiles : Array.from(tiles.values());
+    const byKey = new Map(arr.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const candidates = [];
+    for (const t of arr) {
+        if (t.terrain !== 'MOUNTAIN') continue;
+        let landNbrs = 0;
+        for (const [dx, dz] of dirs) {
+            const n = byKey.get(`${t.x + dx},${t.z + dz}`);
+            if (!n) continue;
+            if (n.terrain !== 'WATER' && n.terrain !== 'MOUNTAIN' && n.terrain !== 'RIVER') landNbrs++;
+        }
+        if (landNbrs >= 2) candidates.push(t);
+    }
+    // Shuffle-ish: take spread-out candidates so passes don't cluster.
+    const carved = [];
+    const taken = new Set();
+    for (const c of candidates) {
+        if (carved.length >= count) break;
+        const k = `${c.x},${c.z}`;
+        if (taken.has(k)) continue;
+        // Keep passes at least 3 tiles apart.
+        let tooClose = false;
+        for (const p of carved) {
+            if (Math.abs(p.x - c.x) + Math.abs(p.z - c.z) < 3) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+        c.terrain = PASS_TERRAIN_KEY;
+        taken.add(k);
+        carved.push(c);
+    }
+    return carved;
 }
 
 /** Guarantee every stamped city is reachable by land units: it must have at
@@ -455,6 +497,14 @@ export function generateMap() {
     // Group land into contiguous biome regions (FOREST/HILLS/DESERT/MARSH/TUNDRA)
     // with plains gaps, plus a few impassable MOUNTAIN clusters.
     assignBiomes(tiles);
+
+    // Carve mountain passes through the ranges (Feature 9). Pass count scales
+    // with map size so larger maps get more crossings.
+    const mapScale2 = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const passCount = mapScale2 >= 48 ? PASS_COUNT_PER_CONTINENT.LARGE
+        : mapScale2 >= 36 ? PASS_COUNT_PER_CONTINENT.MEDIUM
+        : PASS_COUNT_PER_CONTINENT.SMALL;
+    generatePasses(tiles, passCount);
 
     // Carve large meandering rivers across the map (before city placement so
     // cities avoid rivers).

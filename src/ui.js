@@ -3,12 +3,13 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
           FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
           EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
           STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
-          cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL } from './config.js';
+          cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
+          TRADE_ROUTE_MIN_CITY_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
-import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } from './diplomacy.js';
+import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel, getRelation } from './diplomacy.js';
 import { buildAIGoalsHTML } from './ai_goals.js';
 import { getInfluencedTiles, isPassable } from './map.js';
-import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
+import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAvailableSkills, getSkillEffects } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
@@ -47,6 +48,8 @@ export function bindUI(gameState, callbacks) {
         lordPanel: document.getElementById('lord-panel-body'),
         aiGoalsPanel: document.getElementById('ai-goals-panel-body'),
         aiGoalsPanelWrap: document.getElementById('ai-goals-panel'),
+        victoryPanel: document.getElementById('victory-panel-body'),
+        victoryPanelWrap: document.getElementById('victory-panel'),
         combatLog: document.getElementById('combat-log'),
         phaseIndicator: document.getElementById('phase-indicator')
     };
@@ -265,6 +268,14 @@ export function bindUI(gameState, callbacks) {
             const breached = fort === 0 && tile.owner !== PLAYER_FACTION;
             info += ` &nbsp;${svgIcon('city', {size:16})} <strong>${cityName}</strong> (Lv.${cityLevel})`;
             info += ` &nbsp;${svgIcon('hp', {size:14})} ${fort}/${fortMax} (${fortPct}%)${breached ? ' <span style="color:var(--bad);">BREACHED</span>' : ''}`;
+            // City unrest & loyalty: show the unrest level + color-coded severity.
+            const unrest = tile.unrest || 0;
+            if (unrest > 0) {
+                const unrestColor = unrest >= 75 ? 'var(--bad)'
+                    : unrest >= 50 ? '#ff8844'
+                    : unrest >= 25 ? '#ffcc44' : 'var(--good)';
+                info += ` &nbsp;⚠️ Unrest <b style="color:${unrestColor}">${Math.round(unrest)}%</b>`;
+            }
         }
         if (tile.terrain === 'RIVER') {
             info += tile.bridge ? ` &nbsp;${svgIcon('bridge', {size:14})} Bridged` : ' &nbsp;<span style="color:var(--bad);">Impassable (needs bridge)</span>';
@@ -305,6 +316,12 @@ export function bindUI(gameState, callbacks) {
                 const have = Math.floor(tile.growth || 0);
                 const est = Math.max(1, Math.ceil((need - have) / 2)); // ~2 growth/turn rough estimate
                 els.ownership.textContent += ` | Growth: ${have}/${need} (~${est}t to Lv.${lvl + 1})`;
+            }
+            // Unrest driver breakdown (only when the city is actually restless).
+            const reasons = Array.isArray(tile.unrestReasons) ? tile.unrestReasons : [];
+            if ((tile.unrest || 0) > 0 && reasons.length) {
+                const parts = reasons.map(r => `${r.reason}${r.amount > 0 ? '+' : ''}${r.amount}`).join(', ');
+                els.ownership.textContent += ` | Unrest: ${parts}`;
             }
         }
 
@@ -635,11 +652,37 @@ export function bindUI(gameState, callbacks) {
             </button>`;
             html += `<div style="font-size:10px; color:#9ab;">${lord.active.desc}</div>`;
         }
+        // Skill tree (Feature 4): show unspent points, learned skills, and
+        // available skills as invest buttons. Player lords only.
+        if (lord.owner === PLAYER_FACTION) {
+            const known = (lord.skills || []).length ? lord.skills.join(', ') : 'None';
+            html += `<div style="margin-top:6px; padding:4px; border-left:3px solid #ffd700; font-size:11px;">`;
+            html += `<b style="color:#ffd700;">Skill Points: ${lord.skillPoints || 0}</b><br>`;
+            html += `<span style="opacity:.7;">Learned: ${known}</span><br>`;
+            const available = getAvailableSkills(lord);
+            if ((lord.skillPoints || 0) > 0 && available.length) {
+                html += `<div style="margin-top:3px;">Available to learn:</div>`;
+                for (const skill of available) {
+                    html += `<button class="btn btn-sm skill-invest-btn" data-lord-id="${lord.id}" data-skill-id="${skill.id}"
+                        style="display:block; margin:2px 0; width:100%; text-align:left;">
+                        ${skill.name} <span style="opacity:.6;">(T${skill.tier})</span> — ${skill.desc}
+                    </button>`;
+                }
+            } else if ((lord.skillPoints || 0) > 0) {
+                html += `<div style="color:#9ab; margin-top:3px;">No skills available (prerequisites unmet).</div>`;
+            }
+            html += `</div>`;
+        }
         if (els.unitInfo) els.unitInfo.innerHTML = html;
         const kab = document.getElementById('king-act-btn');
         if (kab) kab.onclick = () => callbacks.onActivateKing && callbacks.onActivateKing(lord);
         const lcbtn = document.getElementById('lord-cancel-goal-btn');
         if (lcbtn) lcbtn.onclick = () => callbacks.onCancelGoal && callbacks.onCancelGoal(lord);
+        const skillBtns = document.querySelectorAll('.skill-invest-btn');
+        skillBtns.forEach(b => {
+            b.onclick = () => callbacks.onSkillInvestment &&
+                callbacks.onSkillInvestment(Number(b.dataset.lordId), b.dataset.skillId);
+        });
     }
 
     function describeBuilding(type) {
@@ -857,6 +900,64 @@ export function bindUI(gameState, callbacks) {
                 };
                 els.buildMenu.appendChild(lvlBtn);
 
+                // Trade routes (Feature 3): a level-2+ player city can establish a
+                // route to another qualifying city (own or friendly ≥ min level).
+                if (cityLevel >= TRADE_ROUTE_MIN_CITY_LEVEL) {
+                    const trHeader = document.createElement('h3');
+                    trHeader.textContent = 'Trade Routes';
+                    trHeader.style.marginTop = '6px';
+                    els.buildMenu.appendChild(trHeader);
+                    const myRoutes = (gameState.tradeRoutes || []).filter(r =>
+                        r.from && r.from.cityKey === `${tile.x},${tile.z}`);
+                    if (myRoutes.length) {
+                        for (const r of myRoutes) {
+                            const rd = document.createElement('div');
+                            rd.style.cssText = 'font-size:11px; color:#9cf; margin:2px 0;';
+                            const tgt = gameState.tiles.get(r.to.cityKey);
+                            const tgtName = tgt ? (tgt.cityName || `City [${tgt.x},${tgt.z}]`) : r.to.cityKey;
+                            rd.textContent = `→ ${tgtName}: +${r.income}g/turn${r.disrupted ? ' (raided!)' : ''}`;
+                            els.buildMenu.appendChild(rd);
+                        }
+                    } else {
+                        const none = document.createElement('div');
+                        none.style.cssText = 'font-size:11px; color:#789; margin:2px 0;';
+                        none.textContent = 'No routes from this city yet.';
+                        els.buildMenu.appendChild(none);
+                    }
+                    // Candidate destinations: other player-owned or peaceful-friendly
+                    // cities ≥ min level, not already routed from this city.
+                    const existingTargets = new Set(myRoutes.map(r => r.to.cityKey));
+                    let anyCandidate = false;
+                    for (const t of gameState.tiles.values()) {
+                        if (t.terrain !== 'CITY') continue;
+                        if (t === tile) continue;
+                        if ((t.cityLevel || 1) < TRADE_ROUTE_MIN_CITY_LEVEL) continue;
+                        const tkey = `${t.x},${t.z}`;
+                        if (existingTargets.has(tkey)) continue;
+                        // Same owner always allowed; otherwise require peace/trade/alliance.
+                        const friendly = t.owner === PLAYER_FACTION ||
+                            (gameState.diplomacy && ['peace', 'trade_pact', 'alliance', 'non_aggression', 'ceasefire']
+                                .includes(getRelation(gameState.diplomacy, PLAYER_FACTION, t.owner).state));
+                        if (!t.owner || !friendly) continue;
+                        anyCandidate = true;
+                        const tb = document.createElement('button');
+                        const tName = t.cityName || `City [${t.x},${t.z}]`;
+                        const tFac = t.owner === PLAYER_FACTION ? '(yours)' : `(${fcOf(t.owner).name || t.owner})`;
+                        tb.textContent = `Establish → ${tName} ${tFac}`;
+                        tb.style.cssText = 'display:block; margin:2px; padding:4px; width:100%; background:#2a3a2a;';
+                        tb.onclick = () => {
+                            if (callbacks.onEstablishTrade) callbacks.onEstablishTrade(`${tile.x},${tile.z}`, tkey);
+                        };
+                        els.buildMenu.appendChild(tb);
+                    }
+                    if (!anyCandidate) {
+                        const nc = document.createElement('div');
+                        nc.style.cssText = 'font-size:11px; color:#789;';
+                        nc.textContent = 'No qualifying destination cities (need level 2+ friendly city).';
+                        els.buildMenu.appendChild(nc);
+                    }
+                }
+
                 const trainHeader = document.createElement('h3');
                 trainHeader.textContent = 'Train Unit';
                 trainHeader.style.marginTop = '6px';
@@ -981,6 +1082,35 @@ export function bindUI(gameState, callbacks) {
                 } else if (rel.state === 'war') {
                     div.appendChild(mkBtn(`Propose Ceasefire`, 'proposeCeasefire', target));
                     div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                    // Peace Negotiation with demands: gold reparations, territory
+                    // cession, or ongoing tribute. Visible only while at war.
+                    const wear = (gameState.diplomacy.warWeariness || {})[target] || 0;
+                    const neg = document.createElement('div');
+                    neg.style.cssText = 'margin-top:6px; padding:4px; border-left:3px solid #ff8844; font-size:11px;';
+                    neg.innerHTML = `
+                        <b>Peace Negotiation</b> <span style="opacity:.6;">(war weariness ${Math.round(wear)})</span><br>
+                        <label>Gold: </label><input type="number" id="peace-gold-${target}" value="100" min="0" max="500" style="width:54px; background:#222; color:#fff; border:1px solid #555;">
+                        &nbsp;<label>Tribute g/turn: </label><input type="number" id="peace-trib-${target}" value="0" min="0" max="15" style="width:40px; background:#222; color:#fff; border:1px solid #555;">
+                        <input type="number" id="peace-tribturns-${target}" value="10" min="1" max="20" style="width:36px; background:#222; color:#fff; border:1px solid #555;">t<br>
+                        <label>Territory (e.g. 5,6 7,8): </label><input type="text" id="peace-terr-${target}" placeholder="x,z ..." style="width:120px; background:#222; color:#fff; border:1px solid #555;"><br>
+                        <button class="btn" id="propose-peace-${target}" style="margin-top:3px;">Propose Peace w/ Demands</button>
+                    `;
+                    div.appendChild(neg);
+                    const pBtn = neg.querySelector(`#propose-peace-${target}`);
+                    if (pBtn) {
+                        pBtn.onclick = () => {
+                            const gold = parseInt(neg.querySelector(`#peace-gold-${target}`)?.value) || 0;
+                            const tribPerTurn = parseInt(neg.querySelector(`#peace-trib-${target}`)?.value) || 0;
+                            const tribTurns = parseInt(neg.querySelector(`#peace-tribturns-${target}`)?.value) || 0;
+                            const terrStr = (neg.querySelector(`#peace-terr-${target}`)?.value || '').trim();
+                            const tiles = terrStr.split(/\s+/).filter(t => t.includes(','));
+                            let demands;
+                            if (tiles.length > 0) demands = { type: 'territory', tiles };
+                            else if (tribPerTurn > 0) demands = { type: 'tribute', perTurn: tribPerTurn, duration: tribTurns };
+                            else demands = { type: 'gold', amount: gold };
+                            callbacks.onPeaceNegotiation && callbacks.onPeaceNegotiation(target, demands);
+                        };
+                    }
                 } else if (rel.state === 'peace') {
                     div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
@@ -1123,11 +1253,29 @@ export function bindUI(gameState, callbacks) {
         });
     }
 
+    // Tab key toggles the Victory Progress panel (Feature 5). preventDefault keeps
+    // Tab from stealing focus while the player is browsing the map. The panel is
+    // hidden by default; first Tab shows it (and showVictoryPanel populates it on
+    // the next updateAll), second Tab hides it.
+    if (els.victoryPanelWrap) {
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Tab') return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            e.preventDefault();
+            const wrap = els.victoryPanelWrap;
+            const open = wrap.style.display === 'block';
+            wrap.style.display = open ? 'none' : 'block';
+            if (!open) showVictoryPanel();
+        });
+    }
+
     function updateAll() {
         updateResourceBar();
         showDiplomacyPanel();
         showLordPanel();
         showAIGoalsPanel();
+        showVictoryPanel();
     }
 
     // Spectate-only debug panel: each AI faction's current ordered goal
@@ -1141,6 +1289,54 @@ export function bindUI(gameState, callbacks) {
             gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors, true);
     }
 
+    // Victory Progress Tracker (Feature 5): a glanceable panel summarizing the
+    // player's progress toward each of the four victory conditions (domination,
+    // science, economic, score). Rendered from the pure getVictoryProgress()
+    // callback so the logic stays in game.js and the panel stays declarative.
+    // No-op when the panel wrapper is hidden.
+    function showVictoryPanel() {
+        if (!els.victoryPanel || !els.victoryPanelWrap) return;
+        if (els.victoryPanelWrap.style.display === 'none') return;
+        if (typeof callbacks.getVictoryProgress !== 'function') return;
+        let p;
+        try { p = callbacks.getVictoryProgress(); }
+        catch (e) { return; }
+        if (!p) return;
+
+        const bar = (frac) => {
+            const pct = Math.max(0, Math.min(1, frac)) * 100;
+            return `<div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(0)}%"></div></div>`;
+        };
+        const fmt = (n) => Math.floor(n);
+
+        const dom = p.domination || {};
+        const sci = p.science || {};
+        const eco = p.economic || {};
+        const sc = p.score || {};
+        const html = `
+            <div class="victory-section">
+                <div class="victory-label">⚔️ Domination</div>
+                <div class="victory-detail">${fmt(dom.eliminated||0)}/${fmt(dom.total||0)} rivals eliminated</div>
+                ${bar(dom.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">🔬 Science</div>
+                <div class="victory-detail">${fmt(sci.researched||0)}/${fmt(sci.total||0)} techs${sci.currentTech ? ' · researching '+sci.currentTech : ''}</div>
+                ${bar(sci.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">💰 Economic</div>
+                <div class="victory-detail">${fmt(eco.gold||0)}g / ${fmt(eco.goldTarget||0)}g · ${fmt(eco.tradeRoutes||0)}/${fmt(eco.routeTarget||0)} routes</div>
+                ${bar(eco.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">🏆 Score (turn ${fmt(sc.turn||0)}/${fmt(sc.maxTurn||0)})</div>
+                <div class="victory-detail">You ${fmt(sc.playerScore||0)} · Best AI ${fmt(sc.aiScore||0)}</div>
+                ${bar(sc.progress||0)}
+            </div>`;
+        els.victoryPanel.innerHTML = html;
+    }
+
     return {
         updateResourceBar,
         showTileInfo,
@@ -1150,6 +1346,7 @@ export function bindUI(gameState, callbacks) {
         showDiplomacyPanel,
         showLordPanel,
         showAIGoalsPanel,
+        showVictoryPanel,
         addCombatLog,
         updateAll
     };

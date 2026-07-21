@@ -4,7 +4,9 @@
  *  Phase F: AI is much harder to negotiate with. Wars are grinding affairs.
  *  Trade pacts now specify which material is traded. */
 import { DIPLOMACY_STATES, AI_PERSONALITIES, TRADE_MATERIALS,
-         GRIEVANCE_DECAY_PER_TURN, GRIEVANCE_WAR_THRESHOLD, GRIEVANCE_HOSTILE } from './config.js';
+         GRIEVANCE_DECAY_PER_TURN, GRIEVANCE_WAR_THRESHOLD, GRIEVANCE_HOSTILE,
+         WAR_WEARINESS_RATES, PEACE_DEMAND_LIMITS, PEACE_ACCEPTANCE_MODIFIERS,
+         COALITION_MAX_ALLIES, COALITION_JOIN_RELATIONSHIP_THRESHOLD, COALITION_SHARED_PENALTY } from './config.js';
 
 /**
  * Create the diplomacy state for the game.
@@ -489,4 +491,163 @@ export function relationshipLabel(score) {
     if (score >= -20) return 'Neutral';
     if (score >= -60) return 'Hostile';
     return 'Bitter';
+}
+
+// --- Peace Negotiations with Demands ---
+// A war-weary faction is more willing to accept harsh peace terms (gold
+// reparations, territory cession, or ongoing tribute). War weariness is
+// stored on the diplomacy state as `warWeariness[faction]`.
+
+/** Create a peace demand object.
+ *  @param {'gold'|'territory'|'tribute'} type
+ *  @param {object} params - { amount, tiles, duration, perTurn } */
+export function createPeaceDemand(type, params = {}) {
+    return {
+        type,
+        amount: params.amount || 0,
+        tiles: params.tiles || [],
+        duration: params.duration || 0,
+        perTurn: params.perTurn || 0
+    };
+}
+
+/** Evaluate whether a peace demand is acceptable to the defending faction.
+ *  NOTE: `personality` is the DEFENDER's aiPersonality string (e.g. 'AGGRESSIVE'),
+ *  NOT a faction slot — the original plan keyed AI_PERSONALITIES by the attacker
+ *  faction id, which would always miss and fall back to DEFENSIVE.
+ *  @returns {{ accepted: boolean, chance: number, reason: string }} */
+export function evaluatePeaceDemand(demand, defender, attacker, diploState, resources, powerRatio, warWeariness, personality) {
+    const rel = getRelation(diploState, defender, attacker);
+    const p = AI_PERSONALITIES[personality] || AI_PERSONALITIES.DEFENSIVE;
+
+    // Base acceptance chance from the defender's personality.
+    let chance = p.acceptPeace;
+
+    // Power ratio (attacker / defender): a weaker defender is more likely to accept.
+    if (powerRatio < PEACE_ACCEPTANCE_MODIFIERS.POWER_RATIO_THRESHOLD) {
+        chance += 0.3;
+    } else if (powerRatio > 1.5) {
+        chance -= 0.2;
+    }
+
+    // War weariness: a weary defender wants out.
+    if (warWeariness > PEACE_ACCEPTANCE_MODIFIERS.WEARINESS_THRESHOLD) {
+        chance += 0.2;
+    }
+
+    // Relationship score (friendlier factions concede more readily).
+    chance += (rel.relationship || 0) * PEACE_ACCEPTANCE_MODIFIERS.RELATIONSHIP_BONUS;
+
+    // Past broken treaties erode trust.
+    chance += (rel.brokenTreaties || 0) * PEACE_ACCEPTANCE_MODIFIERS.TREATY_HISTORY_PENALTY;
+
+    // Demand severity modifier.
+    if (demand.type === 'gold') {
+        const affordability = (resources && resources.gold || 0) / Math.max(1, demand.amount);
+        if (affordability < 0.5) chance -= 0.3;       // can't afford it
+        else if (affordability > 2) chance += 0.1;    // easy to pay
+    } else if (demand.type === 'territory') {
+        chance -= (demand.tiles || []).length * 0.1;  // each tile costs acceptance
+    } else if (demand.type === 'tribute') {
+        chance -= (demand.perTurn || 0) * 0.02;      // ongoing cost
+    }
+
+    chance = Math.max(0.05, Math.min(0.95, chance));
+    const accepted = Math.random() < chance;
+    return {
+        accepted,
+        chance,
+        reason: accepted ? 'Demand accepted' : 'Demand rejected'
+    };
+}
+
+/** Apply war-weariness delta to a faction (positive accumulates, negative decays). */
+export function applyWarWeariness(diploState, faction, amount) {
+    if (!diploState.warWeariness) diploState.warWeariness = {};
+    diploState.warWeariness[faction] = (diploState.warWeariness[faction] || 0) + amount;
+}
+
+/** Get the war weariness for a faction (0 if none recorded). */
+export function getWarWeariness(diploState, faction) {
+    return (diploState.warWeariness || {})[faction] || 0;
+}
+
+/** Process war weariness for all factions: accumulate while at war, decay at peace.
+ *  Called once per round in endPlayerTurn. */
+export function processWarWeariness(diploState, factions) {
+    if (!diploState.warWeariness) diploState.warWeariness = {};
+    for (const f of factions) {
+        let atWar = false;
+        for (const other of factions) {
+            if (other === f) continue;
+            if (getRelation(diploState, f, other).state === DIPLOMACY_STATES.WAR) { atWar = true; break; }
+        }
+        if (atWar) {
+            diploState.warWeariness[f] = (diploState.warWeariness[f] || 0) + WAR_WEARINESS_RATES.PER_TURN;
+        } else {
+            diploState.warWeariness[f] = Math.max(0,
+                (diploState.warWeariness[f] || 0) + WAR_WEARINESS_RATES.DECAY_AT_PEACE);
+        }
+    }
+}
+
+export { PEACE_DEMAND_LIMITS };
+
+// --- Coalition Wars (Feature 12) ---
+// A coalition is a temporary alliance-of-convenience for a joint war. The
+// leader invites up to COALITION_MAX_ALLIES allies who are friendly enough
+// (relationship ≥ threshold); all join the war against the target together
+// and share a fraction of the leader's war-declaration penalty. Coalition
+// membership is recorded on the diplomacy state so it can be dissolved later.
+
+/** Record a coalition under `diploState.coalitions[leader] = [allies...]`. */
+export function formCoalition(diploState, leader, allies) {
+    if (!diploState.coalitions) diploState.coalitions = {};
+    const list = (allies || []).filter(a => a && a !== leader).slice(0, COALITION_MAX_ALLIES);
+    diploState.coalitions[leader] = list;
+    return list;
+}
+
+/** Which allies of `leader` are eligible to join a coalition war against
+ *  `target`? Must be at peace with the target, at war-or-peace (not allied to
+ *  target), and friendly enough with the leader. Pure (does not mutate). */
+export function eligibleCoalitionAllies(diploState, leader, target, candidates) {
+    const out = [];
+    for (const a of candidates || []) {
+        if (!a || a === leader || a === target) continue;
+        const relLeader = getRelation(diploState, leader, a);
+        const relTarget = getRelation(diploState, a, target);
+        if (relTarget.state === DIPLOMACY_STATES.ALLIANCE) continue; // won't betray an ally
+        if ((relLeader.relationship || 0) < COALITION_JOIN_RELATIONSHIP_THRESHOLD) continue;
+        out.push(a);
+        if (out.length >= COALITION_MAX_ALLIES) break;
+    }
+    return out;
+}
+
+/** Declare a coalition war: every member (leader + allies) goes to WAR with
+ *  the target. Each joiner takes COALITION_SHARED_PENALTY fraction of the
+ *  leader's relationship penalty. Returns the list of joiners actually at war
+ *  with the target afterwards. Mutates diploState. */
+export function declareCoalitionWar(diploState, leader, target, allies, currentTurn = 0) {
+    const joiners = [leader];
+    setRelation(diploState, leader, target, DIPLOMACY_STATES.WAR, currentTurn);
+    const relLT = getRelation(diploState, leader, target);
+    const leaderPenalty = relLT.relationship || -50;
+    for (const a of allies || []) {
+        if (!a || a === leader || a === target) continue;
+        setRelation(diploState, a, target, DIPLOMACY_STATES.WAR, currentTurn);
+        const relAT = getRelation(diploState, a, target);
+        // Share a fraction of the leader's penalty so joiners also lose standing.
+        relAT.relationship = Math.max(-100, (relAT.relationship || 0) + Math.floor(leaderPenalty * COALITION_SHARED_PENALTY));
+        relAT.warsDeclared = (relAT.warsDeclared || 0) + 1;
+        joiners.push(a);
+    }
+    formCoalition(diploState, leader, joiners.filter(j => j !== leader));
+    return joiners;
+}
+
+/** Read back a faction's current coalition (empty if none). */
+export function getCoalition(diploState, leader) {
+    return (diploState.coalitions && diploState.coalitions[leader]) || [];
 }

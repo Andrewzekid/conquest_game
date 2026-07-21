@@ -18,7 +18,7 @@ export function saveGame(gameState) {
             factionAssignments: { ...gameState.factionAssignments },
             tiles: [...gameState.tiles.values()],
             units: [...gameState.units.values()],
-            buildings: [...gameState.buildings.entries()],
+            buildings: [...(gameState.buildings || new Map()).entries()],
             // Military structure level/hp state (Area 6). Absent on v2 saves,
             // which are rejected by the version check below anyway.
             buildingState: [...(gameState.buildingState || new Map()).entries()],
@@ -53,7 +53,10 @@ export function saveGame(gameState) {
                 scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
             } : null,
             // AI goal-sequence state (per-faction goals + scarcity streak).
-            aiState: serializeAIState(gameState.aiState)
+            aiState: serializeAIState(gameState.aiState),
+            // Trade routes (Feature 3): array of route objects + id counter.
+            tradeRoutes: gameState.tradeRoutes || [],
+            tradeRouteNextId: gameState.tradeRouteNextId || 1
         };
         localStorage.setItem(SAVE_KEY, JSON.stringify(data));
         return true;
@@ -129,10 +132,10 @@ export function loadGame() {
             lords: data.lords,
             resources: data.resources,
             diplomacy,
-            explored: new Set(data.explored),
+            explored: new Set(data.explored || []),
             visible: new Set(),            // recomputed on load
             scryRevealed: new Set(data.scryRevealed || []),
-            trainedThisTurn: new Set(data.trainedThisTurn),
+            trainedThisTurn: new Set(data.trainedThisTurn || []),
             production: new Map(data.production || []),
             construction: new Map(data.construction || []),
             structures: new Map(data.structures || []),
@@ -155,7 +158,10 @@ export function loadGame() {
             victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
             // AI goal-sequence state (per-faction). Absent on old saves -> null,
             // backfilled by Game.loadFromState.
-            aiState: deserializeAIState(data.aiState)
+            aiState: deserializeAIState(data.aiState),
+            // Trade routes (Feature 3). Absent on old saves -> empty array.
+            tradeRoutes: Array.isArray(data.tradeRoutes) ? data.tradeRoutes : [],
+            tradeRouteNextId: data.tradeRouteNextId || 1
         };
 
         // Sanity-check the restored state. If critical fields are missing,

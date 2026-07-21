@@ -11,7 +11,8 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
           MARKET_RATES, CITY_LEVEL_UP_COST, CITY_MAX_LEVEL,
           MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
           AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT, AI_ARTILLERY_RESERVE_SIEGE,
-          AI_SETTLER_SCARCITY_TURN_THRESHOLD, AI_SETTLER_SCARCE_CAP_RELAX, AI_SETTLER_SCARCE_FLOOR_RELAX } from './config.js';
+          AI_SETTLER_SCARCITY_TURN_THRESHOLD, AI_SETTLER_SCARCE_CAP_RELAX, AI_SETTLER_SCARCE_FLOOR_RELAX,
+          SCARCITY_FLOW_THRESHOLDS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { sellAtMarket, getUnitCap } from './economy.js';
@@ -22,6 +23,37 @@ import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy } from './lords.js';
 import { selectGoals } from './ai_goals.js';
+
+/** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
+ *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
+ *  drain thresholds, returns how many resources are scarce (stock below floor
+ *  OR draining faster than threshold), the worst-draining resource, and the
+ *  per-resource net flow. `prev` null/absent means no flow data yet (first
+ *  turn) — only the stock check applies.
+ *  @returns {{ stockScarce, flowScarce, scarce, drainingResource, flow }} */
+export function computeScarcity(stock, prev, thresholds) {
+    const s = stock || {};
+    const stockScarce = ((s.gold || 0) < 50 ? 1 : 0) + ((s.wood || 0) < 40 ? 1 : 0) +
+        ((s.iron || 0) < 30 ? 1 : 0) + ((s.food || 0) < 40 ? 1 : 0);
+    const th = thresholds || {};
+    const flow = { gold: 0, food: 0, wood: 0, iron: 0 };
+    let flowScarce = 0;
+    let drainingResource = null;
+    let worstFlow = 0;
+    for (const r of ['gold', 'food', 'wood', 'iron']) {
+        const delta = prev ? (s[r] || 0) - (prev[r] || 0) : 0;
+        flow[r] = delta;
+        const thresh = th[r];
+        if (thresh != null && delta <= thresh) {
+            flowScarce += 1;
+            // Pick the most-negative flow as the "worst" drain (ties go to the
+            // first resource in iteration order).
+            if (delta < worstFlow) { worstFlow = delta; drainingResource = r; }
+        }
+    }
+    const scarce = Math.min(4, stockScarce + flowScarce);
+    return { stockScarce, flowScarce, scarce, drainingResource, flow };
+}
 
 /**
  * Compute a list of AI actions for one faction this turn.
@@ -138,9 +170,23 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // same values. A one-turn dip shouldn't trigger overseas expansion, but
     // AI_SETTLER_SCARCITY_TURN_THRESHOLD consecutive scarce turns should — the
     // streak is persisted in aiState so it accumulates across turns.
+    //
+    // Scarcity is flow-aware: as well as the stock-level check (a resource
+    // already below its floor), we compute the per-turn net flow against the
+    // previous turn's stock snapshot. A resource bleeding faster than
+    // SCARCITY_FLOW_THRESHOLDS counts as "strained" even while its stock is
+    // still fine — a leading indicator that the economy is heading for a
+    // shortfall. The worst-draining resource is recorded so the settler block
+    // biases found-spot selection toward that resource's terrain.
     const stock = res || {};
-    const scarce = ((stock.gold || 0) < 50 ? 1 : 0) + ((stock.wood || 0) < 40 ? 1 : 0) +
-        ((stock.iron || 0) < 30 ? 1 : 0) + ((stock.food || 0) < 40 ? 1 : 0);
+    const prev = (aiState && aiState.prevStock) ? aiState.prevStock : null;
+    const scarcity = computeScarcity(stock, prev, SCARCITY_FLOW_THRESHOLDS);
+    const { scarce, drainingResource, flow } = scarcity;
+    if (aiState) {
+        aiState.prevStock = { gold: stock.gold || 0, food: stock.food || 0, wood: stock.wood || 0, iron: stock.iron || 0 };
+        aiState.lastFlow = flow;
+        aiState.drainingResource = drainingResource;
+    }
     const prevScarce = (aiState && aiState.settlerScarcityTurns) || 0;
     const scarcityStreak = scarce >= 2 ? prevScarce + 1 : Math.max(0, prevScarce - 1);
     if (aiState) aiState.settlerScarcityTurns = scarcityStreak;
@@ -866,7 +912,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
-            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units, factionDef, res, preferCoastal);
+            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units, factionDef, res, preferCoastal, drainingResource);
             if (spot) {
                 // Settler escort: if a non-settler military unit is within 5
                 // tiles and idle, make it follow the settler toward the spot.
@@ -1657,7 +1703,7 @@ function canFoundOn(tile, owner, tiles) {
 /** Compute per-terrain settlement weights based on what the faction actually
  *  needs: cavalry/artillery/siege rosters crave iron, archer rosters want wood,
  *  everyone wants food/gold. Low stockpiles amplify the matching terrain. */
-function resourceNeedWeights(factionDef, resources) {
+export function resourceNeedWeights(factionDef, resources, drainingResource = null) {
     const w = { PLAINS: 1, FOREST: 1, HILLS: 1, MOUNTAIN: 1, RIVER: 1, DESERT: 1, MARSH: 1, TUNDRA: 1, CITY: 1 };
     if (!factionDef) return w;
     const roster = factionDef.roster || [];
@@ -1671,6 +1717,13 @@ function resourceNeedWeights(factionDef, resources) {
     // Factions with lots of cavalry want open land + iron; archer factions want forests.
     if (factionDef.id === 'golden' || factionDef.id === 'crimson') { w.PLAINS += 0.5; w.MOUNTAIN += 0.5; }
     if (factionDef.id === 'shadow' || factionDef.id === 'verdant') { w.FOREST += 0.5; }
+    // Flow-aware bias: if a resource is draining fast this turn, push the
+    // settler toward terrain that yields that resource so the new city can
+    // shore up the shortfall. Doubles the existing stock-based bonus.
+    if (drainingResource === 'food') { w.PLAINS += 1.0; w.RIVER += 1.0; }
+    else if (drainingResource === 'wood') { w.FOREST += 1.5; }
+    else if (drainingResource === 'iron') { w.MOUNTAIN += 1.5; w.HILLS += 1.0; }
+    else if (drainingResource === 'gold') { w.DESERT += 0.8; w.MOUNTAIN += 0.5; }
     return w;
 }
 
@@ -1685,7 +1738,7 @@ function resourceNeedWeights(factionDef, resources) {
  *  - Safety (fewer nearby enemies is better)
  *  This makes the AI prioritize settling in resource-rich frontier areas,
  *  spreading into different map regions instead of clustering near home. */
-function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null, factionDef = null, resources = null, preferCoastal = false) {
+function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null, factionDef = null, resources = null, preferCoastal = false, drainingResource = null) {
     // Find the nearest friendly city distance for frontier scoring
     let nearestFriendlyCityDist = Infinity;
     for (const t of tiles.values()) {
@@ -1713,7 +1766,7 @@ function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = n
         let nearestEnemyCityDist = Infinity;
         let nearestEnemyCityGarrison = 0;
         let nearestEnemyCityMaxHP = 0;
-        const needWeights = resourceNeedWeights(factionDef, resources);
+        const needWeights = resourceNeedWeights(factionDef, resources, drainingResource);
         
         for (let dx = -5; dx <= 5; dx++) {
             for (let dz = -5; dz <= 5; dz++) {

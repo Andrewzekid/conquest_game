@@ -1,5 +1,5 @@
 /** Lords system: hero units with stats, abilities, leveling, governance, army command. */
-import { LORD_BASE_STATS, LORD_ABILITIES, LORD_XP_PER_KILL, LORD_XP_PER_LEVEL, LORD_RECRUIT_COST, LORD_CLASSES } from './config.js';
+import { LORD_BASE_STATS, LORD_ABILITIES, LORD_XP_PER_KILL, LORD_XP_PER_LEVEL, LORD_RECRUIT_COST, LORD_CLASSES, LORD_SKILL_TREES } from './config.js';
 
 let _lordId = 0;
 function nextLordId() { return ++_lordId; }
@@ -28,6 +28,8 @@ export function createLord(owner, x, z, name, classKey) {
         class: cls,
         governingCity: null,   // tileKey of city being governed, or null
         army: [],              // array of unit ids this lord commands
+        skillPoints: 0,        // unspent skill-tree points (Feature 4)
+        skills: [],            // ids of learned skills
         hasMovedThisTurn: false,
         hasAttackedThisTurn: false, // lords can attack once per turn (like units)
         isKing: false
@@ -106,6 +108,9 @@ export function awardXP(lord, amount) {
         lord.hp = Math.min(newMax, (lord.hp || 0) + 4);
         lord.maxHp = newMax;
         messages.push(`${lord.name} reached level ${lord.level}! ${pick} +1`);
+        // Feature 4: each level grants a skill-tree point to spend.
+        lord.skillPoints = (lord.skillPoints || 0) + 1;
+        messages.push(`${lord.name} gained a skill point!`);
         // Unlock abilities
         for (const [key, ab] of Object.entries(LORD_ABILITIES)) {
             if (lord.level >= ab.unlockLevel && !lord.abilities.includes(key)) {
@@ -242,4 +247,91 @@ export function getLordGovernanceMultiplier(lord) {
 /** Assign a lord to govern a city (it steps down from leading an army). */
 export function assignGovernance(lord, tileKey) {
     lord.governingCity = tileKey;
+}
+
+// --- Lord Skill Trees (Feature 4) ---
+
+/** Get all learnable skills for a lord whose prerequisites are met and that
+ *  the lord hasn't already learned. Returns the skill definition objects. */
+export function getAvailableSkills(lord) {
+    const tree = LORD_SKILL_TREES[lord.class];
+    if (!tree) return [];
+    const known = new Set(lord.skills || []);
+    const available = [];
+    for (const branch of Object.values(tree.branches)) {
+        for (const skill of branch.skills) {
+            if (known.has(skill.id)) continue;
+            if (skill.prereqs.length === 0) {
+                available.push(skill);
+            } else if (skill.prereqs.every(p => known.has(p))) {
+                available.push(skill);
+            }
+        }
+    }
+    return available;
+}
+
+/** Invest one skill point into a skill. Mutates `lord`.
+ *  @returns {{ success: boolean, message: string }} */
+export function investSkillPoint(lord, skillId) {
+    if (!lord.skillPoints || lord.skillPoints <= 0) {
+        return { success: false, message: 'No skill points available' };
+    }
+    const available = getAvailableSkills(lord);
+    const skill = available.find(s => s.id === skillId);
+    if (!skill) {
+        return { success: false, message: 'Skill not available or prerequisites not met' };
+    }
+    lord.skillPoints -= 1;
+    if (!lord.skills) lord.skills = [];
+    lord.skills.push(skillId);
+
+    // Apply immediate, permanent stat effects (hp + command capacity). Other
+    // effects (combat bonuses, economy bonuses) are read aggregately from
+    // getSkillEffects at use sites, so they don't need to be baked in here.
+    if (skill.effect.hp) {
+        lord.maxHp = (lord.maxHp || 0) + skill.effect.hp;
+        lord.hp = (lord.hp || 0) + skill.effect.hp;
+    }
+    if (skill.effect.commandBonus) {
+        lord.stats.command = (lord.stats.command || 0) + skill.effect.commandBonus;
+    }
+    return { success: true, message: `${lord.name} learned ${skill.name}!` };
+}
+
+/** Aggregate all skill effects currently learned by a lord into a flat object
+ *  (numerics sum, booleans OR, nested `allUnitsBonus` flattened). */
+export function getSkillEffects(lord) {
+    const effects = {
+        attack: 0, defense: 0, hp: 0, critChance: 0, lifesteal: 0, lowHpBonus: 0,
+        adjacentAttackBonus: 0, adjacentDefenseBonus: 0, siegeBonus: 0,
+        cityAttackBonus: 0, commandBonus: 0, healAdjacent: 0, healBonus: 0,
+        goldBonus: 0, upkeepReduction: 0, tradeRouteBonus: 0, allResourceBonus: 0,
+        cityYieldBonus: 0, allCitiesYieldBonus: 0, fortBonus: 0, fortDamage: 0,
+        captureCostReduction: 0, loyaltyBonus: 0, freeGovernor: false,
+        surviveLethal: false, xpGain: 0, autoHeal: 0,
+        allUnitsAttackBonus: 0, allUnitsDefenseBonus: 0
+    };
+    if (!lord.skills || !lord.skills.length) return effects;
+    const tree = LORD_SKILL_TREES[lord.class];
+    if (!tree) return effects;
+    const known = new Set(lord.skills);
+    for (const branch of Object.values(tree.branches)) {
+        for (const skill of branch.skills) {
+            if (!known.has(skill.id)) continue;
+            for (const [key, val] of Object.entries(skill.effect)) {
+                if (typeof val === 'number') {
+                    if (effects[key] !== undefined) effects[key] += val;
+                } else if (typeof val === 'boolean') {
+                    effects[key] = val;
+                } else if (val && typeof val === 'object') {
+                    // Nested effect like allUnitsBonus: { attack, defense }.
+                    for (const [k, v] of Object.entries(val)) {
+                        if (typeof v === 'number' && effects[k] !== undefined) effects[k] += v;
+                    }
+                }
+            }
+        }
+    }
+    return effects;
 }
