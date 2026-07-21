@@ -53,16 +53,18 @@ export function nextStepToward(tiles, units, unit, goal, maxRange = 200, owner =
             const k = key(nx, nz);
             if (visited.has(k)) continue;
             if (!tiles.has(k)) continue;
-            // Terrain passability — except the goal tile itself (we stop
-            // adjacent to an unreachable goal). Naval units sail on water and
-            // rivers; land units need solid ground (rivers need a bridge).
+            // Terrain passability — applies to ALL tiles INCLUDING the goal.
+            // Without this, a land unit with a goal set on a water tile would
+            // "find" the goal and step onto water (the lords-walk-on-water bug).
+            // The unit-block check below still exempts the goal so we can path
+            // adjacent to a unit-occupied goal and stop there.
+            // Naval units sail on water and rivers; land units need solid ground
+            // (rivers need a bridge).
             const t = tiles.get(k);
-            if (k !== goalKey) {
-                if (isNaval(unit)) {
-                    if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') { visited.add(k); continue; }
-                } else {
-                    if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) { visited.add(k); continue; }
-                }
+            if (isNaval(unit)) {
+                if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') { visited.add(k); continue; }
+            } else {
+                if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) { visited.add(k); continue; }
             }
             // Don't path through occupied tiles (except the goal tile itself).
             if (blocked.has(k) && k !== goalKey) { visited.add(k); continue; }

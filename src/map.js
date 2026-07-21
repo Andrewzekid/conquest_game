@@ -663,6 +663,25 @@ export function getOwnedCities(tiles, owner) {
 }
 
 /**
+ * Find the city tile that owns a given tile (within its influence radius).
+ * Returns the city tile object or null if the tile is not within any city's
+ * influence. Used to enforce one-building-type-per-city limits.
+ */
+export function findParentCity(tiles, tile) {
+    if (!tile) return null;
+    for (const c of tiles.values()) {
+        if (c.terrain !== 'CITY' || !c.owner) continue;
+        const r = cityRadius(c);
+        if (Math.max(Math.abs(c.x - tile.x), Math.abs(c.z - tile.z)) <= r) {
+            // Match by owner if possible
+            if (tile.owner && c.owner !== tile.owner) continue;
+            return c;
+        }
+    }
+    return null;
+}
+
+/**
  * Set of tile keys within each owned city's influence radius (Chebyshev, scales
  * with city level). Buildings may only be placed on these tiles.
  */
@@ -800,13 +819,12 @@ export function foundCity(tiles, tile, owner) {
     if (tile.terrain === 'WATER' || tile.terrain === 'MOUNTAIN' || tile.terrain === 'RIVER') {
         return [`Cannot found a city on ${tile.terrain.toLowerCase()} terrain.`];
     }
-    // Spacing rule: a new city may not be founded within the influence radius
-    // (+1) of any existing city (any owner), so cities don't overlap influence
+    // Spacing rule: a new city may not be founded within 4 Chebyshev blocks
+    // of any existing city (any owner), so cities don't overlap influence
     // bubbles and crowd each other out.
     for (const t of tiles.values()) {
         if (t.terrain !== 'CITY') continue;
-        const minDist = cityRadius(t) + 1;
-        if (Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z)) < minDist) {
+        if (Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z)) < 4) {
             return [`Too close to ${t.cityName || 'an existing city'} — found elsewhere.`];
         }
     }

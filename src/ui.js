@@ -51,6 +51,8 @@ export function bindUI(gameState, callbacks) {
         aiGoalsPanelWrap: document.getElementById('ai-goals-panel'),
         victoryPanel: document.getElementById('victory-panel-body'),
         victoryPanelWrap: document.getElementById('victory-panel'),
+        techPanel: document.getElementById('tech-panel-body'),
+        techPanelWrap: document.getElementById('tech-panel'),
         combatLog: document.getElementById('combat-log'),
         phaseIndicator: document.getElementById('phase-indicator')
     };
@@ -516,7 +518,7 @@ export function bindUI(gameState, callbacks) {
                 const wtile = gameState.tiles.get(`${unit.x},${unit.z}`);
                 if (wtile && wtile.owner === PLAYER_FACTION) {
                     const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
-                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles)
+                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.tech)
                         .filter(b => b.canBuild && b.type !== 'HARBOR' && b.type !== 'SIEGE_WORKSHOP' &&
                             b.type !== 'MARKET' && b.type !== 'BARRACKS' && b.type !== 'WALLS');
                     if (opts.length) {
@@ -741,7 +743,7 @@ export function bindUI(gameState, callbacks) {
         }
         const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
         const inInfluence = influence.has(`${tile.x},${tile.z}`);
-        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles);
+        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.tech);
         if (els.buildMenu) {
             els.buildMenu.innerHTML = '';
             const desc = document.createElement('div');
@@ -1293,6 +1295,20 @@ export function bindUI(gameState, callbacks) {
         });
     }
 
+    // T key toggles the Tech Tree panel.
+    if (els.techPanelWrap) {
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 't' && e.key !== 'T') return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            e.preventDefault();
+            const wrap = els.techPanelWrap;
+            const open = wrap.style.display === 'block';
+            wrap.style.display = open ? 'none' : 'block';
+            if (!open) showTechPanel();
+        });
+    }
+
     // Scoreboard button: shows the faction rankings panel.
     const sbBtn = document.getElementById('btn-scoreboard');
     if (sbBtn) {
@@ -1307,6 +1323,7 @@ export function bindUI(gameState, callbacks) {
         showLordPanel();
         showAIGoalsPanel();
         showVictoryPanel();
+        showTechPanel();
     }
 
     // Spectate-only debug panel: each AI faction's current ordered goal
@@ -1366,6 +1383,78 @@ export function bindUI(gameState, callbacks) {
                 ${bar(sc.progress||0)}
             </div>`;
         els.victoryPanel.innerHTML = html;
+    }
+
+    // Tech Tree Panel: shows all techs grouped by era, with status indicators
+    // (researched, available, locked). Clicking an available tech starts research.
+    function showTechPanel() {
+        if (!els.techPanel || !els.techPanelWrap) return;
+        if (els.techPanelWrap.style.display === 'none') return;
+        const ts = gameState.techState;
+        if (!ts) { els.techPanel.innerHTML = '<p>No tech state available.</p>'; return; }
+
+        const eraOrder = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern'];
+        const eraNames = { ancient: 'Ancient', classical: 'Classical', medieval: 'Medieval', industrial: 'Industrial', renaissance: 'Renaissance', enlightenment: 'Enlightenment', modern: 'Modern' };
+        const eraColor = { ancient: '#c8a06e', classical: '#d4af37', medieval: '#8b5cf6', industrial: '#6b7280', renaissance: '#3b82f6', enlightenment: '#f59e0b', modern: '#ef4444' };
+
+        let html = '<h3>Research</h3>';
+        if (ts.current) {
+            const curTech = TECHS[ts.current];
+            if (curTech) {
+                const pct = curTech.cost > 0 ? Math.floor((ts.progress / curTech.cost) * 100) : 0;
+                html += `<div style="margin:4px 0;padding:6px;border-left:3px solid #4caf50;background:#1a2a1a;font-size:12px;">
+                    Researching: <b>${curTech.name}</b><br>
+                    <div class="progress-track" style="margin-top:4px;"><div class="progress-fill" style="width:${pct}%"></div></div>
+                    <span style="opacity:.7;">${ts.progress}/${curTech.cost} pts</span>
+                </div>`;
+            }
+        } else {
+            html += '<div style="margin:4px 0;padding:6px;border-left:3px solid #888;font-size:12px;opacity:.7;">No tech selected — pick one below.</div>';
+        }
+
+        for (const era of eraOrder) {
+            const techs = Object.values(TECHS).filter(t => t.era === era);
+            if (techs.length === 0) continue;
+            html += `<div style="margin:6px 0 2px;"><b style="color:${eraColor[era] || '#aaa'};">${eraNames[era]}</b></div>`;
+            for (const tech of techs) {
+                const researched = ts.researched.has(tech.id);
+                const available = !researched && tech.prerequisites.every(p => ts.researched.has(p));
+                const isCurrent = ts.current === tech.id;
+                const borderColor = researched ? '#4caf50' : isCurrent ? '#2196f3' : available ? '#ff9800' : '#444';
+                const opacity = researched ? '0.7' : available ? '1' : '0.5';
+                const cursor = available && !isCurrent ? 'pointer' : 'default';
+                const unlockText = tech.unlocks.map(u => {
+                    if (u.type === 'building') return BUILDING_TYPE[u.id]?.name || u.id;
+                    if (u.type === 'unit') return UNIT_TYPE[u.id]?.name || u.id;
+                    return u.id;
+                }).join(', ');
+                html += `<div style="margin:2px 0;padding:4px 6px;border-left:3px solid ${borderColor};opacity:${opacity};cursor:${cursor};font-size:12px;background:#1a1a2a;"
+                    data-tech-id="${tech.id}" class="tech-card">
+                    <b>${tech.name}</b> (${tech.cost} pts)
+                    ${researched ? ' ✓' : ''}
+                    ${unlockText ? `<br><span style="opacity:.7;">Unlocks: ${unlockText}</span>` : ''}
+                    ${tech.bonus && Object.keys(tech.bonus).length ? `<br><span style="opacity:.7;">Bonus: ${tech.desc.split('.').pop().trim()}</span>` : ''}
+                </div>`;
+            }
+        }
+
+        els.techPanel.innerHTML = html;
+
+        // Attach click handlers for available techs
+        els.techPanel.querySelectorAll('.tech-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const id = card.dataset.techId;
+                if (!id) return;
+                const t = TECHS[id];
+                if (!t) return;
+                const researched = ts.researched.has(id);
+                const available = !researched && t.prerequisites.every(p => ts.researched.has(p));
+                if (available && callbacks.onResearch) {
+                    callbacks.onResearch(id);
+                    showTechPanel();
+                }
+            });
+        });
     }
 
     // Scoreboard Panel: shows all factions' power rankings, scores, and
@@ -1434,6 +1523,7 @@ export function bindUI(gameState, callbacks) {
         showLordPanel,
         showAIGoalsPanel,
         showVictoryPanel,
+        showTechPanel,
         showScoreboard,
         addCombatLog,
         updateAll

@@ -1,5 +1,6 @@
 /** Building system: construction, defensiveness, buildable list (pure logic). */
 import { BUILDING_TYPE, PILLAGEABLE_BUILDINGS, MILITARY_BUILDING_HP, MILITARY_BUILDING_DEFENSE, BUILDING_MAX_LEVEL, MILITARY_BUILDING_LEVELS } from './config.js';
+import { findParentCity, cityRadius } from './map.js';
 
 /** A tile is buildable for an influence-buildable military building if it is
  *  passable land inside influence (not water/mountain/river). City-tile
@@ -89,6 +90,25 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
     if (existing.includes(buildingType)) {
         messages.push(`${bData.name} already built at [${tile.x}, ${tile.z}].`);
         return messages;
+    }
+
+    // One of each type per city (across all influence tiles)
+    if (tiles) {
+        const parentCity = findParentCity(tiles, tile);
+        if (parentCity) {
+            const cr = cityRadius(parentCity);
+            for (let dx = -cr; dx <= cr; dx++) {
+                for (let dz = -cr; dz <= cr; dz++) {
+                    const k = `${parentCity.x + dx},${parentCity.z + dz}`;
+                    if (k === tileKey) continue;
+                    const list = buildings.get(k) || [];
+                    if (list.includes(buildingType)) {
+                        messages.push(`${bData.name} already built in this city.`);
+                        return messages;
+                    }
+                }
+            }
+        }
     }
 
     // CITADEL requires WALLS to be present (it upgrades Walls)
@@ -230,7 +250,7 @@ export function getBuildingDefenseBonus(tileKey, buildings) {
  * @param influence - optional Set of tile keys within a city's area of influence.
  * @param tiles - optional full tile Map (for the Harbor coastal check)
  */
-export function getBuildableBuildings(tile, resources, buildings, influence, tiles) {
+export function getBuildableBuildings(tile, resources, buildings, influence, tiles, techState) {
     const tileKey = `${tile.x},${tile.z}`;
     const existing = buildings.get(tileKey) || [];
     const inInfluence = !influence || influence.has(tileKey);
@@ -261,6 +281,33 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
         if (canBuild && existing.includes(type)) {
             canBuild = false;
             reason = 'Already built';
+        }
+        // One of each type per city (across all influence tiles)
+        if (canBuild && tiles) {
+            const parentCity = findParentCity(tiles, tile);
+            if (parentCity) {
+                const cr = cityRadius(parentCity);
+                for (let dx = -cr; dx <= cr; dx++) {
+                    for (let dz = -cr; dz <= cr; dz++) {
+                        const k = `${parentCity.x + dx},${parentCity.z + dz}`;
+                        if (k === tileKey) continue;
+                        const list = buildings.get(k) || [];
+                        if (list.includes(type)) {
+                            canBuild = false;
+                            reason = 'Already built in this city';
+                            break;
+                        }
+                    }
+                    if (!canBuild) break;
+                }
+            }
+        }
+        // Tech gate: building requires a tech that hasn't been researched yet
+        if (canBuild && bData.techRequired && techState) {
+            if (!techState.researched.has(bData.techRequired)) {
+                canBuild = false;
+                reason = `Requires ${bData.techRequired.replace(/_/g, ' ').toLowerCase()} tech`;
+            }
         }
         if (canBuild) {
             for (const [res, amt] of Object.entries(bData.cost)) {

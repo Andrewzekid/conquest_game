@@ -16,7 +16,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { sellAtMarket, getUnitCap } from './economy.js';
-import { cityRadius } from './map.js';
+import { cityRadius, findParentCity } from './map.js';
 import { getBuildingState, upgradeBuilding } from './building.js';
 import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
@@ -151,13 +151,32 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const findBuildSite = (buildingType, ownedTiles, buildingsMap, tilesMap) => {
         const bData = BUILDING_TYPE[buildingType];
         if (!bData) return null;
+        // Tech gate: skip buildings whose required tech hasn't been researched
+        if (bData.techRequired && aiTs && aiTs.researched && !aiTs.researched.has(bData.techRequired)) return null;
         const existing = (t) => (buildingsMap.get(`${t.x},${t.z}`) || []).includes(buildingType);
+        // Check if the building type already exists anywhere in the parent city's influence.
+        const existsInCity = (t) => {
+            if (existing(t)) return true;
+            if (!tilesMap) return false;
+            const pc = findParentCity(tilesMap, t);
+            if (!pc) return false;
+            const cr = cityRadius(pc);
+            for (let dx = -cr; dx <= cr; dx++) {
+                for (let dz = -cr; dz <= cr; dz++) {
+                    const k = `${pc.x + dx},${pc.z + dz}`;
+                    if (k === `${t.x},${t.z}`) continue;
+                    const list = buildingsMap.get(k) || [];
+                    if (list.includes(buildingType)) return true;
+                }
+            }
+            return false;
+        };
         // First pass: passable non-city land in influence, not already built.
         for (const t of ownedTiles) {
             if (t.terrain === 'CITY') continue;
             if (!canBuildAt(t)) continue;
             if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
-            if (existing(t)) continue;
+            if (existsInCity(t)) continue;
             // Harbor must be coastal.
             if (buildingType === 'HARBOR' && !isCoastalCity(t, tilesMap)) continue;
             return t;
@@ -166,7 +185,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         for (const t of ownedTiles) {
             if (t.terrain !== 'CITY') continue;
             if (!canBuildAt(t)) continue;
-            if (existing(t)) continue;
+            if (existsInCity(t)) continue;
             if (buildingType === 'HARBOR' && !isCoastalCity(t, tilesMap)) continue;
             return t;
         }
@@ -606,6 +625,34 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (site && canAffordBuilding('MARKET', res)) {
             actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${site.x},${site.z}` });
             res = payBuilding('MARKET', res);
+        }
+    }
+
+    // 1af. UNIVERSITY — critical for science victory and always useful for
+    //      tech advancement. Build one in each city when pursuing science
+    //      victory; otherwise build a single one for general research.
+    if (vt === 'science') {
+        // Science victory: build universities in every city that doesn't have one
+        for (const t of owned) {
+            if (t.terrain !== 'CITY') continue;
+            const list = buildings.get(`${t.x},${t.z}`) || [];
+            if (list.includes('UNIVERSITY')) continue;
+            const site = findBuildSite('UNIVERSITY', owned, buildings, tiles);
+            if (site && canAffordBuilding('UNIVERSITY', res)) {
+                actions.push({ type: 'build', buildingType: 'UNIVERSITY', tileKey: `${site.x},${site.z}` });
+                res = payBuilding('UNIVERSITY', res);
+                break; // one per turn
+            }
+        }
+    } else {
+        // Non-science: build one university for general research benefit
+        const hasUni = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('UNIVERSITY'));
+        if (!hasUni && myCityCount >= 2) {
+            const site = findBuildSite('UNIVERSITY', owned, buildings, tiles);
+            if (site && canAffordBuilding('UNIVERSITY', res)) {
+                actions.push({ type: 'build', buildingType: 'UNIVERSITY', tileKey: `${site.x},${site.z}` });
+                res = payBuilding('UNIVERSITY', res);
+            }
         }
     }
 

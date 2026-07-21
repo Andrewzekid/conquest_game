@@ -28,7 +28,7 @@ const PERSONALITY_WEIGHTS = {
                   diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4 },
     DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6 },
-    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
+    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.0, 'expand-islands': 0.9, 'develop-economy': 1.4,
                   diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7 },
     BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0 },

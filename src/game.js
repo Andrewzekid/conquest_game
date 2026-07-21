@@ -179,6 +179,8 @@ export class Game {
             }
             this._rebuildDiploCache();
             this.gameState.turnManager.endPlayerTurn();
+            if (this.ui) this.ui.updateAll();
+            if (this.renderer) this.renderAll();
             done++;
             if (myToken === this._ffToken && status)
                 status.textContent = `Fast-forwarding ${n - done} turns...`;
@@ -202,6 +204,8 @@ export class Game {
         if (!this._autoFF || this.gameState.gameOver || this.gameState.paused) return;
         this._rebuildDiploCache();
         this.gameState.turnManager.endPlayerTurn();
+        if (this.ui) this.ui.updateAll();
+        if (this.renderer) this.renderAll();
         setTimeout(() => this._autoFFLoop(), 250);
     }
 
@@ -3240,8 +3244,14 @@ export class Game {
                     this.log(`🎯 Lord ${lord.name} can't reach its goal �?cancelled.`);
                     break;
                 }
-                // Don't step onto a fortified enemy city (must besiege first).
+                // Don't step onto impassable terrain (water, river, mountain).
                 const dest = this.tiles.get(`${step.x},${step.z}`);
+                if (dest && (dest.terrain === 'WATER' || dest.terrain === 'RIVER' || dest.terrain === 'MOUNTAIN')) {
+                    lord.goal = null;
+                    this.log(`🎯 Lord ${lord.name}'s goal is on impassable terrain — cancelled.`);
+                    break;
+                }
+                // Don't step onto a fortified enemy city (must besiege first).
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
                     lord.goal = null;
                     this.log(`🎯 Lord ${lord.name}'s goal is a fortified city �?cancelled (besiege it first).`);
@@ -3402,11 +3412,12 @@ export class Game {
      *  - ECONOMIC: Prefers trade, avoids war, seeks distant alliances for security
      *  - BALANCED: "Attack close, ally far" - wars on neighbors, allies with distant factions */
     _getDiplomaticStrategy(personality) {
+        const isSpectate = this.spectateMode;
         const strategies = {
-            AGGRESSIVE: { warThreshold: 1.1, allyThreshold: 0.6, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: 1.5 },
-            DEFENSIVE:  { warThreshold: 1.6, allyThreshold: 0.9, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.0 },
-            ECONOMIC:   { warThreshold: 2.0, allyThreshold: 0.7, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.5 },
-            BALANCED:   { warThreshold: 1.3, allyThreshold: 0.8, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: 1.8 }
+            AGGRESSIVE: { warThreshold: isSpectate ? 0.7 : 1.1, allyThreshold: 0.15, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: isSpectate ? 1.0 : 1.5, peaceCooldown: isSpectate ? 2 : 6 },
+            DEFENSIVE:  { warThreshold: isSpectate ? 1.0 : 1.6, allyThreshold: 0.25, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.2 : 2.0, peaceCooldown: isSpectate ? 3 : 6 },
+            ECONOMIC:   { warThreshold: isSpectate ? 1.2 : 2.0, allyThreshold: 0.35, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.5 : 2.5, peaceCooldown: isSpectate ? 3 : 6 },
+            BALANCED:   { warThreshold: isSpectate ? 0.9 : 1.3, allyThreshold: 0.2, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.1 : 1.8, peaceCooldown: isSpectate ? 2 : 6 }
         };
         return strategies[personality] || strategies.DEFENSIVE;
     }
@@ -3545,8 +3556,8 @@ export class Game {
             const isAlly = rel.state === DIPLOMACY_STATES.ALLIANCE;
             if (isAlly && ratio < strategy.breakAllianceThreshold) return { other, score: -Infinity };
             if (isAlly) score -= 30;
-            const PEACE_COOLDOWN = 6;
-            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) return { other, score: -Infinity };
+            const peaceCooldown = strategy.peaceCooldown || 6;
+            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < peaceCooldown) return { other, score: -Infinity };
             score += (100 - theirPower) * 0.1;
             if (other === PLAYER_FACTION) score += 10;
             // Grievance tension: the angrier we are, the more we want war
@@ -3574,7 +3585,7 @@ export class Game {
             const distance = this._factionDistance(faction, other);
             const isNeighbor = distance <= 8;
             const tension = getTension(this.gameState.diplomacy, faction, other);
-            if (!aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension)) continue;
+            if (!aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension, this.spectateMode)) continue;
             const prevState = rel.state;
             const turn = this.gameState.turn || 0;
             setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR, turn);
@@ -3725,6 +3736,29 @@ export class Game {
             }
 
             if (!type) continue;
+
+            // Hierarchy check: don't propose a treaty if the relationship is
+            // already at or above that level (e.g., don't propose NAP if
+            // already at TRADE_PACT or ALLIANCE).
+            const hierarchy = [
+                DIPLOMACY_STATES.NAP,
+                DIPLOMACY_STATES.CEASEFIRE,
+                DIPLOMACY_STATES.TRADE_PACT,
+                DIPLOMACY_STATES.PEACE,
+                DIPLOMACY_STATES.ALLIANCE
+            ];
+            const currentIdx = hierarchy.indexOf(rel.state);
+            const proposedIdx = hierarchy.indexOf(type);
+            if (currentIdx >= 0 && proposedIdx >= 0 && currentIdx >= proposedIdx) continue;
+
+            // Cooldown: don't propose the same treaty type to the same
+            // faction more than once every 5 turns.
+            const recentProposal = diplo.pendingOffers.some(o =>
+                o.from === faction && o.to === other && o.type === type &&
+                (this.gameState.turn - (o.turnProposed || 0)) < 5);
+            // Also check recently accepted treaties (already applied)
+            if (!recentProposal && rel.state === type && (rel.turnsAtPeace || 0) < 5) continue;
+            if (recentProposal) continue;
 
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             const label = type === DIPLOMACY_STATES.PEACE ? 'peace'

@@ -332,7 +332,7 @@ export function aiDecideTreaty(personality, type, powerRatio, relationship = 0, 
  *  and geographic proximity. AI is more aggressive in declaring war.
  *  Phase G: Improved diplomacy - AI considers shared enemies (more likely to attack
  *  factions your allies hate) and prefers wars with neighbors. */
-export function aiDecideWar(personality, powerRatio, relationship = 0, sharedEnemies = 0, isNeighbor = false, grievances = 0) {
+export function aiDecideWar(personality, powerRatio, relationship = 0, sharedEnemies = 0, isNeighbor = false, grievances = 0, spectateMode = false) {
     const p = AI_PERSONALITIES[personality] || AI_PERSONALITIES.DEFENSIVE;
     const effectiveChance = p.warChance * Math.min(2.5, powerRatio);
     // Bad relationship makes war more likely; good relationship deters it
@@ -345,7 +345,10 @@ export function aiDecideWar(personality, powerRatio, relationship = 0, sharedEne
     // Grievance pre-empt: the angrier we are at the target, the more we want to
     // strike first. Capped so it tips borderline cases without guaranteeing war.
     const grievanceMod = Math.min(0.3, (grievances || 0) * 0.005);
-    return Math.random() < effectiveChance + relMod + sharedEnemyBonus + neighborBonus + grievanceMod;
+    // Spectate mode: boost war likelihood so AI factions are more aggressive
+    // and the spectator sees more action
+    const spectateBonus = spectateMode ? 0.25 : 0;
+    return Math.random() < effectiveChance + relMod + sharedEnemyBonus + neighborBonus + grievanceMod + spectateBonus;
 }
 
 /** Process trade pact: exchange the specified trade material between factions.

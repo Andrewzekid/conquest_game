@@ -443,28 +443,28 @@ export const BUILDING_TYPE = {
     LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 5 },   terrain: 'FOREST', desc: '+5 wood/turn.' },
     MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.' },
+                  desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'MATHEMATICS' },
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+10 production/turn. Units trained in this city start as veterans and cost less gold. Buildable in the city or its influence.' },
     WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY',
-                  desc: '+5 defense to units defending this tile (strong fortification). Stays on the city tile.' },
+                  desc: '+5 defense to units defending this tile (strong fortification). Stays on the city tile.', techRequired: 'FORTIFICATION' },
     HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.' },
+                  desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.', techRequired: 'NAVAL_ENGINEERING' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.' },
+                  desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.', techRequired: 'SIEGE_CRAFT' },
     // === RENAISSANCE ERA BUILDINGS ===
     CITADEL:     { name: 'Citadel',     cost: { gold: 120, wood: 40, iron: 30 }, bonus: { defense: 8 }, terrain: 'CITY', upgradesFrom: 'WALLS',
-                  desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.' },
+                  desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.', techRequired: 'BASTION_FORT' },
     // === ENLIGHTENMENT ERA BUILDINGS ===
     UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 3 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+3 research points per turn. Buildable in the city or its influence; pillageable by enemy units.' },
+                  desc: '+3 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ACADEMY' },
     BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.' },
+                  desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'BANKING' },
     // === MODERN ERA BUILDINGS ===
     COMMAND_POST:{ name: 'Command Post', cost: { gold: 180, wood: 50, iron: 40 }, bonus: { production: 8 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+8 production per turn. Lords gain +2 command range. Buildable in the city or its influence; pillageable by enemy units.' },
+                  desc: '+8 production per turn. Lords gain +2 command range. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'TELEGRAPH' },
     POWER_PLANT: { name: 'Power Plant', cost: { gold: 250, wood: 60, iron: 50 }, bonus: { production: 12 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+12 production per turn. Buildable in the city or its influence; pillageable by enemy units.' }
+                  desc: '+12 production per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ELECTRICITY' }
 };
 
 // Military structures outside cities can be attacked, damaged, and pillaged.
@@ -477,13 +477,11 @@ export const MILITARY_BUILDING_DEFENSE = { BARRACKS: 2, SIEGE_WORKSHOP: 3, HARBO
 export const MILITARY_BUILDING_LEVELS = {
     BARRACKS: [
         { veteranLevel: 2, goldMult: 0.75, upgradeCost: null },
-        { veteranLevel: 3, goldMult: 0.65, upgradeCost: { gold: 90, iron: 20 } },
-        { veteranLevel: 4, goldMult: 0.60, upgradeCost: { gold: 150, iron: 30 } }
+        { veteranLevel: 3, goldMult: 0.65, upgradeCost: { gold: 90, iron: 20 } }
     ],
     HARBOR: [
         { veteranLevel: 2, goldMult: 0.85, upgradeCost: null },
-        { veteranLevel: 3, goldMult: 0.75, upgradeCost: { gold: 90, iron: 20 } },
-        { veteranLevel: 4, goldMult: 0.70, upgradeCost: { gold: 150, iron: 30 } }
+        { veteranLevel: 3, goldMult: 0.75, upgradeCost: { gold: 90, iron: 20 } }
     ]
 };
 export const BUILDING_MAX_LEVEL = 3;

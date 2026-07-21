@@ -107,6 +107,41 @@ describe('building', () => {
       const msgs = constructBuilding('HARBOR', makeTile(0, 0, 'CITY'), { gold: 200, wood: 200 }, new Map(), null, tiles);
       expect(msgs.some(m => m.includes('water') || m.includes('river'))).toBe(true);
     });
+
+    it('rejects building same type in another tile within city influence (one per city)', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+      ]);
+      const buildings = new Map([['0,0', ['MARKET']]]);
+      const resources = { gold: 200, wood: 200, iron: 200 };
+      // Try to build another MARKET on influence tile
+      const msgs = constructBuilding('MARKET', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      expect(msgs.some(m => m.includes('already built in this city'))).toBe(true);
+    });
+
+    it('allows building same type in different city', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['10,0', makeTile(10, 0, 'CITY')],
+      ]);
+      const buildings = new Map([['0,0', ['MARKET']]]);
+      const resources = { gold: 200, wood: 200, iron: 200 };
+      // Build MARKET in second city - should succeed
+      const msgs = constructBuilding('MARKET', makeTile(10, 0, 'CITY'), resources, buildings, null, tiles);
+      expect(msgs.some(m => m.includes('Built'))).toBe(true);
+    });
+
+    it('rejects building on influence tile when city tile already has the building', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+      ]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, wood: 200, iron: 200 };
+      const msgs = constructBuilding('BARRACKS', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      expect(msgs.some(m => m.includes('already built in this city'))).toBe(true);
+    });
   });
 
   describe('getBuildableBuildings', () => {
@@ -120,6 +155,31 @@ describe('building', () => {
       const result = getBuildableBuildings(makeTile(0, 0, 'CITY'), { gold: 0, wood: 0, iron: 0, food: 0, production: 0 }, new Map());
       const market = result.find(b => b.type === 'MARKET');
       expect(market.canBuild).toBe(false);
+    });
+
+    it('marks building as cannotBuild if already built in city on another tile', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+      ]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
+      const result = getBuildableBuildings(makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      const barracks = result.find(b => b.type === 'BARRACKS');
+      expect(barracks.canBuild).toBe(false);
+      expect(barracks.reason).toBe('Already built in this city');
+    });
+
+    it('allows building in different city', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['10,0', makeTile(10, 0, 'CITY')],
+      ]);
+      const buildings = new Map([['0,0', ['MARKET']]]);
+      const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
+      const result = getBuildableBuildings(makeTile(10, 0, 'CITY'), resources, buildings, null, tiles);
+      const market = result.find(b => b.type === 'MARKET');
+      expect(market.canBuild).toBe(true);
     });
   });
 
@@ -144,6 +204,40 @@ describe('building', () => {
     it('rejects if not built', () => {
       const result = upgradeBuilding('BARRACKS', makeTile(0, 0, 'CITY'), {}, new Map(), new Map());
       expect(result).toContain('not built');
+    });
+
+    it('allows Barracks upgrade to level 2', () => {
+      const state = new Map([['0,0:BARRACKS', { level: 1, hp: 20, maxHp: 20 }]]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, iron: 200 };
+      const result = upgradeBuilding('BARRACKS', makeTile(0, 0, 'CITY'), resources, buildings, state);
+      expect(result).toContain('Upgraded');
+      expect(state.get('0,0:BARRACKS').level).toBe(2);
+    });
+
+    it('allows Harbor upgrade to level 2', () => {
+      const state = new Map([['0,0:HARBOR', { level: 1, hp: 30, maxHp: 30 }]]);
+      const buildings = new Map([['0,0', ['HARBOR']]]);
+      const resources = { gold: 200, iron: 200 };
+      const result = upgradeBuilding('HARBOR', makeTile(0, 0, 'CITY'), resources, buildings, state);
+      expect(result).toContain('Upgraded');
+      expect(state.get('0,0:HARBOR').level).toBe(2);
+    });
+
+    it('rejects Barracks upgrade beyond level 2', () => {
+      const state = new Map([['0,0:BARRACKS', { level: 2, hp: 20, maxHp: 20 }]]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, iron: 200 };
+      const result = upgradeBuilding('BARRACKS', makeTile(0, 0, 'CITY'), resources, buildings, state);
+      expect(result).toContain('cannot be upgraded further');
+    });
+
+    it('rejects Harbor upgrade beyond level 2', () => {
+      const state = new Map([['0,0:HARBOR', { level: 2, hp: 30, maxHp: 30 }]]);
+      const buildings = new Map([['0,0', ['HARBOR']]]);
+      const resources = { gold: 200, iron: 200 };
+      const result = upgradeBuilding('HARBOR', makeTile(0, 0, 'CITY'), resources, buildings, state);
+      expect(result).toContain('cannot be upgraded further');
     });
   });
 
