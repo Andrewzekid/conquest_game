@@ -2,7 +2,7 @@
  *  Phase F: enhanced persistence with verification for growth, burn, workshop,
  *  wonders, diplomacy relationship scores, and all new state fields. */
 const SAVE_KEY = 'conquest_save';
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;
 
 export function saveGame(gameState) {
     try {
@@ -34,7 +34,19 @@ export function saveGame(gameState) {
             eliminated: [...(gameState.eliminated || [])],
             reputation: { ...(gameState.reputation || {}) },
             gameOver: gameState.gameOver,
-            winner: gameState.winner
+            winner: gameState.winner,
+            // Tech tree state (4X feature).
+            techState: gameState.techState ? {
+                researched: gameState.techState.researched ? [...gameState.techState.researched] : [],
+                current: gameState.techState.current || null,
+                progress: gameState.techState.progress || 0
+            } : null,
+            // Victory tracking state.
+            victoryState: gameState.victoryState ? {
+                projects: { ...(gameState.victoryState.projects || {}) },
+                tradeRoutes: { ...(gameState.victoryState.tradeRoutes || {}) },
+                scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
+            } : null
         };
         localStorage.setItem(SAVE_KEY, JSON.stringify(data));
         return true;
@@ -125,7 +137,15 @@ export function loadGame() {
             eliminated: new Set(data.eliminated || []),
             reputation: data.reputation || null,
             gameOver: data.gameOver || false,
-            winner: data.winner || null
+            winner: data.winner || null,
+            // Tech tree state (4X feature). Convert completed array back to Set.
+            techState: data.techState ? {
+                researched: new Set(data.techState.researched || []),
+                current: data.techState.current || null,
+                progress: data.techState.progress || 0
+            } : null,
+            // Victory tracking state.
+            victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} }
         };
 
         // Sanity-check the restored state. If critical fields are missing,

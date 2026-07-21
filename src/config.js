@@ -542,3 +542,20 @@ export const TRADE_MATERIALS = {
 
 // --- Victory ---
 export const VICTORY_TILE_PERCENTAGE = 0.6; // control 60% of map
+
+// Victory condition thresholds
+export const VICTORY_TYPES = {
+    DOMINATION: 'domination',   // eliminate all enemy cities
+    SCIENCE: 'science',         // research all techs + build space program
+    ECONOMIC: 'economic',       // accumulate gold + control trade
+    SCORE: 'score'              // highest score at turn limit
+};
+
+export const SCORE_VICTORY_TURN = 200;        // turn at which score victory is checked
+export const SCIENCE_VICTORY_COST = {         // resource cost for space program project
+    gold: 500, food: 200, wood: 200, iron: 100, production: 300
+};
+export const SCIENCE_VICTORY_BUILD_TURNS = 10; // turns to complete space program
+export const ECONOMIC_VICTORY_GOLD = 2000;     // gold threshold
+export const ECONOMIC_VICTORY_TRADE_ROUTES = 6; // trade route count needed
+export const ECONOMIC_VICTORY_BONUS_TRADE_GOLD = 50; // bonus gold per turn near victory

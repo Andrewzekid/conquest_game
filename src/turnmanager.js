@@ -3,6 +3,7 @@ import { collectResources, processUpkeep, processCityGrowth, processNeutralCityG
 import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel } from './diplomacy.js';
+import { addResearch, calculateResearchOutput } from './tech.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -48,6 +49,19 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Neutral (unowned) cities also grow and expand influence over time.
         processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
+        // Tech tree: accumulate research for the player each turn.
+        if (gameState.techState) {
+            const researchPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION);
+            if (researchPts > 0) {
+                const completed = addResearch(gameState.techState, researchPts);
+                if (completed && completed.length > 0) {
+                    for (const techId of completed) {
+                        if (logger) logger(`Research complete: ${techId}!`);
+                    }
+                }
+            }
+        }
 
         // Diplomacy bookkeeping: tick peace/alliance/war counters (which drift
         // relationship scores), then pay out trade-pact bonuses.
