@@ -17,7 +17,7 @@ import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT } from './con
 
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
-    'diplomacy', 'spy', 'chokepoint', 'scout'];
+    'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king'];
 
 // Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
 // conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
@@ -25,19 +25,19 @@ export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'd
 // posture (it previously only affected diplomacy rolls).
 const PERSONALITY_WEIGHTS = {
     AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6,
-                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7 },
+                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4 },
     DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8 },
+                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6 },
     ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
-                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9 },
+                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7 },
     BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0 },
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0 },
 };
 
 // Base scores per goal kind before personality weighting.
 const BASE_SCORE = {
     conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
-    diplomacy: 40, spy: 35, chokepoint: 45, scout: 55,
+    diplomacy: 40, spy: 35, chokepoint: 45, scout: 55, 'attack-king': 85,
 };
 
 function manhattan(ax, az, bx, bz) {
@@ -162,6 +162,10 @@ function goalValid(goal, ctx) {
             return !!ctx.hasChokepoints;
         case 'scout':
             return (ctx.unexploredTiles || 0) > 20;
+        case 'attack-king':
+            // Valid while at war with the target faction. If the king died or
+            // the war ended, the goal is dropped on the next replan.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : ctx.enemies.size > 0;
         default:
             return false;
     }
@@ -215,6 +219,7 @@ export function selectGoals(input) {
         bestFoundSpotKey = null, foreignShoreKey = null, bestEconTileKey = null,
         neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
         unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
+        enemyKings = [],
     } = input;
 
     const enemySet = new Set(enemies || []);
@@ -313,17 +318,41 @@ export function selectGoals(input) {
             null, null, 'long', {});
     }
 
+    // Attack Enemy King: when an at-war enemy king is exposed (no bodyguard
+    // unit on its tile), prioritize assassinating it — a faction whose king
+    // dies is eliminated, the single highest-value action in the game. The
+    // goal targets the king's current tile and stores the king id in meta.
+    {
+        const exposedKing = enemyKings.find(king =>
+            king.owner !== factionDef.id &&
+            enemySet.has(king.owner) &&
+            king.isKing && !king.guarded);
+        if (exposedKing) {
+            const d = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
+            // Closer exposed kings score higher; the base (85) puts it just
+            // below conquest so a live conquest still wins when the king is
+            // far away but a nearby exposed king jumps to the top.
+            const score = (BASE_SCORE['attack-king'] - d * 0.5) * weights['attack-king'];
+            push('attack-king',
+                score,
+                `${exposedKing.x},${exposedKing.z}`,
+                exposedKing.owner,
+                'immediate',
+                { kingId: exposedKing.id });
+        }
+    }
+
     // Victory-target modifiers: weight goals based on the chosen victory type.
     const vt = (aiState && aiState.victoryTarget) || 'domination';
     const vtModifiers = {
         domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
-                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7 },
+                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3 },
         science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
-                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0 },
+                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9 },
         economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
-                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9 },
+                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8 },
         score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
-                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0 }
+                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1 }
     };
     const vtMod = vtModifiers[vt] || vtModifiers.domination;
     for (const c of candidates) {
@@ -335,11 +364,11 @@ export function selectGoals(input) {
     const phase = computeGamePhase(turn);
     const phaseMod = {
         early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
-                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5 },
+                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9 },
         mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7 },
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1 },
         late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
-                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4 },
+                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3 },
     };
     const pm = phaseMod[phase] || phaseMod.mid;
     for (const c of candidates) {

@@ -4006,6 +4006,26 @@ export class Game {
             }
         }
 
+        // 3c) Proactive king hunting. When an "attack-king" goal is active and
+        //     an exposed enemy king is within reach, advance our king toward
+        //     it — but only when we're locally stronger (friendLocal > foeLocal
+        //     * 0.8), so we don't feed our own king into a losing fight. The
+        //     king's ability to end a war by killing the enemy king is the
+        //     single highest-value action available to it.
+        const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        if (atWar && aiSt && aiSt.goals && aiSt.goals.some(g => g.kind === 'attack-king')) {
+            const enemyKing = enemyLords.find(l => l.isKing);
+            if (enemyKing) {
+                const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
+                const guarded = [...this.gameState.units.values()]
+                    .some(u => u.owner === enemyKing.owner && u.x === enemyKing.x && u.z === enemyKing.z);
+                if (!guarded && d > 1 && friendLocal > foeLocal * 0.8) {
+                    this._aiStepLord(lord, enemyKing.x, enemyKing.z, faction, pool, factionName);
+                    return;
+                }
+            }
+        }
+
         // 4) Anchor to the main conquest group or military centroid once we have
         //    a modest force (3+ military units). This gets the king into fights.
         if (military.length >= 3) {
@@ -5129,14 +5149,14 @@ export class Game {
 
     start() {
         const myName = this.factionColors[PLAYER_FACTION] ? this.factionColors[PLAYER_FACTION].name : 'You';
-        this.log(`${myName} �?your conquest begins!`);
+        this.log(`${myName}, your conquest begins!`);
         this.log('Click your unit, then a highlighted tile to move (captures it).');
         this.log('Right-click a tile to set an auto-move goal. Click an enemy unit to attack.');
         this.log('Click your city to build/train. Besiege enemy cities with Siege units before capturing.');
         this.log('Drag the map to pan. Esc to pause.');
         // Announce any Natural Wonders on this map.
         for (const w of (this._mapWonders || [])) {
-            this.log(`${w.wonder.emoji || '⭐'} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] — capture it for a bonus!`);
+            this.log(`${w.wonder.emoji || '*'} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] - capture it for a bonus!`);
         }
         // Process any goals on the very first turn too.
         this.renderAll();

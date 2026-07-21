@@ -847,25 +847,39 @@ export const UNREST_THRESHOLDS = {
 };
 
 export const UNREST_DECAY_RATES = {
-    GARRISON: 3,           // per turn, a friendly unit sits on the city tile
-    GOVERNOR: 5,           // per turn, a lord is assigned as the city's governor
-    WALLS: 2,              // per turn, if WALLS building present on the city
+    GARRISON: 4,           // per turn, a friendly unit sits on the city tile
+    GOVERNOR: 6,           // per turn, a lord is assigned as the city's governor
+    WALLS: 3,              // per turn, if WALLS building present on the city
     CITY_LEVEL: 1          // per turn per city level
 };
 
 export const UNREST_INCREASE_RATES = {
-    DISTANCE: 2,           // per tile distance from the nearest same-owner city
-    NO_GARRISON: 5,        // per turn, no friendly unit on the city tile
-    CULTURAL_PRESSURE: 3,  // per adjacent enemy-owned city tile
-    RECENT_CONQUEST: 10,  // immediate on capture, decays 1/turn over 10 turns
-    RECENT_CONQUEST_DECAY_TURNS: 10,
-    OCCUPATION: 2,         // per turn while enemy units are on adjacent tiles
-    CAPTURE_INITIAL: 50   // captured cities start at this unrest
+    DISTANCE: 1,           // per tile distance from the nearest same-owner city
+    NO_GARRISON: 3,        // per turn, no friendly unit on the city tile
+    CULTURAL_PRESSURE: 2,  // per adjacent enemy-owned city tile
+    RECENT_CONQUEST: 8,   // immediate on capture, decays 1/turn over 12 turns
+    RECENT_CONQUEST_DECAY_TURNS: 12,
+    OCCUPATION: 1,         // per turn while enemy units are on adjacent tiles
+    CAPTURE_INITIAL: 35   // captured cities start at this unrest
 };
 
 // Rebellion: at 100 unrest a city has this chance per turn to flip to the
 // most influential neighboring owner (or go independent).
-export const UNREST_REBEL_CHANCE = 0.3;
+export const UNREST_REBEL_CHANCE = 0.15;
+
+// Stability factors: reduce (or increase) unrest based on the empire's
+// overall condition — prosperity, military strength, fortifications,
+// governance, and peace duration all stabilize a city; prolonged sieges
+// destabilize it. Applied after the base increase/decrease calc.
+export const STABILITY_FACTORS = {
+    PROSPERITY_BONUS: -2,        // per 100 gold in treasury (max -10)
+    ARMY_STRENGTH_BONUS: -3,     // per full 1.0x army ratio above 1.5x neighbor avg (max -15)
+    FRIENDLY_CITY_NEIGHBOR: -2, // per adjacent friendly city tile
+    SIEGE_DURATION_PENALTY: 1,  // per turn city is under siege (enemy units within 2)
+    CONSECUTIVE_PEACE_BONUS: -1,// per turn at peace (max -10)
+    FORTIFICATION_BONUS: -1,    // if WALLS present on the city
+    GOVERNOR_PRESENCE: -2,      // if a lord is governing (stacks with GOVERNOR decay)
+};
 
 // --- Peace Negotiations with Demands ---
 // War weariness accumulates while at war and decays at peace; a weary faction

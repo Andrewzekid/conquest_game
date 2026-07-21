@@ -3,7 +3,7 @@ import { TERRAIN, MARKET_RATES, TRADE_ROUTE_GOLD, STARVATION_ATTRITION, BUILDING
          CITY_GROWTH_BASE, CITY_GROWTH_PER_SURPLUS_FOOD, CITY_GROWTH_SURPLUS_CAP,
          CITY_MAX_LEVEL, cityGrowthThreshold, cityProduction,
          UNREST_THRESHOLDS, UNREST_DECAY_RATES, UNREST_INCREASE_RATES,
-         UNREST_REBEL_CHANCE,
+         UNREST_REBEL_CHANCE, STABILITY_FACTORS,
          TRADE_ROUTE_BASE_INCOME, TRADE_ROUTE_DISTANCE_BONUS, TRADE_ROUTE_CITY_LEVEL_BONUS,
          TRADE_ROUTE_MAX, TRADE_ROUTE_MIN_CITY_LEVEL, RAID_STEAL_PERCENT, RAID_DISRUPT_TURNS,
          UNIT_TYPE } from './config.js';
@@ -558,19 +558,26 @@ function findHighestInfluenceOwner(tiles, currentOwner, tile) {
 
 /** Calculate unrest for a single city tile.
  *  @returns {{ amount: number, reasons: Array<{reason: string, amount: number}> }} */
-export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn, buildings) {
+export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn, buildings, resources = null) {
     const tile = tiles.get(cityKey);
     if (!tile || tile.terrain !== 'CITY') return { amount: 0, reasons: [] };
 
     let unrest = tile.unrest || 0;
     const reasons = [];
 
+    // Conquest-history dampening: each prior capture of this city reduces
+    // unrest GAINS by 20% (min 20% of base), so a hotly-contested border
+    // city stops cycling to 100 unrest forever. Only applies to increases;
+    // decay bonuses (garrison/governor/walls/level) keep full strength.
+    const conquestCount = tile.conquestCount || 0;
+    const dampening = Math.max(0.2, 1 - conquestCount * 0.2);
+
     // --- INCREASES ---
     // Distance from the nearest other same-owner city (frontier cities are rowdier).
     const capital = getNearestCity(tiles, owner, tile);
     if (capital) {
         const dist = Math.abs(tile.x - capital.x) + Math.abs(tile.z - capital.z);
-        const distUnrest = Math.floor(dist * UNREST_INCREASE_RATES.DISTANCE);
+        const distUnrest = Math.floor(dist * UNREST_INCREASE_RATES.DISTANCE * dampening);
         if (distUnrest > 0) {
             unrest += distUnrest;
             reasons.push({ reason: 'distance', amount: distUnrest });
@@ -580,13 +587,14 @@ export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn
     // No garrison on the city tile.
     const hasGarrison = hasUnitAt(units, owner, tile.x, tile.z);
     if (!hasGarrison) {
-        unrest += UNREST_INCREASE_RATES.NO_GARRISON;
-        reasons.push({ reason: 'no_garrison', amount: UNREST_INCREASE_RATES.NO_GARRISON });
+        const amt = Math.floor(UNREST_INCREASE_RATES.NO_GARRISON * dampening);
+        unrest += amt;
+        reasons.push({ reason: 'no_garrison', amount: amt });
     }
 
     // Cultural pressure from adjacent enemy-owned cities.
     const adjacentCities = getAdjacentEnemyCities(tiles, owner, tile);
-    const pressure = adjacentCities.length * UNREST_INCREASE_RATES.CULTURAL_PRESSURE;
+    const pressure = Math.floor(adjacentCities.length * UNREST_INCREASE_RATES.CULTURAL_PRESSURE * dampening);
     if (pressure > 0) {
         unrest += pressure;
         reasons.push({ reason: 'cultural_pressure', amount: pressure });
@@ -596,8 +604,8 @@ export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn
     if (tile.lastConqueredTurn && tile.lastConqueredTurn > 0) {
         const turnsSinceConquest = currentTurn - tile.lastConqueredTurn;
         if (turnsSinceConquest < UNREST_INCREASE_RATES.RECENT_CONQUEST_DECAY_TURNS) {
-            const conquestUnrest = Math.max(0,
-                UNREST_INCREASE_RATES.RECENT_CONQUEST - turnsSinceConquest);
+            const conquestUnrest = Math.max(0, Math.floor(
+                (UNREST_INCREASE_RATES.RECENT_CONQUEST - turnsSinceConquest) * dampening));
             if (conquestUnrest > 0) {
                 unrest += conquestUnrest;
                 reasons.push({ reason: 'recent_conquest', amount: conquestUnrest });
@@ -634,6 +642,90 @@ export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn
     unrest = Math.max(0, unrest - levelDecay);
     reasons.push({ reason: 'city_level', amount: -levelDecay });
 
+    // --- STABILITY INCREMENTERS ---
+    // Empire-wide conditions nudge unrest down (or up under siege). These
+    // run after the base decay so they're additive on top. All are capped so
+    // no single factor can drive a city to 0 unrest on its own.
+    const stabReasons = [];
+
+    // 1) Prosperity: a wealthy treasury stabilizes cities (max -10).
+    if (resources) {
+        const treasury = resources.gold || 0;
+        const prosperityBonus = Math.min(10, Math.floor(treasury / 100)) * STABILITY_FACTORS.PROSPERITY_BONUS;
+        if (prosperityBonus < 0) {
+            unrest += prosperityBonus;
+            stabReasons.push({ reason: 'prosperity', amount: prosperityBonus });
+        }
+    }
+
+    // 2) Army strength vs. neighbors: a strong army deters rebellion (max -15).
+    if (units) {
+        const ownersSeen = new Set();
+        let myArmyPower = 0, foeArmyPower = 0, foeOwnerCount = 0;
+        for (const u of units.values()) {
+            ownersSeen.add(u.owner);
+            if (['SCOUT', 'SETTLER', 'WORKER'].includes(u.type)) continue;
+            if (u.owner === owner) myArmyPower += (u.hp || 0);
+            else foeArmyPower += (u.hp || 0);
+        }
+        foeOwnerCount = Math.max(1, ownersSeen.size - 1);
+        const avgFoePower = foeArmyPower / foeOwnerCount;
+        const ratio = avgFoePower > 0 ? myArmyPower / avgFoePower : 0;
+        if (ratio > 1.5) {
+            const bonus = Math.max(-15, Math.floor((ratio - 1) * STABILITY_FACTORS.ARMY_STRENGTH_BONUS));
+            if (bonus < 0) {
+                unrest += bonus;
+                stabReasons.push({ reason: 'army_strength', amount: bonus });
+            }
+        }
+    }
+
+    // 3) Adjacent friendly cities: connected empires are stable.
+    let adjacentFriendlyCities = 0;
+    for (const [dx, dz] of ADJACENT_DIRS) {
+        const neighbor = tiles.get(`${tile.x + dx},${tile.z + dz}`);
+        if (neighbor && neighbor.terrain === 'CITY' && neighbor.owner === owner) {
+            adjacentFriendlyCities++;
+        }
+    }
+    if (adjacentFriendlyCities > 0) {
+        const bonus = adjacentFriendlyCities * STABILITY_FACTORS.FRIENDLY_CITY_NEIGHBOR;
+        unrest += bonus;
+        stabReasons.push({ reason: 'friendly_cities', amount: bonus });
+    }
+
+    // 4) Siege duration: prolonged enemy presence destabilizes.
+    const siegeTurns = tile.siegeTurns || 0;
+    if (siegeTurns > 0) {
+        const penalty = siegeTurns * STABILITY_FACTORS.SIEGE_DURATION_PENALTY;
+        unrest += penalty;
+        stabReasons.push({ reason: 'siege_duration', amount: penalty });
+    }
+
+    // 5) Consecutive peace: long peace stabilizes (max -10).
+    const peaceTurns = tile.peaceTurns || 0;
+    if (peaceTurns > 0) {
+        const bonus = Math.max(-10, peaceTurns * STABILITY_FACTORS.CONSECUTIVE_PEACE_BONUS);
+        unrest += bonus;
+        stabReasons.push({ reason: 'peace', amount: bonus });
+    }
+
+    // 6) Walls stability bonus (separate from the decay above — this represents
+    //    the ongoing deterrent effect of fortifications).
+    if (tileBuildings.includes('WALLS')) {
+        unrest += STABILITY_FACTORS.FORTIFICATION_BONUS;
+        stabReasons.push({ reason: 'walls_stability', amount: STABILITY_FACTORS.FORTIFICATION_BONUS });
+    }
+
+    // 7) Governor presence: a lord governing adds stability (stacks with the
+    //    GOVERNOR decay above).
+    if (governor) {
+        unrest += STABILITY_FACTORS.GOVERNOR_PRESENCE;
+        stabReasons.push({ reason: 'governor_stability', amount: STABILITY_FACTORS.GOVERNOR_PRESENCE });
+    }
+
+    for (const r of stabReasons) reasons.push(r);
+
     // Clamp 0-100.
     unrest = Math.max(0, Math.min(100, unrest));
     return { amount: unrest, reasons };
@@ -666,24 +758,63 @@ export function applyUnrestEffects(tile, resources) {
 /** Process unrest for all cities of a faction. Updates `tile.unrest` and
  *  `tile.unrestReasons` on each city and returns rebellion events.
  *  @returns {{ messages: string[], rebellions: Array<{cityKey: string, newOwner: string|null}> }} */
-export function processUnrest(tiles, owner, units, lords, currentTurn, buildings) {
+export function processUnrest(tiles, owner, units, lords, currentTurn, buildings, resources = null) {
     const messages = [];
     const rebellions = [];
 
     for (const [key, tile] of tiles) {
         if (tile.owner !== owner || tile.terrain !== 'CITY') continue;
 
-        const { amount, reasons } = calculateUnrest(tiles, key, owner, units, lords, currentTurn, buildings);
+        // Track peace/siege duration for stability bonuses/penalties. A city
+        // is "under siege" if any enemy unit is within Chebyshev 2; otherwise
+        // it accumulates peace turns.
+        let underSiege = false;
+        for (const u of units.values()) {
+            if (u.owner === owner) continue;
+            if (Math.max(Math.abs(u.x - tile.x), Math.abs(u.z - tile.z)) <= 2) { underSiege = true; break; }
+        }
+        if (underSiege) {
+            tile.siegeTurns = (tile.siegeTurns || 0) + 1;
+            tile.peaceTurns = 0;
+        } else {
+            tile.peaceTurns = (tile.peaceTurns || 0) + 1;
+            tile.siegeTurns = 0;
+        }
+
+        const { amount, reasons } = calculateUnrest(tiles, key, owner, units, lords, currentTurn, buildings, resources);
         tile.unrest = amount;
         tile.unrestReasons = reasons;
 
         if (amount >= UNREST_THRESHOLDS.REBELLION) {
             // At maximum unrest a city has a chance per turn to flip.
             if (Math.random() < UNREST_REBEL_CHANCE) {
+                const oldOwner = tile.owner;
                 const newOwner = findHighestInfluenceOwner(tiles, owner, tile);
                 tile.owner = newOwner;
                 tile.unrest = Math.floor(UNREST_INCREASE_RATES.CAPTURE_INITIAL / 2);
                 tile.lastConqueredTurn = currentTurn;
+                // When a city goes independent, its surrounding territory must
+                // go independent too — otherwise the map shows orphaned tiles
+                // still owned by the deposed faction (visual corruption and
+                // incorrect ownership state). If a rival claimant wins the
+                // city, only tiles still held by the old owner flip to them
+                // (matching captureCityTerritory's behavior).
+                if (newOwner !== oldOwner) {
+                    const r = cityRadius(tile);
+                    for (let dx = -r; dx <= r; dx++) {
+                        for (let dz = -r; dz <= r; dz++) {
+                            const t = tiles.get(`${tile.x + dx},${tile.z + dz}`);
+                            if (!t || t === tile) continue;
+                            if (t.owner !== oldOwner) continue;
+                            if (newOwner) {
+                                t.owner = newOwner;
+                            } else {
+                                t.owner = null;
+                            }
+                            t.loyalty = newOwner ? 3 : 0;
+                        }
+                    }
+                }
                 rebellions.push({ cityKey: key, newOwner });
                 const name = tile.cityName || `City at [${tile.x}, ${tile.z}]`;
                 messages.push(`${name} has rebelled! ${newOwner ? `Now controlled by ${newOwner}.` : 'Independent!'}`);

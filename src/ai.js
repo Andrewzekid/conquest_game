@@ -21,7 +21,7 @@ import { getBuildingState, upgradeBuilding } from './building.js';
 import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
-import { findCommandingLord, assignGovernance, canCommand, assignArmy } from './lords.js';
+import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
 import { selectGoals } from './ai_goals.js';
 import { getUnlockedUnits, TECHS } from './tech.js';
 
@@ -300,6 +300,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (best) spyTargetKey = `${best.x},${best.z}`;
     }
 
+    // Build the exposed-enemy-king list for the attack-king goal. A king is
+    // "exposed" when no friendly unit shares its tile (no bodyguard). The goal
+    // module uses this to decide whether to prioritize king assassination.
+    const enemyKings = (lords || [])
+        .filter(l => l.owner !== owner && l.isKing && enemies.includes(l.owner))
+        .map(l => ({
+            id: l.id, owner: l.owner, isKing: true,
+            x: l.x, z: l.z, hp: l.hp || 1,
+            guarded: [...units.values()].some(u => u.owner === l.owner && u.x === l.x && u.z === l.z),
+        }));
+
     const goals = selectGoals({
         aiState, turn: aiState ? aiState.lastPlanTurn : 0, factionDef,
         enemies, enemyCities: enemyCitiesArr, ownCities: ownCitiesArr, homeAnchor,
@@ -310,6 +321,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         foreignShoreKey: null, bestEconTileKey: null,
         neutralFactions, hasSpies, hasChokepoints,
         unexploredTiles, spyTargetKey, chokepointKey,
+        enemyKings,
     });
     if (aiState) aiState.goals = goals;
     const topGoal = goals[0] || null;
@@ -768,6 +780,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                                    : Math.max(2, Math.ceil(myCityCount / 2))),
             2);
         if (goalKind === 'conquest') engCap += 2;
+        // Raise the engineer cap when unbridged rivers block our expansion —
+        // a faction hemmed in by rivers needs more engineers to bridge them
+        // or its armies never reach objectives across the water.
+        const hasEngineer = myUnits.some(u => u.type === 'ENGINEER');
+        if (hasEngineer) {
+            const needsBridges = [...tiles.values()].some(t =>
+                t.terrain === 'RIVER' && !t.bridge &&
+                manhattan(myUnits.find(u => u.type === 'ENGINEER').x,
+                          myUnits.find(u => u.type === 'ENGINEER').z, t.x, t.z) < 10);
+            if (needsBridges) engCap += 1;
+        }
         const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
             actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
         if (engNow < engCap && capRoom()) {
@@ -906,7 +929,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     is guaranteed room before the army fills the cap.
     while (myUnits.length + trainCount() < aiUnitCap) {
         if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
-        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives, hasSiegeWorkshop);
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives, hasSiegeWorkshop, aiState);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
@@ -1196,6 +1219,28 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             //     so the cost is reserved before the unit-training spree drains
             //     the treasury. An engineer already bridged this turn is in
             //     `acted` and skips the offense move below.
+
+            // a2d) Bridge-seeking: if the engineer is NOT already adjacent to a
+            //     bridgeable river (step 0ab didn't fire), find the nearest
+            //     unbridged river between us and our objective and step toward
+            //     it. Without this, `stepToward` may leave the engineer diagonally
+            //     offset from the river tile it needs to bridge — `findBridgeTarget`
+            //     only checks orthogonal adjacency, so the bridge is never built.
+            if (!unit.hasMovedThisTurn && !acted.has(unit.id)) {
+                const bridgeTarget = findBridgeTarget(unit, tiles, owner, isAtWar, atWar, hasSettler);
+                if (!bridgeTarget) {
+                    const riverTarget = findNearestBridgeableRiver(unit, tiles, owner, isAtWar, atWar, hasSettler);
+                    if (riverTarget) {
+                        const step = stepToward(unit, riverTarget, tiles, owner, units, moved, isAtWar);
+                        if (step) {
+                            actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                            acted.add(unit.id);
+                            continue;
+                        }
+                    }
+                }
+            }
 
             // Offense move: no threatened home — step toward the nearest target
             // city (at-war enemy OR neutral) so the engineer can build towers on
@@ -1598,7 +1643,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         let objective, stance;
         if (conquest.has(g)) {
             stance = computeStance(g, units, owner, atWar, isAtWar);
-            objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units);
+            objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal);
         } else {
             const c = groupCentroid(g);
             objective = (g === kingGuardGroup && king)
@@ -1834,6 +1879,47 @@ function findBridgeTarget(unit, tiles, owner, isAtWar, atWar, allowPeaceBridge) 
         if (manhattan(far.x, far.z, objective.x, objective.z) < curDist) return river;
     }
     return null;
+}
+
+/** Find the nearest unbridged RIVER tile that lies between the engineer and
+ *  its objective (enemy city at war, or nearest unowned passable tile at
+ *  peace when a settler is in the field). Returns null if no such river is
+ *  on the path. Used to drive engineers toward rivers they need to bridge
+ *  — `findBridgeTarget` only fires once the engineer is ORTHOGONALLY
+ *  adjacent to a river, so without this the engineer stops at the bank but
+ *  may be diagonally offset from the river tile that needs bridging.
+ *  @param {boolean} allowPeaceBridge - true when a settler is in the field
+ *    (same gate as `findBridgeTarget`). */
+function findNearestBridgeableRiver(unit, tiles, owner, isAtWar, atWar, allowPeaceBridge) {
+    let objective = null;
+    if (atWar) objective = findNearestEnemyCity(unit, tiles, owner, isAtWar);
+    if (!objective && allowPeaceBridge) {
+        let best = null, bestDist = Infinity;
+        for (const t of tiles.values()) {
+            if (t.owner === owner) continue;
+            if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
+            const d = manhattan(unit.x, unit.z, t.x, t.z);
+            if (d < bestDist) { bestDist = d; best = t; }
+        }
+        objective = best;
+    }
+    if (!objective) return null;
+    const dToObj = manhattan(unit.x, unit.z, objective.x, objective.z);
+    let bestRiver = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'RIVER' || t.bridge) continue;
+        const dToRiver = manhattan(unit.x, unit.z, t.x, t.z);
+        const dRiverToObj = manhattan(t.x, t.z, objective.x, objective.z);
+        // River must be closer to objective than we are (i.e. blocking the
+        // path) AND closer to us than to the objective (else bridging it is
+        // premature). This avoids sending engineers to bridge rivers on the
+        // far side of the objective.
+        if (dRiverToObj < dToObj && dToRiver < bestDist) {
+            bestDist = dToRiver;
+            bestRiver = t;
+        }
+    }
+    return bestRiver;
 }
 
 /** Pick the best at-war enemy target within the unit's attackRange (lowest HP
@@ -2311,7 +2397,7 @@ function roleDeficit(roster, counts, total, target) {
  *  then fills the biggest role deficit. Falls back to the strongest affordable
  *  *combat* unit (never SCOUT — scouts are exploration units capped at 2 by the
  *  dedicated scout block, so they don't crowd out the army). */
-export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false) {
+export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false, aiState = null) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     let target = factionComposition(factionDef, roster, hasSiegeWorkshop);
@@ -2350,6 +2436,38 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         const sum = Object.values(target).reduce((a, b) => a + b, 0);
         if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
     }
+
+    // Siege savings: when the army is past the defense floor and needs more
+    // siege but can't afford any siege unit, check if we're close to affording
+    // the cheapest one. If so, skip training this turn so the gold carries
+    // forward — otherwise the AI spends every turn's surplus on cheap infantry
+    // and never accumulates enough for a CATAPULT/TREBUCHET/SIEGE_CANNON.
+    if (aiState && total >= 4 && target.siege > 0) {
+        const siegeDeficit = Math.max(0, target.siege * total - (counts.siege || 0));
+        if (siegeDeficit >= 0.5) {
+            const affordableSiege = ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR',
+                'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY']
+                .filter(t => roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef)));
+            if (affordableSiege.length === 0) {
+                // Find the cheapest siege unit in our roster and check how far
+                // we are from affording it.
+                const cheapest = ['SIEGE', 'CATAPULT', 'ARTILLERY', 'TREBUCHET', 'MORTAR',
+                    'CANNON', 'FIELD_GUN', 'SIEGE_CANNON', 'RAILGUN', 'HORSE_ARTILLERY']
+                    .find(t => roster.includes(t));
+                if (cheapest) {
+                    const cost = getUnitCostFor(cheapest, factionDef);
+                    const deficit = (cost.gold || 0) - (resources.gold || 0);
+                    // Within 25 gold of affording — save up rather than spend
+                    // the surplus on another infantry that delays the siege
+                    // unit by another turn.
+                    if (deficit > 0 && deficit <= 25) {
+                        return null;
+                    }
+                }
+            }
+        }
+    }
+
     // Defense floor: first few units must be melee so expansion/siege don't
     // strip the army bare.
     if (total < 4 && roster.some(t => MELEE_TYPES.has(t))) {
@@ -2803,8 +2921,20 @@ function groupIsInTrouble(group, units, owner, atWar, isAtWar) {
  *    city to attack (aggressive posture), or nearest unowned tile for expansion.
  *  - When engaging: use pickTarget's tiering (enemy city > neutral city > enemy tile).
  *  This ensures armies mobilize toward enemy borders instead of staying home. */
-function pickGroupObjective(group, tiles, owner, isAtWar, stance, units) {
+function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal = null) {
     const c = groupCentroid(group);
+
+    // Attack-king goal: when the top goal is an attack-king goal with a known
+    // target tile, the group beelines toward the enemy king's position. This
+    // is checked FIRST so it overrides the default "nearest enemy city" logic
+    // — killing the exposed king is a higher-value objective than taking any
+    // single city.
+    if (topGoal && topGoal.kind === 'attack-king' && topGoal.targetTileKey) {
+        const [kx, kz] = topGoal.targetTileKey.split(',').map(Number);
+        if (!Number.isNaN(kx) && !Number.isNaN(kz)) {
+            return { x: kx, z: kz, terrain: 'CITY', owner: topGoal.targetFaction };
+        }
+    }
 
     // Retreat: fall back to nearest friendly city
     if (stance === 'retreat') {
@@ -2898,8 +3028,10 @@ function computeStance(group, units, owner, atWar, isAtWar) {
 
 /** Choose one at-war enemy unit for the whole group to focus on / encircle:
  *  must be within Chebyshev 4 of some member; value = low HP + fragile bonus +
- *  bonus if we have a type advantage against it; penalty if it counters a member. */
-function chooseGroupTarget(group, units, owner, atWar, isAtWar) {
+ *  bonus if we have a type advantage against it; penalty if it counters a member.
+ *  Also considers at-war enemy lords/kings — exposed kings get a huge bonus
+ *  so the group prioritizes assassination (a dead king eliminates a faction). */
+function chooseGroupTarget(group, units, owner, atWar, isAtWar, lords = []) {
     if (!atWar) return null;
     let best = null, bestScore = -Infinity;
     for (const e of units.values()) {
@@ -2917,6 +3049,25 @@ function chooseGroupTarget(group, units, owner, atWar, isAtWar) {
         // Penalize targets that counter one of our members (dangerous to engage).
         if (group.units.some(m => TYPE_ADVANTAGE[e.type] && TYPE_ADVANTAGE[e.type].strongAgainst === m.type)) score -= 4;
         if (score > bestScore) { bestScore = score; best = e; }
+    }
+    // Also consider at-war enemy lords/kings as focus targets. Kings are the
+    // single highest-value target in the game — killing one eliminates a
+    // faction — so an exposed king in range jumps to the top of the list.
+    for (const lord of (lords || [])) {
+        if (lord.owner === owner) continue;
+        if (isAtWar && !isAtWar(lord.owner)) continue;
+        // Skip guarded lords — a bodyguard unit on the same tile makes melee
+        // attack impossible; only exposed lords are valid focus targets.
+        const guarded = [...units.values()].some(u => u.owner === lord.owner && u.x === lord.x && u.z === lord.z);
+        if (guarded) continue;
+        let near = false;
+        for (const m of group.units) {
+            if (Math.max(Math.abs(m.x - lord.x), Math.abs(m.z - lord.z)) <= 4) { near = true; break; }
+        }
+        if (!near) continue;
+        let score = 200 - (lord.hp || 0);
+        if (lord.isKing) score += 300;
+        if (score > bestScore) { bestScore = score; best = lordCombatant(lord); }
     }
     return best;
 }
@@ -3013,7 +3164,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     const out = [];
     const members = group.units.filter(u => !acted.has(u.id));
     if (!members.length) return out;
-    const groupTarget = chooseGroupTarget(group, units, owner, atWar, isAtWar);
+    const groupTarget = chooseGroupTarget(group, units, owner, atWar, isAtWar, lords);
 
     // 1) Retreat fragile / wounded units that are locally outmatched.
     //    ANY unit below 20% HP unconditionally retreats (no sense fighting to

@@ -195,6 +195,8 @@ describe('City Unrest System — processUnrest', () => {
       // reset between tries
       tiles.get('5,5').owner = 'player';
       tiles.get('5,5').unrest = 100;
+      tiles.get('5,5').peaceTurns = 0;
+      tiles.get('5,5').siegeTurns = 0;
       const result = processUnrest(tiles, 'player', new Map(), [], 10, new Map());
       if (result.rebellions.length > 0) {
         rebelled = true;
@@ -203,5 +205,54 @@ describe('City Unrest System — processUnrest', () => {
       }
     }
     expect(rebelled).toBe(true);
+  });
+
+  it('a rebellion to independent clears surrounding territory (Fix 12)', () => {
+    // City at (5,5) with surrounding tiles owned by 'player'. No rival
+    // influence adjacent -> findHighestInfluenceOwner returns null -> the
+    // city goes independent. Surrounding tiles must also flip to null.
+    // cityRadius(level 1) = 1, so we test tiles within radius 1.
+    const tilesArr = [
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 100, lastConqueredTurn: 0 }
+    ];
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        if (dx === 0 && dz === 0) continue;
+        tilesArr.push({ x: 5 + dx, z: 5 + dz, terrain: 'PLAINS', owner: 'player' });
+      }
+    }
+    let rebelled = false;
+    for (let i = 0; i < 200 && !rebelled; i++) {
+      tilesArr.forEach(t => { t.owner = 'player'; });
+      const tiles = mkTiles(tilesArr);
+      tiles.get('5,5').unrest = 100;
+      tiles.get('5,5').peaceTurns = 0;
+      tiles.get('5,5').siegeTurns = 0;
+      const result = processUnrest(tiles, 'player', new Map(), [], 10, new Map());
+      if (result.rebellions.length > 0) {
+        rebelled = true;
+        expect(tiles.get('5,5').owner).toBeNull();
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            if (dx === 0 && dz === 0) continue;
+            expect(tiles.get(`${5 + dx},${5 + dz}`).owner).toBeNull();
+          }
+        }
+      }
+    }
+    expect(rebelled).toBe(true);
+  });
+
+  it('conquest-count dampening reduces unrest gains for recaptured cities (Fix 13)', () => {
+    // Same setup as the no-garrison test, but with conquestCount = 3 (so
+    // dampening = 1 - 3*0.2 = 0.4). The no-garrison penalty should be reduced
+    // from 3 to floor(3 * 0.4) = 1.
+    const tiles = mkTiles([
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0, conquestCount: 3 }
+    ]);
+    const result = calculateUnrest(tiles, '5,5', 'player', new Map(), [], 10, new Map());
+    const noGarrison = result.reasons.find(r => r.reason === 'no_garrison');
+    expect(noGarrison).toBeTruthy();
+    expect(noGarrison.amount).toBe(1); // floor(3 * 0.4)
   });
 });

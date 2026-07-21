@@ -471,6 +471,9 @@ export function generateMap() {
                 cityLevel: 0,
                 fortification: 0,
                 fortMax: 0,
+                conquestCount: 0,    // how many times this city has been captured (unrest dampening)
+                peaceTurns: 0,       // consecutive turns at peace (stability bonus)
+                siegeTurns: 0,       // consecutive turns under siege (instability penalty)
                 wonder: null       // set by placeWonders for Natural Wonder tiles
             });
         }
@@ -705,6 +708,10 @@ export function captureCityTerritory(tiles, cityTile, newOwner, structures = nul
     const oldOwner = cityTile.owner;
     cityTile.owner = newOwner;
     cityTile.loyalty = 3;
+    // Track how many times this city has changed hands — repeated conquests
+    // dampen unrest gains (see calculateUnrest) so a hotly-contested border
+    // city doesn't cycle forever at 100 unrest.
+    cityTile.conquestCount = (cityTile.conquestCount || 0) + 1;
     // A freshly captured city is fortified for its new owner.
     cityTile.fortMax = cityFortMax(cityTile);
     cityTile.fortification = cityTile.fortMax;

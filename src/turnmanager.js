@@ -55,7 +55,7 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             // spike that decays over the following turns.
             if (!gameState.eliminated || !gameState.eliminated.has(f)) {
                 const { messages: unrestMsgs, rebellions } = processUnrest(
-                    gameState.tiles, f, gameState.units, gameState.lords, gameState.turn, gameState.buildings);
+                    gameState.tiles, f, gameState.units, gameState.lords, gameState.turn, gameState.buildings, gameState.resources[f]);
                 if (logger) unrestMsgs.forEach(m => logger(`${fname}: ${m}`));
                 if (rebellions && rebellions.length) {
                     // A rebelled city may flip to a new owner; ownership change

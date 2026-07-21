@@ -244,6 +244,60 @@ describe('ai_goals new goal types', () => {
     const scout = goals.find(g => g.kind === 'scout');
     expect(scout).toBeFalsy();
   });
+
+  it('attack-king goal appears when an enemy king is exposed', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      homeAnchor: { x: 4, z: 4 },
+      myCityCount: 3,
+      settlerTarget: 8,
+      enemyKings: [{
+        id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false,
+      }],
+    }));
+    const attackKing = goals.find(g => g.kind === 'attack-king');
+    expect(attackKing).toBeTruthy();
+    expect(attackKing.targetFaction).toBe('azure');
+    expect(attackKing.targetTileKey).toBe('6,6');
+    expect(attackKing.meta.kingId).toBe('k1');
+  });
+
+  it('attack-king goal does NOT appear when the enemy king is guarded', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      myCityCount: 3,
+      settlerTarget: 8,
+      enemyKings: [{
+        id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: true,
+      }],
+    }));
+    const attackKing = goals.find(g => g.kind === 'attack-king');
+    expect(attackKing).toBeFalsy();
+  });
+
+  it('attack-king goal is dropped when the war ends (goalValid)', () => {
+    const aiState = createAIState();
+    let input = baseInput({
+      aiState, turn: 1,
+      factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false }],
+    });
+    const g1 = selectGoals(input);
+    expect(g1.some(g => g.kind === 'attack-king')).toBe(true);
+    // War ends within the lock window — replan should drop the attack-king goal.
+    input = baseInput({
+      aiState, turn: 2,
+      enemies: [], enemyCities: [], enemyKings: [],
+    });
+    const g2 = selectGoals(input);
+    expect(g2.some(g => g.kind === 'attack-king')).toBe(false);
+  });
 });
 
 describe('ai_goals game-phase scoring', () => {
