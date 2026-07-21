@@ -455,10 +455,10 @@ export const LORD_ABILITIES = {
 // Lord classes (archetypes): each lord is born into one class, which gives a
 // passive bonus to every unit in the lord's army + a unique 2.5D icon.
 export const LORD_CLASSES = {
-    WARLORD:        { name: 'Warlord',        icon: '⚔️', bonus: { attack: 2 },                 desc: '+2 attack to all units in their army.' },
-    GUARDIAN:       { name: 'Guardian',       icon: '🛡️', bonus: { defense: 2 },                desc: '+2 defense to all units in their army.' },
-    CONQUEROR:      { name: 'Conqueror',      icon: '🏰', bonus: { siege: 3 },                  desc: '+3 damage vs cities for all units in their army.' },
-    GRAND_COMMANDER:{ name: 'Grand Commander',icon: '🎖️', bonus: { attack: 1, defense: 1, extraCommand: 2 }, desc: '+1 atk & +1 def to army, and commands 2 extra units.' }
+    WARLORD:        { name: 'Warlord',        icon: 'swords', bonus: { attack: 2 },                 desc: '+2 attack to all units in their army.' },
+    GUARDIAN:       { name: 'Guardian',       icon: 'defense', bonus: { defense: 2 },                desc: '+2 defense to all units in their army.' },
+    CONQUEROR:      { name: 'Conqueror',      icon: 'city', bonus: { siege: 3 },                  desc: '+3 damage vs cities for all units in their army.' },
+    GRAND_COMMANDER:{ name: 'Grand Commander',icon: 'star', bonus: { attack: 1, defense: 1, extraCommand: 2 }, desc: '+1 atk & +1 def to army, and commands 2 extra units.' }
 };
 
 export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };

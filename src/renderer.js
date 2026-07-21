@@ -2,20 +2,23 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GRID_SIZE, TERRAIN, FACTION_COLORS, PLAYER_FACTION, LORD_CLASSES, BUILDING_TYPE, UNIT_TYPE, NATURAL_WONDERS } from './config.js';
 import { hasLordAura } from './lords.js';
+import { svgDataURL, hasIcon } from './icons.js';
 
 const LORD_COLOR = 0xffd700;
 const HIGHLIGHT_MOVE = 0x2244aa;
 const HIGHLIGHT_ATTACK = 0xaa0000;
 const BREACH_COLOR = 0xff3322;
 
-const UNIT_ICONS = {
-    INFANTRY: '⚔️', ARCHER: '🏹', ARTILLERY: '💣', CAVALRY: '🐎',
-    PIKEMAN: '🔱', SCOUT: '🧭', SIEGE: '🛠️', SETTLER: '🏠', ENGINEER: '🔨',
-    LONGBOWMAN: '🏹', CATAPHRACT: '♞', CHARIOT: '🛞', MEDIC: '✚', SIEGE_TOWER: '🏯',
-    CATAPULT: '🎯', TREBUCHET: '🪨', WORKER: '👷',
-    GALLEY: '⛵', TRANSPORT: '🚢', TRIREME: '🏛️', FRIGATE: '⚓',
-    GALLEON: '🏴‍☠️', CARAVEL: '🧭', BATTLESHIP: '💥', SUBMARINE: '🐟',
-    DESTROYER: '🛡️', IRONCLAD: '⛓️'
+// Maps each unit type to an icon name from src/icons.js (unit icon keys match
+// the type name). Unknown types fall back to a generic flag glyph.
+const UNIT_ICON_NAME = {
+    INFANTRY: 'INFANTRY', ARCHER: 'ARCHER', ARTILLERY: 'ARTILLERY', CAVALRY: 'CAVALRY',
+    PIKEMAN: 'PIKEMAN', SCOUT: 'SCOUT', SIEGE: 'SIEGE', SETTLER: 'SETTLER', ENGINEER: 'ENGINEER',
+    LONGBOWMAN: 'LONGBOWMAN', CATAPHRACT: 'CATAPHRACT', CHARIOT: 'CHARIOT', MEDIC: 'MEDIC', SIEGE_TOWER: 'SIEGE_TOWER',
+    CATAPULT: 'CATAPULT', TREBUCHET: 'TREBUCHET', WORKER: 'WORKER',
+    GALLEY: 'GALLEY', TRANSPORT: 'TRANSPORT', TRIREME: 'TRIREME', FRIGATE: 'FRIGATE',
+    GALLEON: 'GALLEON', CARAVEL: 'CARAVEL', BATTLESHIP: 'BATTLESHIP', SUBMARINE: 'SUBMARINE',
+    DESTROYER: 'DESTROYER', IRONCLAD: 'IRONCLAD'
 };
 
 export class GameRenderer {
@@ -895,20 +898,40 @@ export class GameRenderer {
         return g;
     }
 
-    makeIconSprite(emoji, size = 0.6, y = 0.55) {
+    // Renders a crisp vector icon (from src/icons.js) as a sprite. The texture is
+    // painted asynchronously from an SVG data URL; until it loads we show a tiny
+    // placeholder so nothing pops in empty. Sprites share one cached material per
+    // icon name.
+    makeIconSprite(name, size = 0.6, y = 0.55) {
         if (!this._iconMatCache) this._iconMatCache = {};
-        if (!this._iconMatCache[emoji]) {
+        const iconName = hasIcon(name) ? name : (UNIT_ICON_NAME[name] || null);
+        const key = iconName || name;
+        if (!this._iconMatCache[key]) {
             const canvas = document.createElement('canvas');
-            canvas.width = 64; canvas.height = 64;
+            canvas.width = 128; canvas.height = 128;
             const ctx = canvas.getContext('2d');
-            ctx.font = '48px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(emoji, 32, 36);
             const tex = new THREE.CanvasTexture(canvas);
-            this._iconMatCache[emoji] = new THREE.SpriteMaterial({ map: tex, depthTest: false });
+            tex.anisotropy = 4;
+            const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+            this._iconMatCache[key] = mat;
+            if (iconName) {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.clearRect(0, 0, 128, 128);
+                    ctx.drawImage(img, 0, 0, 128, 128);
+                    tex.needsUpdate = true;
+                };
+                img.src = svgDataURL(iconName, 128);
+            } else {
+                // Unknown glyph: fall back to the old emoji text rendering.
+                ctx.font = '72px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(name, 64, 70);
+                tex.needsUpdate = true;
+            }
         }
-        const sprite = new THREE.Sprite(this._iconMatCache[emoji]);
+        const sprite = new THREE.Sprite(this._iconMatCache[key]);
         sprite.scale.set(size, size, size);
         sprite.position.set(0, y, 0);
         return sprite;
@@ -1002,7 +1025,7 @@ export class GameRenderer {
             g.add(flag);
         }
         // Emoji label so the building type is readable in 2.5D.
-        const labels = { FARM: '🌾', LUMBERMILL: '🪵', MINE: '⛏️', MARKET: '🏪', BARRACKS: '🛡️', WALLS: '🧱', HARBOR: '⚓' };
+        const labels = { FARM: 'food', LUMBERMILL: 'wood', MINE: 'mine', MARKET: 'market', BARRACKS: 'barracks', WALLS: 'walls', HARBOR: 'harbor' };
         if (labels[type]) g.add(this.makeIconSprite(labels[type], 0.45, 0.7));
         return g;
     }
@@ -1028,8 +1051,13 @@ export class GameRenderer {
                     const st = bState.get(`${tileKey}:${bType}`);
                     if (st) {
                         if (st.level >= 2) {
-                            const lvl = this.makeIconSprite('⭐'.repeat(st.level - 1), 0.4, 1.1);
-                            prop.add(lvl);
+                            // One star per veteran level above 1, fanned out.
+                            const n = Math.min(st.level - 1, 3);
+                            for (let s = 0; s < n; s++) {
+                                const lvl = this.makeIconSprite('star', 0.28, 1.1);
+                                lvl.position.x = (s - (n - 1) / 2) * 0.32;
+                                prop.add(lvl);
+                            }
                         }
                         if (st.maxHp > 0 && st.hp < st.maxHp) {
                             const ratio = Math.max(0, st.hp / st.maxHp);
@@ -1040,7 +1068,7 @@ export class GameRenderer {
                                     o.material.color.lerp(new THREE.Color(0xff4444), 1 - ratio);
                                 }
                             });
-                            const bar = this.makeIconSprite('❤️', 0.35, 1.4);
+                            const bar = this.makeIconSprite('heart', 0.35, 1.4);
                             prop.add(bar);
                         }
                     }
@@ -1055,7 +1083,7 @@ export class GameRenderer {
         this.markerGroup.clear();
         for (const unit of gameState.units.values()) {
             if (unit.owner !== PLAYER_FACTION || !unit.goal) continue;
-            const sprite = this.makeIconSprite('🎯', 0.7, 0.8);
+            const sprite = this.makeIconSprite('target', 0.7, 0.8);
             sprite.position.set(unit.goal.x - GRID_SIZE / 2, 0.4, unit.goal.z - GRID_SIZE / 2);
             this.markerGroup.add(sprite);
         }
@@ -1109,19 +1137,19 @@ export class GameRenderer {
                 spike.position.set(ox, 0.22, oz);
                 g.add(spike);
             }
-            g.add(this.makeIconSprite('🦔', 0.4, 0.55));
+            g.add(this.makeIconSprite('spikes', 0.4, 0.55));
         } else if (type === 'FORTIFICATION') {
             const mat = new THREE.MeshPhongMaterial({ color: 0x7a7a82 });
             const wall = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.28, 0.16), mat);
             wall.position.y = 0.2; g.add(wall);
             const wall2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, 0.7), mat);
             wall2.position.y = 0.2; g.add(wall2);
-            g.add(this.makeIconSprite('🧱', 0.4, 0.55));
+            g.add(this.makeIconSprite('walls', 0.4, 0.55));
         } else { // FALL_TRAP
             const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 10),
                 new THREE.MeshPhongMaterial({ color: 0x2a1f14 }));
             pit.position.y = 0.12; g.add(pit);
-            g.add(this.makeIconSprite('🪤', 0.4, 0.5));
+            g.add(this.makeIconSprite('trap', 0.4, 0.5));
         }
         return g;
     }
@@ -1269,8 +1297,8 @@ export class GameRenderer {
                     o.material.emissiveIntensity = 0.18;
                 }
             });
-            if (UNIT_ICONS[unit.type]) {
-                mesh.add(this.makeIconSprite(UNIT_ICONS[unit.type], 0.45, naval ? 0.7 : 0.95));
+            if (UNIT_ICON_NAME[unit.type]) {
+                mesh.add(this.makeIconSprite(UNIT_ICON_NAME[unit.type], 0.45, naval ? 0.7 : 0.95));
             }
             // Cargo pips on a Transport: one dot per carried unit.
             if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {
@@ -1287,15 +1315,15 @@ export class GameRenderer {
                     new THREE.MeshBasicMaterial({ color: 0xff6622, transparent: true, opacity: 0.9 }));
                 flame.position.set(0, naval ? 0.85 : 1.15, 0);
                 mesh.add(flame);
-                mesh.add(this.makeIconSprite('🔥', 0.32, naval ? 0.95 : 1.3));
+                mesh.add(this.makeIconSprite('fire', 0.32, naval ? 0.95 : 1.3));
                 this._flames.push(flame); // tracked so animate() can flicker it
             }
             // Stun (chariot post-charge / fall trap): dizzy indicator above unit.
             if (unit.stunnedTurns && unit.stunnedTurns > 0) {
-                mesh.add(this.makeIconSprite('💫', 0.32, naval ? 0.95 : 1.3));
+                mesh.add(this.makeIconSprite('stun', 0.32, naval ? 0.95 : 1.3));
             } else if (unit.chargeExhausted && unit.chargeExhausted > 0) {
                 // Exhausted cavalry: sweat/fatigue indicator.
-                mesh.add(this.makeIconSprite('💤', 0.3, naval ? 0.95 : 1.3));
+                mesh.add(this.makeIconSprite('exhausted', 0.3, naval ? 0.95 : 1.3));
             }
             this.unitGroup.add(mesh);
         }
@@ -1317,7 +1345,7 @@ export class GameRenderer {
             if (cls && cls.icon) {
                 mesh.add(this.makeIconSprite(cls.icon, 0.8, 0.6));
             }
-            if (lord.isKing) mesh.add(this.makeIconSprite('👑', 0.55, 1.0));
+            if (lord.isKing) mesh.add(this.makeIconSprite('crown', 0.55, 1.0));
             this.lordGroup.add(mesh);
         }
 
