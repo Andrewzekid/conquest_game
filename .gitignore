@@ -6,4 +6,9 @@ node_modules/
 .DS_Store
 *.log
 
+# Local plans/notes (keep README)
 IMPLEMENTATION_PLAN.md
+.claude/
+.opencode/
+*.md
+!README.md
