@@ -9,6 +9,23 @@ const HIGHLIGHT_MOVE = 0x2244aa;
 const HIGHLIGHT_ATTACK = 0xaa0000;
 const BREACH_COLOR = 0xff3322;
 
+// Common base Y for all tile columns. Every tile box extends downward from its
+// terrain-top Y to this base so raised tiles (mountain/city) read as solid
+// columns instead of floating slabs above an empty gap. Must sit below the
+// lowest terrain top (WATER at -0.05).
+const TILE_COLUMN_BOTTOM = -0.1;
+
+// Top-surface Y for a terrain type. Shared by createMapMesh and updateTileTerrain
+// (the old inline ladder in updateTileTerrain drifted from this one — the bug).
+export function heightFor(terrain) {
+    if (terrain === 'MOUNTAIN') return 0.5;
+    if (terrain === 'CITY') return 0.55;
+    if (terrain === 'HILLS') return 0.18;
+    if (terrain === 'WATER') return -0.05;
+    if (terrain === 'RIVER') return -0.04;
+    return 0;
+}
+
 // Maps each unit type to an icon name from src/icons.js (unit icon keys match
 // the type name). Unknown types fall back to a generic flag glyph.
 const UNIT_ICON_NAME = {
@@ -201,21 +218,22 @@ export class GameRenderer {
         this.tileMeshes.clear();
         this.tileHeights.clear();
         this.cityProps.clear();
-        const geo = new THREE.BoxGeometry(1 * 0.95, 0.2, 1 * 0.95);
-
-        const heightFor = (terrain) => {
-            if (terrain === 'MOUNTAIN') return 0.5;
-            if (terrain === 'CITY') return 0.55;
-            if (terrain === 'HILLS') return 0.18;
-            if (terrain === 'WATER') return -0.05;
-            if (terrain === 'RIVER') return -0.04;
-            return 0;
-        };
 
         tilesData.forEach(t => {
             const material = new THREE.MeshPhongMaterial({ color: TERRAIN[t.terrain].color });
-            const mesh = new THREE.Mesh(geo, material);
+            // Per-tile column: top at the terrain's surface Y, bottom at the
+            // shared TILE_COLUMN_BOTTOM. The geometry is translated so its top
+            // sits at the mesh origin (world Y = y) and it hangs downward to the
+            // base. Raised tiles (mountain/city) thus read as solid columns
+            // reaching down to the base instead of floating slabs, while the
+            // mesh.position.y stays at the top surface y — so all scenery
+            // children (parented to the mesh) and all tileHeights consumers keep
+            // their existing offsets unchanged.
             const y = heightFor(t.terrain);
+            const h = y - TILE_COLUMN_BOTTOM;
+            const geo = new THREE.BoxGeometry(1 * 0.95, h, 1 * 0.95);
+            geo.translate(0, -h / 2, 0);
+            const mesh = new THREE.Mesh(geo, material);
             mesh.position.set(t.x - GRID_SIZE / 2, y, t.z - GRID_SIZE / 2);
             mesh.userData = { ...TERRAIN[t.terrain], x: t.x, z: t.z };
             this.mapGroup.add(mesh);
@@ -243,11 +261,15 @@ export class GameRenderer {
         // Drop existing scenery / wonder children (base mesh stays).
         for (const child of [...mesh.children]) mesh.remove(child);
         const terrain = tile.terrain;
-        const y = (terrain === 'MOUNTAIN') ? 0.5
-            : (terrain === 'CITY') ? 0.55
-            : (terrain === 'HILLS') ? 0.18
-            : (terrain === 'WATER') ? -0.05
-            : (terrain === 'RIVER') ? -0.04 : 0;
+        // Rebuild the column geometry so the tile keeps a solid base down to
+        // TILE_COLUMN_BOTTOM after a runtime terrain change (e.g. a Settler
+        // founding a city on plains). The old code only moved position.y, which
+        // left the 0.2-tall slab floating at the new height.
+        const y = heightFor(terrain);
+        const h = y - TILE_COLUMN_BOTTOM;
+        mesh.geometry.dispose();
+        mesh.geometry = new THREE.BoxGeometry(1 * 0.95, h, 1 * 0.95);
+        mesh.geometry.translate(0, -h / 2, 0);
         mesh.position.y = y;
         mesh.userData = { ...TERRAIN[terrain], x: tile.x, z: tile.z };
         this.tileHeights.set(key, y);
@@ -1086,6 +1108,32 @@ export class GameRenderer {
             const sprite = this.makeIconSprite('target', 0.7, 0.8);
             sprite.position.set(unit.goal.x - GRID_SIZE / 2, 0.4, unit.goal.z - GRID_SIZE / 2);
             this.markerGroup.add(sprite);
+        }
+        // AI faction goal targets (spectate-only): a flat tinted disc per goal at
+        // the objective tile, tinted with the faction's tile color so each AI's
+        // current objective is visible on the map. The dominant goal gets a
+        // larger, brighter disc.
+        if (gameState.spectateMode && gameState.aiState) {
+            for (const slot of Object.keys(gameState.aiState)) {
+                const st = gameState.aiState[slot];
+                if (!st || !Array.isArray(st.goals)) continue;
+                const fc = this.fcolor(gameState, slot) || { tile: 0x888888 };
+                const col = new THREE.Color(fc.tile || 0x888888);
+                st.goals.forEach((g, i) => {
+                    if (!g.targetTileKey) return;
+                    const [gx, gz] = g.targetTileKey.split(',').map(Number);
+                    const isTop = i === 0;
+                    const disc = new THREE.Mesh(
+                        new THREE.CircleGeometry(isTop ? 0.45 : 0.28, 20),
+                        new THREE.MeshBasicMaterial({
+                            color: col, transparent: true,
+                            opacity: isTop ? 0.85 : 0.5, depthWrite: false
+                        }));
+                    disc.rotation.x = -Math.PI / 2;
+                    disc.position.set(gx - GRID_SIZE / 2, 0.7, gz - GRID_SIZE / 2);
+                    this.markerGroup.add(disc);
+                });
+            }
         }
     }
 

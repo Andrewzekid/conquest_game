@@ -17,9 +17,9 @@ export const TECHS = {
     BRONZE_WORKING: {
         id: 'BRONZE_WORKING', name: 'Bronze Working', era: 'ancient', cost: 40,
         prerequisites: [],
-        unlocks: [{ type: 'unit', id: 'PIKEMAN' }],
+        unlocks: [{ type: 'unit', id: 'PIKEMAN' }, { type: 'unit', id: 'LEGIONNAIRE' }],
         bonus: {},
-        desc: 'Unlocks Pikeman unit and Mine improvement efficiency.'
+        desc: 'Unlocks Pikeman and Legionnaire units and Mine improvement efficiency.'
     },
     ANIMAL_HUSBANDRY: {
         id: 'ANIMAL_HUSBANDRY', name: 'Animal Husbandry', era: 'ancient', cost: 40,
@@ -63,16 +63,16 @@ export const TECHS = {
     FORTIFICATION: {
         id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 150,
         prerequisites: ['ENGINEERING'],
-        unlocks: [{ type: 'building', id: 'WALLS' }],
+        unlocks: [{ type: 'building', id: 'WALLS' }, { type: 'unit', id: 'CROSSBOWMAN' }, { type: 'unit', id: 'VARANGIAN_GUARD' }],
         bonus: { cityDefenseBonus: 2 },
-        desc: 'Unlocks Walls building. Cities gain +2 defense.'
+        desc: 'Unlocks Walls, Crossbowman, and Varangian Guard. Cities gain +2 defense.'
     },
     CHIVALRY: {
         id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 150,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
-        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }],
+        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }],
         bonus: { lordXpBonus: 0.25 },
-        desc: 'Unlocks Cataphract and Chariot. Lords gain 25% more XP.'
+        desc: 'Unlocks Cataphract, Chariot, Berserker, and Winged Hussar. Lords gain 25% more XP.'
     },
     CARTOGRAPHY: {
         id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 150,
@@ -93,9 +93,9 @@ export const TECHS = {
     GUNPOWDER: {
         id: 'GUNPOWDER', name: 'Gunpowder', era: 'industrial', cost: 250,
         prerequisites: ['SIEGE_CRAFT', 'CHIVALRY'],
-        unlocks: [{ type: 'unit', id: 'ARTILLERY' }],
+        unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'CONQUISTADOR' }],
         bonus: { rangedDamageBonus: 1 },
-        desc: 'Unlocks Artillery. Ranged units deal +1 damage.'
+        desc: 'Unlocks Artillery and Conquistador. Ranged units deal +1 damage.'
     },
     MEDICINE: {
         id: 'MEDICINE', name: 'Medicine', era: 'industrial', cost: 250,

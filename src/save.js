@@ -1,8 +1,13 @@
 /** Save/load to localStorage. GameState uses Map/Set; JSON needs plain objects.
  *  Phase F: enhanced persistence with verification for growth, burn, workshop,
  *  wonders, diplomacy relationship scores, and all new state fields. */
+import { serializeAIState, deserializeAIState } from './ai_goals.js';
+
 const SAVE_KEY = 'conquest_save';
-const SAVE_VERSION = 4;
+// Bumped 4 -> 5 for Phase G (new European factions + 6 new unit types + unit
+// factionId backfill). Older saves are rejected by the version check below;
+// unit.factionId is backfilled on load in Game.loadFromState.
+const SAVE_VERSION = 5;
 
 export function saveGame(gameState) {
     try {
@@ -46,7 +51,9 @@ export function saveGame(gameState) {
                 projects: { ...(gameState.victoryState.projects || {}) },
                 tradeRoutes: { ...(gameState.victoryState.tradeRoutes || {}) },
                 scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
-            } : null
+            } : null,
+            // AI goal-sequence state (per-faction goals + scarcity streak).
+            aiState: serializeAIState(gameState.aiState)
         };
         localStorage.setItem(SAVE_KEY, JSON.stringify(data));
         return true;
@@ -145,7 +152,10 @@ export function loadGame() {
                 progress: data.techState.progress || 0
             } : null,
             // Victory tracking state.
-            victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} }
+            victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            // AI goal-sequence state (per-faction). Absent on old saves -> null,
+            // backfilled by Game.loadFromState.
+            aiState: deserializeAIState(data.aiState)
         };
 
         // Sanity-check the restored state. If critical fields are missing,

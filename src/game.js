@@ -34,7 +34,9 @@ import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
 import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD } from './config.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
-import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS } from './faction.js';
+import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
+         getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
+import { initAIState, createAIState, serializeAIState, deserializeAIState } from './ai_goals.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
 import { saveGame, loadGame, loadSavedExists, clearSave } from './save.js';
 import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
@@ -76,7 +78,7 @@ export class Game {
         const maxAi = Math.max(0, FACTIONS.length - 1);
         const others = (options.aiFactionIds && options.aiFactionIds.length)
             ? options.aiFactionIds.slice(0, maxAi)
-            : ['crimson', 'verdant', 'violet', 'azure', 'obsidian']
+            : ['crimson', 'roman', 'viking', 'azure', 'byzantine', 'verdant', 'spanish', 'polish', 'violet', 'obsidian', 'golden', 'iron', 'shadow', 'storm']
                   .filter(id => id !== (playerFactionId || '_none_'))
                   .slice(0, maxAi);
         this._buildFactionBindings(playerFactionId, others);
@@ -127,7 +129,8 @@ export class Game {
         }
     }
 
-    /** Spectate mode UI: show fast-forward / auto controls, hide end turn. */
+    /** Spectate mode UI: show fast-forward / auto controls, hide end turn, and
+     *  reveal the AI Goals debug panel. */
     _initSpectateUI() {
         const endBtn = document.getElementById('btn-end-turn');
         const spectateControls = document.getElementById('spectate-controls');
@@ -135,6 +138,11 @@ export class Game {
         if (spectateControls) {
             spectateControls.style.display = 'flex';
         }
+        const aiGoalsPanel = document.getElementById('ai-goals-panel');
+        if (aiGoalsPanel) aiGoalsPanel.style.display = 'block';
+        // gameState.spectateMode is set authoritatively in initState (which runs
+        // after this in the constructor); don't touch it here — gameState isn't
+        // built yet when _initSpectateUI is called.
     }
 
     /** Run N full rounds in spectate mode automatically. A monotonically
@@ -244,11 +252,21 @@ export class Game {
             eliminated: new Set(),
             // Per-faction reputation (0-100, starts 50). Breaking treaties or
             // declaring war on peaceful factions lowers it; long peace raises it.
-            // AI uses it to decide whether to deal with you.
-            reputation: Object.fromEntries(FACTIONS.map(f => [f, 50])),
+            // AI uses it to decide whether to deal with you. Byzantine Empire's
+            // diplomacyBonus raises its starting reputation.
+            reputation: Object.fromEntries(FACTIONS.map(slot => {
+                const def = this.factionAssignments ? getFactionDef(this.factionAssignments[slot]) : null;
+                return [slot, Math.min(100, 50 + getDiplomacyBonus(def))];
+            })),
             gameOver: false,
             winner: null,
-            paused: false
+            paused: false,
+            // Spectate flag mirrored onto gameState so pure render/UI code
+            // (e.g. renderer.js) can read it without reaching back into the
+            // Game instance. Set here in initState so it always exists before
+            // any reader — _initSpectateUI used to set it before gameState was
+            // built, throwing "can't access spectateMode of undefined".
+            spectateMode: this.spectateMode
         };
 
         // Tech tree state (4X feature): single-track research progress.
@@ -263,6 +281,11 @@ export class Game {
             // Score victory: snapshot at key turns
             scoreSnapshots: {}
         };
+
+        // Per-faction AI goal-sequence state (see src/ai_goals.js). Persists the
+        // faction's ordered goals + scarcity streak across turns so plans are
+        // stable instead of recomputed (and thrashing) every turn.
+        this.gameState.aiState = initAIState(FACTIONS);
 
         // Create a starting unit + king lord for each faction at its start city.
         for (const slot of FACTIONS) {
@@ -312,6 +335,16 @@ export class Game {
         this.factions = FACTIONS;
         this.gameState = state;
         this.tiles = state.tiles;
+        // Mirror the instance spectate flag onto gameState for pure render/UI
+        // code (loaded games skip initState, where this is normally set).
+        this.gameState.spectateMode = this.spectateMode;
+        // Backfill unit.factionId for saves made before Phase G (battle.js reads
+        // faction passives off it). Derive from the slot->def assignment.
+        if (this.gameState.factionAssignments) {
+            for (const u of this.gameState.units.values()) {
+                if (!u.factionId) u.factionId = this.gameState.factionAssignments[u.owner] || null;
+            }
+        }
         this.gameState.moveTargets = new Set();
         this.gameState.attackTargets = [];
         this.gameState.bridgeTargets = [];
@@ -334,6 +367,15 @@ export class Game {
         // Reputation may be absent in pre-Phase-E saves �?default everyone to 50.
         if (!this.gameState.reputation) {
             this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
+        }
+        // AI goal-sequence state — absent on saves created before the goal
+        // revamp. Backfill a fresh record per faction so old saves load fine.
+        if (!this.gameState.aiState) {
+            this.gameState.aiState = initAIState(FACTIONS);
+        } else {
+            for (const f of FACTIONS) {
+                if (!this.gameState.aiState[f]) this.gameState.aiState[f] = createAIState();
+            }
         }
         // pendingOffers may be absent on old saves.
         if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
@@ -1292,9 +1334,11 @@ export class Game {
         }
         sfx.attack();
         this._playAttackAnimation(attacker, defender);
-        // Apply charge bonus temporarily
+        // Apply charge bonus temporarily. Polish Winged Hussars passive adds
+        // extra charge damage on top of the base charge bonus.
         const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
-        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+        const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
+        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef);
         // Execute combat
         const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
@@ -1967,7 +2011,11 @@ export class Game {
      *  within a city's influence, and free of an existing structure. Pays
      *  STRUCTURE_COST up front; the structure completes after buildTurns. */
     handleBuildStructure(engineer, structureType) {
-        if (!engineer || engineer.type !== 'ENGINEER' || engineer.owner !== PLAYER_FACTION) return;
+        // Any unit with the canBuildStructure flag (Engineer, Legionnaire) may
+        // build defensive structures on its current tile.
+        if (!engineer || engineer.owner !== PLAYER_FACTION) return;
+        const usd = UNIT_TYPE[engineer.type];
+        if (!usd || !usd.canBuildStructure) return;
         const sdef = STRUCTURE_TYPE[structureType];
         if (!sdef) { this.log('Invalid structure type.'); return; }
         if (engineer.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
@@ -2673,6 +2721,16 @@ export class Game {
     _awardCaptureGrievances(cityTile, newOwner, prevOwner, wasNeutral) {
         const diplo = this.gameState.diplomacy;
         const other = newOwner;
+        // Spanish Conquistadors passive: plunder gold on city conquest.
+        const conquerorDef = this.factionDefs ? this.factionDefs[other] : null;
+        const plunder = getGoldPerConquest(conquerorDef);
+        if (plunder > 0) {
+            const res = this.gameState.resources && this.gameState.resources[other];
+            if (res) {
+                res.gold = (res.gold || 0) + plunder;
+                this.log(`${(conquerorDef && conquerorDef.name) || other} plunders ${plunder} gold from the conquered city!`);
+            }
+        }
         // Former owner gets +25 grievance for losing a city
         if (prevOwner && prevOwner !== other) {
             addGrievance(diplo, prevOwner, other, 25, 'city captured');
@@ -3821,7 +3879,8 @@ export class Game {
         this._aiLordAttack(faction);
 
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy,
-            this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState);
+            this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState,
+            this.gameState.aiState ? this.gameState.aiState[faction] : null);
 
         // AI king: activate when off cooldown and a heuristic trigger is met.
         if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && this._aiShouldActivateKing(faction, def)) {
@@ -4105,11 +4164,14 @@ export class Game {
                     break;
                 }
                 case 'buildStructure': {
-                    // An AI engineer starts a defensive structure (SPIKES /
-                    // FORTIFICATION / FALL_TRAP) on its current tile. Mirrors the
-                    // player's handleBuildStructure; ticks via _tickConstructionFor.
+                    // An AI engineer (or Legionnaire) starts a defensive structure
+                    // (SPIKES / FORTIFICATION / FALL_TRAP) on its current tile.
+                    // Mirrors the player's handleBuildStructure; ticks via
+                    // _tickConstructionFor.
                     const unit = this.gameState.units.get(action.unitId);
-                    if (!unit || unit.type !== 'ENGINEER' || unit.owner !== faction) break;
+                    if (!unit || unit.owner !== faction) break;
+                    const usd2 = UNIT_TYPE[unit.type];
+                    if (!usd2 || !usd2.canBuildStructure) break;
                     if (unit.hasAttackedThisTurn) break;
                     if (this.gameState.construction && this.gameState.construction.has(unit.id)) break;
                     const sdef = STRUCTURE_TYPE[action.structureType];
@@ -4220,7 +4282,8 @@ export class Game {
                     if (!this.gameState.units.has(attacker.id)) break; // died to a trap
                     if (!this._applySpikesOnCharge(attacker)) break;   // impaled on spikes
                     const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
-                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+                    const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
+                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef);
                     const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
                     const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
                     const attackerLord = findCommandingLord(this.gameState.lords, attacker);
@@ -4553,7 +4616,7 @@ export class Game {
         this.log('Drag the map to pan. Esc to pause.');
         // Announce any Natural Wonders on this map.
         for (const w of (this._mapWonders || [])) {
-            this.log(`${w.wonder.emoji || '�?} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] �?capture it for a bonus!`);
+            this.log(`${w.wonder.emoji || '⭐'} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] — capture it for a bonus!`);
         }
         // Process any goals on the very first turn too.
         this.renderAll();

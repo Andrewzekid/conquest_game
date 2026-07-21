@@ -4,6 +4,7 @@ import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLo
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
 import { isPassable } from './map.js';
+import { getFactionDef, getCityCaptureBonus, getFortifiedDefenseBonus, getHealOnKill } from './faction.js';
 
 /** Fallback stats for combatants with no UNIT_TYPE entry (lords/kings, which
  *  fight as unit-like combatants). They are melee, non-naval, no siege bonus. */
@@ -108,6 +109,16 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     let effectiveAttack = atkPower * atkMultiplier + (terrainBonus.attack || 0)
         + atkLordBonus.attack + atkAdj.attack + atkTemp.attack;
 
+    // --- New European-faction/unit attacker bonuses (Phase G) ---
+    const atkDef = getFactionDef(attackerUnit.factionId);
+    // BERSERKER frenzy: +3 attack when below 50% HP (glass cannon bites back).
+    if (attackerUnit.type === 'BERSERKER' && attackerUnit.hp < (attackerUnit.maxHp || atkStats.hp) * 0.5) {
+        effectiveAttack += 3;
+        messages.push(`${combatName(attackerUnit)} is in a frenzy! (+3 atk)`);
+    }
+    // WINGED_HUSSAR alpha strike is handled below as a damage multiplier (2x on
+    // the first attack each turn) — it does not add raw attack here.
+
     // Siege bonus: artillery vs cities, lord siege ability, or Conqueror class.
     const isCity = terrain === 'CITY';
     if (isCity) {
@@ -123,6 +134,17 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         if (atkClass.siege > 0) {
             effectiveAttack += atkClass.siege;
             messages.push(`${attackerLord ? attackerLord.name : 'Conqueror'} class siege: +${atkClass.siege}`);
+        }
+        // CONQUISTADOR: mounted gunpowder unit, +2 attack vs units in cities.
+        if (atkStats.cityBonus) {
+            effectiveAttack += atkStats.cityBonus;
+            messages.push(`${combatName(attackerUnit)} city assault: +${atkStats.cityBonus}`);
+        }
+        // Roman Legion passive: +1 damage when capturing/attacking cities.
+        const romanCityBonus = getCityCaptureBonus(atkDef);
+        if (romanCityBonus > 0) {
+            effectiveAttack += romanCityBonus;
+            messages.push(`${combatName(attackerUnit)} Roman discipline vs city: +${romanCityBonus}`);
         }
     }
 
@@ -148,6 +170,24 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     if (structureDef > 0) {
         messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
     }
+    // --- New European-faction/unit defender bonuses (Phase G) ---
+    const defDef = getFactionDef(defenderUnit.factionId);
+    // VARANGIAN_GUARD: +2 defense when a friendly lord is adjacent (Chebyshev-1).
+    if (defenderUnit.type === 'VARANGIAN_GUARD' && lords) {
+        const guarded = lords.some(l => l && l.owner === defenderUnit.owner &&
+            Math.max(Math.abs(l.x - defenderUnit.x), Math.abs(l.z - defenderUnit.z)) <= 1);
+        if (guarded) {
+            effectiveDefense += 2;
+            messages.push(`${combatName(defenderUnit)} guards its lord (+2 def)`);
+        }
+    }
+    // Byzantine Empire passive: fortified units (holding position this turn)
+    // gain +2 defense.
+    const byzFort = getFortifiedDefenseBonus(defDef);
+    if (byzFort > 0 && !defenderUnit.hasMovedThisTurn) {
+        effectiveDefense += byzFort;
+        messages.push(`${combatName(defenderUnit)} is fortified (+${byzFort} def)`);
+    }
     // Encircled defenders fight at a disadvantage (no room to maneuver).
     if (encircled) {
         effectiveDefense -= ENCIRCLEMENT_DEFENSE_PENALTY;
@@ -155,6 +195,14 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    // WINGED_HUSSAR: devastating alpha strike — the first attack each turn deals
+    // 2x damage (chargeMultiplier). Only the hussar's own first swing, not a
+    // counter-attack (this branch is the attacker's strike).
+    if (attackerUnit.type === 'WINGED_HUSSAR' && atkStats.chargeMultiplier &&
+        !attackerUnit.hasAttackedThisTurn) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * atkStats.chargeMultiplier));
+        messages.push(`${combatName(attackerUnit)} winged charge deals ×${atkStats.chargeMultiplier} damage!`);
+    }
     // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
     // — archers and artillery exploit the spent, immobile mount.
     if (defenderUnit.chargeExhausted && defenderUnit.chargeExhausted > 0 && atkStats.ranged) {
@@ -170,6 +218,15 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const defenderDied = defenderUnit.hp <= 0;
     if (defenderDied) {
         messages.push(`${combatName(defenderUnit)} was destroyed!`);
+        // Viking Raiders passive: the killing unit heals a few HP on the kill.
+        const healOnKill = getHealOnKill(atkDef);
+        if (healOnKill > 0 && attackerUnit.hp > 0) {
+            const before = attackerUnit.hp;
+            attackerUnit.hp = Math.min(attackerUnit.maxHp || before, before + healOnKill);
+            if (attackerUnit.hp > before) {
+                messages.push(`${combatName(attackerUnit)} raids and heals ${attackerUnit.hp - before} HP`);
+            }
+        }
         // Award XP: a lord attacker earns lord XP; otherwise the attacker's
         // commanding lord (if any) and the attacker unit itself gain XP.
         if (attackerUnit._isLord) {

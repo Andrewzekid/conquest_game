@@ -78,6 +78,23 @@ export const UNIT_TYPE = {
     CHARIOT:     { name: 'Chariot',      hp: 11, attack: 4, defense: 2, moveRange: 3, upkeep: { food: 3, gold: 4, wood: 1, iron: 1 }, ranged: false, attackRange: 1, canCharge: true },
     MEDIC:       { name: 'Medic',        hp: 7,  attack: 1, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 3 }, heal: 2, ranged: false, attackRange: 1 },
     SIEGE_TOWER: { name: 'Siege Tower', hp: 20, attack: 4, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 4, wood: 2, iron: 2 }, besiege: true, besiegePower: 3, canAssault: true, ranged: false, attackRange: 1 },
+    // --- New European-faction units (Phase G) ---
+    // LEGIONNAIRE: heavy infantry tank. Slow but very durable; can build
+    // fortifications on owned tiles like an Engineer, but stays combat-capable.
+    LEGIONNAIRE: { name: 'Legionnaire', hp: 14, attack: 4, defense: 5, moveRange: 1, upkeep: { food: 4, gold: 3 }, ranged: false, attackRange: 1, canBuildStructure: true },
+    // BERSERKER: glass-cannon melee. +3 attack when below 50% HP (frenzy);
+    // cannot be healed by Medics.
+    BERSERKER:   { name: 'Berserker',   hp: 12, attack: 9, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1, frenzy: true, noMedic: true },
+    // VARANGIAN_GUARD: elite bodyguard. +2 defense when adjacent to a friendly lord.
+    VARANGIAN_GUARD: { name: 'Varangian Guard', hp: 16, attack: 6, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1, lordGuard: true },
+    // CONQUISTADOR: mounted gunpowder unit. Mobile ranged assault; +2 attack vs
+    // units in cities.
+    CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 3, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
+    // WINGED_HUSSAR: shock cavalry. Charge deals 2x damage on the first attack
+    // each turn; +1 move on open terrain.
+    WINGED_HUSSAR: { name: 'Winged Hussar', hp: 18, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1, chargeMultiplier: 2, openTerrainMoveBonus: 1 },
+    // CROSSBOWMAN: long-range infantry, a straightforward Archer upgrade.
+    CROSSBOWMAN: { name: 'Crossbowman', hp: 10, attack: 7, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
@@ -92,7 +109,7 @@ export const UNIT_TYPE = {
 
 // Units available to every faction in addition to its themed roster. Ships
 // (GALLEY/TRANSPORT) are NOT here — they're unlocked per-city by a Harbor.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
@@ -128,8 +145,14 @@ export const UNIT_COST = {
     CHARIOT:     { gold: 65, food: 20, wood: 15, iron: 10, production: 20 },
     MEDIC:       { gold: 55, food: 10, wood: 10, iron: 0,  production: 15 },
     SIEGE_TOWER: { gold: 40, food: 5,  wood: 15, iron: 0,  production: 15 },
-    CATAPULT:    { gold: 80,  food: 0,  wood: 15, iron: 0,  production: 25 },
-    TREBUCHET:   { gold: 100, food: 0,  wood: 20, iron: 10, production: 30 },
+    LEGIONNAIRE:    { gold: 45, food: 10, wood: 5,  iron: 5,  production: 15 },
+    BERSERKER:      { gold: 50, food: 10, wood: 5,  iron: 5,  production: 16 },
+    VARANGIAN_GUARD:{ gold: 85, food: 10, wood: 0,  iron: 15, production: 24 },
+    CONQUISTADOR:   { gold: 80, food: 15, wood: 5,  iron: 15, production: 22 },
+    WINGED_HUSSAR:  { gold: 95, food: 20, wood: 0,  iron: 15, production: 26 },
+    CROSSBOWMAN:    { gold: 65, food: 0,  wood: 25, iron: 0,  production: 18 },
+    CATAPULT:    { gold: 70,  food: 0,  wood: 12, iron: 0,  production: 22 },
+    TREBUCHET:   { gold: 85,  food: 0,  wood: 18, iron: 8,  production: 26 },
     GALLEY:      { gold: 40, food: 10, wood: 20, iron: 0,  production: 16 },
     TRANSPORT:   { gold: 35, food: 5,  wood: 20, iron: 0,  production: 20 },
     FRIGATE:     { gold: 60, food: 15, wood: 30, iron: 10, production: 24 },
@@ -383,9 +406,9 @@ export const NATURAL_WONDERS = [
 ];
 
 // --- Factions ---
-// Dynamic faction slots - supports 2-10 players
+// Dynamic faction slots - supports 2-15 players
 // 'player' is human-controlled; all others are AI
-export const MAX_FACTIONS = 10;
+export const MAX_FACTIONS = 15;
 export const PLAYER_FACTION = 'player';
 
 // Generate faction slots dynamically based on player count
@@ -407,7 +430,7 @@ export function setFactionSlots(playerCount) {
 
 // Per-faction colors. `tile` is the emissive tint shown on owned tiles;
 // `unit` is the marker color for that faction's units.
-// Extended to support up to 10 factions
+// Extended to support up to 15 factions
 export const FACTION_COLORS = {
     player: { tile: 0x2e5dc4, unit: 0x4488ff, name: 'You' },
     ai1:    { tile: 0xb33333, unit: 0xff5544, name: 'Crimson' },
@@ -418,7 +441,12 @@ export const FACTION_COLORS = {
     ai6:    { tile: 0xc9a028, unit: 0xffd700, name: 'Golden' },
     ai7:    { tile: 0x4a4a5a, unit: 0x8888aa, name: 'Iron' },
     ai8:    { tile: 0x2a1a3a, unit: 0x6a4a8a, name: 'Shadow' },
-    ai9:    { tile: 0x1a4a6a, unit: 0x44aadd, name: 'Storm' }
+    ai9:    { tile: 0x1a4a6a, unit: 0x44aadd, name: 'Storm' },
+    ai10:   { tile: 0xb87333, unit: 0xdd9944, name: 'Roman Legion' },
+    ai11:   { tile: 0x4a6a8a, unit: 0x88bbdd, name: 'Viking Raiders' },
+    ai12:   { tile: 0x7b2d8b, unit: 0xaa55cc, name: 'Byzantine Empire' },
+    ai13:   { tile: 0xc9302c, unit: 0xff5544, name: 'Spanish Conquistadors' },
+    ai14:   { tile: 0xdc143c, unit: 0xff6b6b, name: 'Polish Winged Hussars' }
 };
 
 // Per-faction city names - each faction has thematic naming
@@ -431,7 +459,12 @@ export const FACTION_CITY_NAMES = {
     golden: ['Goldshire', 'Sunforge', 'Midaskeep', 'Treasurehold', 'Gildedgate', 'Prosperity', 'Fortune', 'Richmond'],
     iron: ['Steelhold', 'Anvilkeep', 'Forgegate', 'Hammerfall', 'Ironclad', 'Metalburg', 'Smelter', 'Crucible'],
     shadow: ['Nightshade', 'Duskfall', 'Twilight', 'Veilkeep', 'Whisper', 'Silentium', 'Umbra', 'Phantom'],
-    storm: ['Thunderwall', 'Lightningkeep', 'Tempest', 'Galeforce', 'Stormwind', 'Hurricane', 'Cyclone', 'Maelstrom']
+    storm: ['Thunderwall', 'Lightningkeep', 'Tempest', 'Galeforce', 'Stormwind', 'Hurricane', 'Cyclone', 'Maelstrom'],
+    roman: ['Roma', 'Capua', 'Ravenna', 'Mediolanum', 'Aquileia', 'Tarentum', 'Brundisium', 'Londinium'],
+    viking: ['Skagen', 'Fjordhold', 'Ravenstede', 'Berserkholm', 'Thornhavn', 'Saltvik', 'Valkyriaborg', 'Skaldheim'],
+    byzantine: ['Constantinople', 'Nicaea', 'Trebizond', 'Thessalonica', 'Adrianople', 'Antioch', 'Chalcedon', 'Smyrna'],
+    spanish: ['Madrid', 'Sevilla', 'Toledo', 'Granada', 'Cordoba', 'Valencia', 'Pamplona', 'Cadiz'],
+    polish: ['Warszawa', 'Krakow', 'Gdansk', 'Poznan', 'Wroclaw', 'Lwow', 'Vilnius', 'Lublin']
 };
 
 // Default city names pool (fallback)
@@ -530,6 +563,20 @@ export const AI_PERSONALITIES = {
     ECONOMIC:    { warChance: 0.15, acceptAlliance: 0.35, acceptTrade: 0.55, acceptPeace: 0.6 },
     BALANCED:    { warChance: 0.5,  acceptAlliance: 0.2,  acceptTrade: 0.3,  acceptPeace: 0.4 }
 };
+
+// --- AI goal-sequence system (see src/ai_goals.js) ---
+// Min turns the planner keeps a chosen goal sequence before it may replace it
+// (prevents goal thrashing turn-to-turn).
+export const AI_GOAL_MIN_STABILITY_TURNS = 3;
+// Fraction of the unit cap reserved for long-range artillery (CATAPULT/TREBUCHET)
+// so basic siege (SIEGE/ARTILLERY) saturating the siege cap doesn't crowd them out.
+export const AI_ARTILLERY_RESERVE_DEFAULT = 0.18;
+export const AI_ARTILLERY_RESERVE_SIEGE = 0.40;
+// Settler scarcity trigger: consecutive scarce turns before the AI aggressively
+// expands to acquire missing resources, and the cap/floor relaxation it grants.
+export const AI_SETTLER_SCARCITY_TURN_THRESHOLD = 2;
+export const AI_SETTLER_SCARCE_CAP_RELAX = 2;
+export const AI_SETTLER_SCARCE_FLOOR_RELAX = 1;
 
 // Trade materials: specific resources that can be exchanged in trade pacts.
 // Each trade pact specifies which material is traded and how much per turn.

@@ -18,6 +18,8 @@ function processMedicHeal(units) {
             if (u.owner !== medic.owner) continue;
             if (u.id === medic.id) continue;
             if (u.type === 'MEDIC') continue;
+            // BERSERKERS fight beyond the aid of medics (noMedic flag).
+            if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].noMedic) continue;
             if (Math.abs(u.x - medic.x) > 1 || Math.abs(u.z - medic.z) > 1) continue;
             if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
         }

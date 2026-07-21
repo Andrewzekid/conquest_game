@@ -6,6 +6,7 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
           cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } from './diplomacy.js';
+import { buildAIGoalsHTML } from './ai_goals.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
@@ -44,6 +45,8 @@ export function bindUI(gameState, callbacks) {
         buildMenu: document.getElementById('build-menu-body'),
         diplomacyPanel: document.getElementById('diplomacy-panel-body'),
         lordPanel: document.getElementById('lord-panel-body'),
+        aiGoalsPanel: document.getElementById('ai-goals-panel-body'),
+        aiGoalsPanelWrap: document.getElementById('ai-goals-panel'),
         combatLog: document.getElementById('combat-log'),
         phaseIndicator: document.getElementById('phase-indicator')
     };
@@ -442,6 +445,27 @@ export function bindUI(gameState, callbacks) {
                     }
                 }
             }
+            // Non-engineer units with canBuildStructure (e.g. Legionnaire) can
+            // raise defensive structures on their current tile — but only the
+            // structure buttons, not the engineer-only siege engines/towers.
+            const usd = UNIT_TYPE[unit.type];
+            if (usd && usd.canBuildStructure && unit.type !== 'ENGINEER' &&
+                unit.owner === PLAYER_FACTION && !unit.hasAttackedThisTurn) {
+                const constructing2 = gameState.construction && gameState.construction.get(unit.id);
+                if (!constructing2) {
+                    const stile = gameState.tiles.get(`${unit.x},${unit.z}`);
+                    const canSite = stile && stile.owner === PLAYER_FACTION &&
+                        stile.terrain !== 'CITY' && stile.terrain !== 'WATER' && stile.terrain !== 'RIVER' &&
+                        !(gameState.structures && gameState.structures.has(`${unit.x},${unit.z}`));
+                    if (canSite) {
+                        html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
+                        for (const sType of Object.keys(STRUCTURE_TYPE)) {
+                            const s = STRUCTURE_TYPE[sType];
+                            html += `<button class="build-structure-btn btn btn-sm" data-structure="${sType}" style="display:block; width:100%; margin:2px 0;" title="${s.desc} (${s.buildTurns || 2} turns)">${svgIcon('spikes', { size: 13 })} ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
+                        }
+                    }
+                }
+            }
             // Navy: a land unit adjacent to a friendly Transport with free cargo
             // can board it; a Transport with cargo adjacent to land can disembark.
             const def = UNIT_TYPE[unit.type];
@@ -642,7 +666,14 @@ export function bindUI(gameState, callbacks) {
         if (u.vision) tags.push(`vision ${u.vision}`);
         if (u.canFoundCity) tags.push('founds a new city');
         if (u.canBuildBridge) tags.push('builds bridges over rivers');
+        if (u.canBuildStructure && type !== 'ENGINEER') tags.push('builds fortifications');
         if (u.canBuildImprovement) tags.push('builds terrain improvements');
+        if (u.frenzy) tags.push('+3 ATK below 50% HP (frenzy)');
+        if (u.noMedic) tags.push('cannot be healed by medics');
+        if (u.lordGuard) tags.push('+2 DEF near a friendly lord');
+        if (u.cityBonus) tags.push(`+${u.cityBonus} ATK vs city units`);
+        if (u.chargeMultiplier) tags.push(`×${u.chargeMultiplier} damage on first attack`);
+        if (u.openTerrainMoveBonus) tags.push(`+${u.openTerrainMoveBonus} move on open terrain`);
         if (u.buildTurns && u.buildTurns > 1) tags.push(`${u.buildTurns}-turn build`);
         if (tags.length) txt += `. <span style="color:#ffd700;">${tags.join('; ')}.</span>`;
         // Faction flavor for this unit.
@@ -652,6 +683,7 @@ export function bindUI(gameState, callbacks) {
             if (m.attack) parts.push(`${m.attack > 0 ? '+' : ''}${m.attack} ATK`);
             if (m.defense) parts.push(`${m.defense > 0 ? '+' : ''}${m.defense} DEF`);
             if (m.hp) parts.push(`${m.hp > 0 ? '+' : ''}${m.hp} HP`);
+            if (m.moveRange) parts.push(`${m.moveRange > 0 ? '+' : ''}${m.moveRange} MOV`);
             if (m.costGoldMult) parts.push(`${Math.round(m.costGoldMult * 100)}% gold cost`);
             if (parts.length) txt += ` <span style="color:#9cf;">Faction: ${parts.join(', ')}.</span>`;
         }
@@ -1095,6 +1127,18 @@ export function bindUI(gameState, callbacks) {
         updateResourceBar();
         showDiplomacyPanel();
         showLordPanel();
+        showAIGoalsPanel();
+    }
+
+    // Spectate-only debug panel: each AI faction's current ordered goal
+    // sequence (kind, priority, horizon, target tile). Rendered from the pure
+    // buildAIGoalsHTML helper so the panel logic stays unit-testable. No-op when
+    // the panel wrapper is hidden (normal play) — avoids wasted DOM work.
+    function showAIGoalsPanel() {
+        if (!els.aiGoalsPanel || !els.aiGoalsPanelWrap) return;
+        if (els.aiGoalsPanelWrap.style.display === 'none') return;
+        els.aiGoalsPanel.innerHTML = buildAIGoalsHTML(
+            gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors, true);
     }
 
     return {
@@ -1105,6 +1149,7 @@ export function bindUI(gameState, callbacks) {
         showBuildMenu,
         showDiplomacyPanel,
         showLordPanel,
+        showAIGoalsPanel,
         addCombatLog,
         updateAll
     };

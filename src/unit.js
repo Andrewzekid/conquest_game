@@ -1,6 +1,10 @@
 /** Unit factory & validation helpers (pure logic) */
 import { UNIT_TYPE, UNIT_COST, CAPTURE_COST, UNIT_XP_PER_KILL, UNIT_XP_PER_LEVEL } from './config.js';
-import { getUnitStatsFor, getPassiveCombat } from './faction.js';
+import { getUnitStatsFor, getPassiveCombat, getFactionDef, getOpenTerrainMoveBonus } from './faction.js';
+
+// "Open" terrain: no forest/mountain/hills cover — flat ground where cavalry
+// and mobile formations ride farther. Used by the Polish open-terrain move bonus.
+const OPEN_TERRAINS = new Set(['PLAINS', 'DESERT', 'TUNDRA']);
 
 let _uid = 0;
 function nextId() { return ++_uid; }
@@ -36,7 +40,11 @@ export function createUnit(type, owner, x, z, opts = {}) {
         hasMovedThisTurn: false,
         hasAttackedThisTurn: false,
         lordId: null,  // lord leading this unit, if any
-        goal: null     // auto-navigation destination {x,z}, or null
+        goal: null,    // auto-navigation destination {x,z}, or null
+        // Faction def id (serializable string) so pure combat code (battle.js)
+        // can read faction passives without a factionDefs map being threaded
+        // through every resolveCombat call site. Backfilled on save load.
+        factionId: def ? def.id : null
     };
 }
 
@@ -118,9 +126,13 @@ export function isEnemyAt(units, x, z, owner) {
 }
 
 /**
- * Get the move range for a unit (from its type).
+ * Get the move range for a unit. Prefers the faction-modded `unit.moveRange`
+ * (baked in at creation — includes faction move bonuses like Golden cavalry +1,
+ * Storm naval +1, Polish cavalry +1) so those bonuses actually take effect;
+ * falls back to the base UNIT_TYPE move range.
  */
 export function getMoveRange(unit) {
+    if (unit && unit.moveRange != null) return unit.moveRange;
     return UNIT_TYPE[unit.type]?.moveRange || 1;
 }
 
@@ -129,7 +141,12 @@ export function getMoveRange(unit) {
  * Returns Set of tile keys.
  */
 export function getReachableTiles(unit, tiles) {
-    const range = getMoveRange(unit);
+    let range = getMoveRange(unit);
+    // Polish Winged Hussars passive: all units gain +1 move on open terrain.
+    const here = tiles && tiles.get(`${unit.x},${unit.z}`);
+    if (here && OPEN_TERRAINS.has(here.terrain)) {
+        range += getOpenTerrainMoveBonus(getFactionDef(unit.factionId));
+    }
     const def = UNIT_TYPE[unit.type];
     const naval = !!(def && def.naval);
     const result = new Set();

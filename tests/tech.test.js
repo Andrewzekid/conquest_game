@@ -173,6 +173,40 @@ describe('Tech Tree Module', () => {
             const units = getUnlockedUnits(ts);
             expect(units.has('CATAPULT')).toBe(true);
         });
+
+        // Phase G: existing techs gained new unit unlocks.
+        it('BRONZE_WORKING unlocks LEGIONNAIRE', () => {
+            const ts = createTechState();
+            expect(getUnlockedUnits(ts).has('LEGIONNAIRE')).toBe(true);
+        });
+
+        it('CHIVALRY unlocks BERSERKER + WINGED_HUSSAR', () => {
+            const ts = createTechState();
+            ts.researched.add('MATHEMATICS'); // prereq
+            ts.researched.add('ANIMAL_HUSBANDRY'); // prereq (ancient, already there)
+            ts.researched.add('CHIVALRY');
+            const units = getUnlockedUnits(ts);
+            expect(units.has('BERSERKER')).toBe(true);
+            expect(units.has('WINGED_HUSSAR')).toBe(true);
+        });
+
+        it('FORTIFICATION unlocks CROSSBOWMAN + VARANGIAN_GUARD', () => {
+            const ts = createTechState();
+            ts.researched.add('ENGINEERING'); // prereq
+            ts.researched.add('FORTIFICATION');
+            const units = getUnlockedUnits(ts);
+            expect(units.has('CROSSBOWMAN')).toBe(true);
+            expect(units.has('VARANGIAN_GUARD')).toBe(true);
+        });
+
+        it('GUNPOWDER unlocks CONQUISTADOR', () => {
+            const ts = createTechState();
+            ts.researched.add('SIEGE_CRAFT');
+            ts.researched.add('CHIVALRY');
+            ts.researched.add('GUNPOWDER');
+            const units = getUnlockedUnits(ts);
+            expect(units.has('CONQUISTADOR')).toBe(true);
+        });
     });
 
     describe('getUnlockedBuildings', () => {
