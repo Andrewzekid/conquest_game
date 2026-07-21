@@ -10,6 +10,25 @@ import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
+import { svgIcon, hasIcon } from './icons.js';
+
+// Map building types to their icon names in src/icons.js.
+const BUILDING_ICON = {
+    FARM: 'farm', LUMBERMILL: 'lumbermill', MINE: 'mine', MARKET: 'market',
+    BARRACKS: 'barracks', WALLS: 'walls', HARBOR: 'harbor', SIEGE_WORKSHOP: 'siege_workshop'
+};
+const RES_ORDER = [['gold', 'g'], ['food', 'f'], ['wood', 'w'], ['iron', 'i'], ['production', 'pr']];
+// Renders a cost object as small colored chips (green if affordable, red if not).
+function costChips(cost, res) {
+    const parts = [];
+    for (const [key, abbr] of RES_ORDER) {
+        const v = cost[key];
+        if (!v) continue;
+        const ok = (res[key] || 0) >= v;
+        parts.push(`<span class="${ok ? 'ok' : 'no'}">${v}${abbr}</span>`);
+    }
+    return parts.join('');
+}
 
 export function bindUI(gameState, callbacks) {
     const els = {
@@ -230,9 +249,9 @@ export function bindUI(gameState, callbacks) {
         const td = TERRAIN[tile.terrain] || { name: 'Unknown', resource: '?', amount: 0 };
         const tb = TERRAIN_BONUS[tile.terrain] || { attack: 0, defense: 0 };
         const bonusTxt = `Atk ${tb.attack>=0?'+':''}${tb.attack} / Def ${tb.defense>=0?'+':''}${tb.defense}`;
-        let info = `${td.name} [${tile.x}, ${tile.z}]`;
+        let info = `<strong>${td.name}</strong> <span style="color:var(--muted);">[${tile.x}, ${tile.z}]</span>`;
         if (td.resource && td.amount) info += ` — ${td.amount} ${td.resource}`;
-        info += ` (${bonusTxt})`;
+        info += ` <span style="color:var(--muted);">(${bonusTxt})</span>`;
         if (tile.terrain === 'CITY') {
             // Show city name, level, and health bar (fortification)
             const cityName = tile.cityName || `City`;
@@ -241,16 +260,16 @@ export function bindUI(gameState, callbacks) {
             const fortMax = tile.fortMax || 1;
             const fortPct = Math.round((fort / fortMax) * 100);
             const breached = fort === 0 && tile.owner !== PLAYER_FACTION;
-            info += ` | 🏰 ${cityName} (Lv.${cityLevel})`;
-            info += ` | HP: ${fort}/${fortMax} (${fortPct}%)${breached ? ' BREACHED' : ''}`;
+            info += ` &nbsp;${svgIcon('city', {size:16})} <strong>${cityName}</strong> (Lv.${cityLevel})`;
+            info += ` &nbsp;${svgIcon('hp', {size:14})} ${fort}/${fortMax} (${fortPct}%)${breached ? ' <span style="color:var(--bad);">BREACHED</span>' : ''}`;
         }
         if (tile.terrain === 'RIVER') {
-            info += tile.bridge ? ' | 🌉 Bridged' : ' | Impassable (needs bridge)';
+            info += tile.bridge ? ` &nbsp;${svgIcon('bridge', {size:14})} Bridged` : ' &nbsp;<span style="color:var(--bad);">Impassable (needs bridge)</span>';
         }
         if (tile.wonder) {
-            info += ` | ${tile.wonder.emoji || ''} ${tile.wonder.name}`;
+            info += ` &nbsp;${tile.wonder.emoji || svgIcon('wonder', {size:14})} ${tile.wonder.name}`;
         }
-        if (els.info) els.info.textContent = info;
+        if (els.info) els.info.innerHTML = info;
 
         if (els.ownership) {
             if (tile.owner === PLAYER_FACTION) {
@@ -291,7 +310,7 @@ export function bindUI(gameState, callbacks) {
             const bonusTxt = Object.entries(tile.wonder.bonus)
                 .map(([r, a]) => `+${a} ${r}`).join(', ');
             const who = tile.owner ? ` (${tile.owner === PLAYER_FACTION ? 'you' : fcOf(tile.owner).name || tile.owner})` : ' — capture it to claim!';
-            els.ownership.textContent += ` | ${tile.wonder.emoji || '✨'} ${tile.wonder.name}: ${bonusTxt}${who}`;
+            els.ownership.textContent += ` | ${tile.wonder.emoji || ''} ${tile.wonder.name}: ${bonusTxt}${who}`;
             els.ownership.style.color = '#ffd35a';
         }
     }
@@ -306,18 +325,24 @@ export function bindUI(gameState, callbacks) {
         const atk = unit.attack ?? stats.attack;
         const def = unit.defense ?? stats.defense;
         const fc = fcOf(unit.owner);
-        let html = `
-            <strong>${stats.name}</strong> (Lv.${lvl}) #${unit.id}<br>
-            HP: ${unit.hp}/${unit.maxHp} | XP: ${unit.xp || 0}/${30 * lvl}<br>
-            ATK: ${atk} | DEF: ${def} | Move: ${stats.moveRange}<br>
-            Owner: ${fc.name || unit.owner}<br>
-            ${unit.hasMovedThisTurn ? '(Moved)' : '(Can move)'}
-            ${unit.hasAttackedThisTurn ? '(Attacked)' : '(Can attack)'}<br>`;
+        const srow = (ic, label, val) => `<div class="stat-row"><span class="stat-ico">${svgIcon(ic, { size: 16 })}</span>${label}<b>${val}</b></div>`;
+        const canMove = !unit.hasMovedThisTurn;
+        const canAtk = !unit.hasAttackedThisTurn;
+        let html = `<div class="info-card"><h4>${stats.name} · Lv.${lvl} #${unit.id}</h4>`;
+        html += srow('hp', 'HP', `${unit.hp}/${unit.maxHp}`);
+        html += srow('attack', 'Attack', atk);
+        html += srow('defense', 'Defense', def);
+        html += srow('move', 'Move', stats.moveRange);
+        html += srow('swords', 'XP', `${unit.xp || 0}/${30 * lvl}`);
+        html += srow('flag', 'Owner', fc.name || unit.owner);
+        html += `<div class="stat-row"><span class="stat-ico">${svgIcon(canMove ? 'move' : 'exhausted', { size: 16 })}</span>Status<b style="color:${canMove ? 'var(--good)' : 'var(--bad)'}">${canMove ? 'Can move' : 'Moved'}</b></div>`;
+        html += `<div class="stat-row"><span class="stat-ico">${svgIcon(canAtk ? 'swords' : 'stun', { size: 16 })}</span><b style="margin-left:0;color:${canAtk ? 'var(--good)' : 'var(--bad)'}">${canAtk ? 'Can attack' : 'Attacked'}</b></div>`;
+        html += `</div>`;
         if (unit.burn && unit.burn > 0) {
-            html += `<span style="font-size:11px; color:#ff7b3a;">🔥 On fire — taking ${2} dmg/turn for ${unit.burn} turn${unit.burn === 1 ? '' : 's'}.</span><br>`;
+            html += `<div class="stat-row"><span class="stat-ico">${svgIcon('fire', { size: 16 })}</span><span style="color:#ff7b3a;">On fire — ${2} dmg/turn (${unit.burn}t)</span></div>`;
         }
         if (unit.boarded) {
-            html += `<span style="font-size:11px; color:#9cf;">🚢 Aboard a transport (disembark to act).</span><br>`;
+            html += `<div class="stat-row"><span class="stat-ico">${svgIcon('TRANSPORT', { size: 16 })}</span><span style="color:#9cf;">Aboard a transport (disembark to act)</span></div>`;
         }
         if (unit.owner === PLAYER_FACTION) {
             // Conceal / Reveal controls for forest/mountain ambush mechanic.
@@ -327,23 +352,23 @@ export function bindUI(gameState, callbacks) {
                 unit.concealState !== 'concealing' && unit.concealState !== 'concealed';
             if (canConceal) {
                 const turns = tile.terrain === 'MOUNTAIN' ? 2 : 1;
-                html += `<button id="conceal-btn" style="font-size:11px; padding:2px 6px; margin-top:2px; color:#7cf;" title="Conceal this unit in the ${tile.terrain.toLowerCase()} (${turns} turn${turns === 1 ? '' : 's'}). Concealed units cannot move.">🌲 Conceal in ${tile.terrain} (${turns}t)</button><br>`;
+                html += `<button id="conceal-btn" class="btn btn-sm" style="margin-top:4px; color:#7cf;" title="Conceal this unit in the ${tile.terrain.toLowerCase()} (${turns} turn${turns === 1 ? '' : 's'}). Concealed units cannot move.">${svgIcon('conceal', { size: 14 })} Conceal (${turns}t)</button><br>`;
             }
             if (unit.concealState === 'concealing') {
-                html += `<span style="font-size:11px; color:#7cf;">🌲 Concealing: ${unit.concealTurnsLeft} turn${unit.concealTurnsLeft === 1 ? '' : 's'} left.</span><br>`;
+                html += `<div class="stat-row"><span class="stat-ico">${svgIcon('conceal', { size: 16 })}</span><span style="color:#7cf;">Concealing: ${unit.concealTurnsLeft}t left</span></div>`;
             }
             if (unit.concealState === 'concealed') {
-                html += `<div style="font-size:11px; color:#7cfc00; margin-top:4px;">🌲 Concealed — cannot move.</div>`;
-                html += `<div style="font-size:10px; color:#9ab;">Reveal to ambush an adjacent square:</div>`;
+                html += `<div class="stat-row"><span class="stat-ico">${svgIcon('conceal', { size: 16 })}</span><span style="color:#7cfc00;">Concealed — cannot move</span></div>`;
+                html += `<div style="font-size:10px; color:#9ab; margin:2px 0;">Reveal to ambush:</div>`;
                 const dirs = [
-                    { key: 'n', dx: 0, dz: -1, label: '⬆ N' },
-                    { key: 's', dx: 0, dz: 1, label: '⬇ S' },
-                    { key: 'e', dx: 1, dz: 0, label: '➡ E' },
-                    { key: 'w', dx: -1, dz: 0, label: '⬅ W' }
+                    { key: 'n', dx: 0, dz: -1, label: 'N' },
+                    { key: 's', dx: 0, dz: 1, label: 'S' },
+                    { key: 'e', dx: 1, dz: 0, label: 'E' },
+                    { key: 'w', dx: -1, dz: 0, label: 'W' }
                 ];
-                html += `<div style="display:flex; gap:2px; flex-wrap:wrap; margin:2px 0;">`;
+                html += `<div style="display:flex; gap:4px; flex-wrap:wrap; margin:2px 0;">`;
                 for (const d of dirs) {
-                    html += `<button class="reveal-dir-btn" data-dx="${d.dx}" data-dz="${d.dz}" style="font-size:10px; padding:2px 6px;" title="Reveal and ambush the tile to the ${d.key.toUpperCase()}">${d.label}</button>`;
+                    html += `<button class="reveal-dir-btn btn btn-sm" data-dx="${d.dx}" data-dz="${d.dz}" title="Reveal and ambush the tile to the ${d.key.toUpperCase()}">${d.label}</button>`;
                 }
                 html += `</div>`;
             }
@@ -351,33 +376,33 @@ export function bindUI(gameState, callbacks) {
             if (CHARGE_UNITS.includes(unit.type) && !unit.hasAttackedThisTurn && !unit.hasMovedThisTurn) {
                 const chargeTargets = (gameState.chargeTargets || []).filter(u => u && u.owner !== PLAYER_FACTION);
                 if (chargeTargets.length) {
-                    html += `<div style="font-size:11px; color:#ffd35a; margin-top:4px;">🐎 Charge adjacent enemy:</div>`;
+                    html += `<div style="font-size:11px; color:#ffd35a; margin-top:6px;">${svgIcon('charge', { size: 14 })} Charge an adjacent enemy:</div>`;
                     for (const tgt of chargeTargets) {
-                        html += `<button class="charge-btn" data-target-id="${tgt.id}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id} for +${2} attack (exhausts cavalry).">⚔️ Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id}</button>`;
+                        html += `<button class="charge-btn btn btn-sm" data-target-id="${tgt.id}" style="display:block; width:100%; margin:2px 0;" title="Charge ${UNIT_TYPE[tgt.type].name} #${tgt.id} for +${2} attack (exhausts cavalry).">${svgIcon('charge', { size: 13 })} ${UNIT_TYPE[tgt.type].name} #${tgt.id}</button>`;
                     }
                 }
             }
             // Chariot charge: directional lanes (click the highlighted gold tile).
             if (CHARIOT_CHARGE_UNITS.includes(unit.type)) {
                 if (unit.stunnedTurns && unit.stunnedTurns > 0) {
-                    html += `<div style="font-size:11px; color:#c99; margin-top:4px;">💫 Stunned for ${unit.stunnedTurns} more turn${unit.stunnedTurns === 1 ? '' : 's'} (charge recovery).</div>`;
+                    html += `<div style="font-size:11px; color:#c99; margin-top:4px;">${svgIcon('stun', { size: 14 })} Stunned for ${unit.stunnedTurns} more turn${unit.stunnedTurns === 1 ? '' : 's'} (charge recovery).</div>`;
                 } else if (!unit.hasAttackedThisTurn && !unit.hasMovedThisTurn) {
                     const lanes = gameState.chariotChargeTargets;
                     const laneCount = lanes instanceof Map ? lanes.size : (lanes ? lanes.length : 0);
                     if (laneCount) {
-                        html += `<div style="font-size:11px; color:#ffd35a; margin-top:4px;">🛞 Charge (up to 3 tiles): click a gold-highlighted tile. Stuns the chariot 2 turns; massive damage vs infantry/artillery.</div>`;
+                        html += `<div style="font-size:11px; color:#ffd35a; margin-top:4px;">${svgIcon('CHARIOT', { size: 14 })} Charge (up to 3 tiles): click a gold-highlighted tile. Stuns the chariot 2 turns; massive damage vs infantry/artillery.</div>`;
                     } else {
-                        html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">🛞 No enemy in a straight charge lane. (Cannot move and charge the same turn.)</div>`;
+                        html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">${svgIcon('CHARIOT', { size: 14 })} No enemy in a straight charge lane. (Cannot move and charge the same turn.)</div>`;
                     }
                 } else if (unit.hasMovedThisTurn) {
-                    html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">🛞 Chariot already moved — cannot charge this turn.</div>`;
+                    html += `<div style="font-size:11px; color:#9ab; margin-top:4px;">${svgIcon('CHARIOT', { size: 14 })} Chariot already moved — cannot charge this turn.</div>`;
                 }
             }
             if (unit.type === 'SETTLER') {
-                html += `<button id="found-city-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Found a new city on this tile (consumes the settler).">🏠 Found City Here</button><br>`;
+                html += `<button id="found-city-btn" class="btn btn-sm" style="margin-top:4px;" title="Found a new city on this tile (consumes the settler).">${svgIcon('city', { size: 14 })} Found City Here</button><br>`;
             }
             if (unit.type === 'ENGINEER' || unit.type === 'SIEGE') {
-                html += `<span style="font-size:11px; color:#7cf;">Click an adjacent river tile to build a bridge.</span><br>`;
+                html += `<div style="font-size:11px; color:#7cf;">${svgIcon('bridge', { size: 13 })} Click an adjacent river tile to build a bridge.</div><br>`;
             }
             if (unit.type === 'ENGINEER') {
                 const constructing = gameState.construction && gameState.construction.get(unit.id);
@@ -387,20 +412,20 @@ export function bindUI(gameState, callbacks) {
                         : constructing.type === 'STRUCTURE'
                             ? `Building ${(STRUCTURE_TYPE[constructing.structureType] || {}).name || 'Structure'}`
                             : 'Building Siege Tower';
-                    html += `<span style="font-size:11px; color:#ffd700;">🔨 ${label} — ready in ${constructing.turnsLeft} turn${constructing.turnsLeft === 1 ? '' : 's'}.</span><br>`;
+                    html += `<div style="font-size:11px; color:#ffd700;">${svgIcon('ENGINEER', { size: 14 })} ${label} — ready in ${constructing.turnsLeft} turn${constructing.turnsLeft === 1 ? '' : 's'}.</div><br>`;
                 } else if (!unit.hasAttackedThisTurn) {
                     // Siege Tower button (if near an enemy city).
                     if (gameState.siegeTowerTarget) {
                         const tgt = gameState.siegeTowerTarget;
-                        html += `<button id="build-tower-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Build a Siege Tower here (3 turns) to assault the nearby enemy city.">🏯 Build Siege Tower (3t)</button><br>`;
+                        html += `<button id="build-tower-btn" class="btn btn-sm" style="margin-top:4px;" title="Build a Siege Tower here (3 turns) to assault the nearby enemy city.">${svgIcon('SIEGE_TOWER', { size: 14 })} Build Siege Tower (3t)</button><br>`;
                         html += `<span style="font-size:10px; color:#9ab;">Siege target: city at [${tgt.x}, ${tgt.z}]</span><br>`;
                     }
                     // Siege Engine build buttons (CATAPULT/TREBUCHET) — field
                     // construction, no workshop required. Gives factions without
                     // a Siege Workshop a path to long-range siege engines.
                     html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
-                    html += `<button class="build-siege-engine-btn" data-engine="CATAPULT" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">💣 Build Catapult (2t)</button>`;
-                    html += `<button class="build-siege-engine-btn" data-engine="TREBUCHET" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">💣 Build Trebuchet (2t)</button>`;
+                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="CATAPULT" style="display:block; width:100%; margin:2px 0;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">${svgIcon('CATAPULT', { size: 13 })} Build Catapult (2t)</button>`;
+                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="TREBUCHET" style="display:block; width:100%; margin:2px 0;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">${svgIcon('TREBUCHET', { size: 13 })} Build Trebuchet (2t)</button>`;
                     // Defensive structures (traps/fortifications) on the
                     // engineer's current tile: must be owned land within a
                     // city's influence, free of an existing structure.
@@ -412,7 +437,7 @@ export function bindUI(gameState, callbacks) {
                         html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
                         for (const sType of Object.keys(STRUCTURE_TYPE)) {
                             const s = STRUCTURE_TYPE[sType];
-                            html += `<button class="build-structure-btn" data-structure="${sType}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;" title="${s.desc} (${s.buildTurns || 2} turns)">🚧 ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
+                            html += `<button class="build-structure-btn btn btn-sm" data-structure="${sType}" style="display:block; width:100%; margin:2px 0;" title="${s.desc} (${s.buildTurns || 2} turns)">${svgIcon('spikes', { size: 13 })} ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
                         }
                     }
                 }
@@ -425,20 +450,20 @@ export function bindUI(gameState, callbacks) {
                 if (tr) {
                     const cargoLen = (tr.cargo && tr.cargo.length) || 0;
                     if (cargoLen < (UNIT_TYPE.TRANSPORT.capacity || 2)) {
-                        html += `<button id="board-btn" data-transport-id="${tr.id}" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Board this transport to cross water.">🚢 Board Transport #${tr.id}</button><br>`;
+                        html += `<button id="board-btn" data-transport-id="${tr.id}" class="btn btn-sm" style="margin-top:4px;" title="Board this transport to cross water.">${svgIcon('TRANSPORT', { size: 14 })} Board Transport #${tr.id}</button><br>`;
                     }
                 }
             }
             if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {
                 const land = findAdjacentLand(gameState, unit);
                 if (land) {
-                    html += `<button id="disembark-btn" style="font-size:11px; padding:2px 6px; margin-top:2px;" title="Disembark one carried unit onto the adjacent land tile.">⚓ Disembark at [${land.x}, ${land.z}]</button><br>`;
+                    html += `<button id="disembark-btn" class="btn btn-sm" style="margin-top:4px;" title="Disembark one carried unit onto the adjacent land tile.">${svgIcon('harbor', { size: 14 })} Disembark at [${land.x}, ${land.z}]</button><br>`;
                 }
                 html += `<span style="font-size:10px; color:#9ab;">Carrying ${unit.cargo.length}/${UNIT_TYPE.TRANSPORT.capacity || 2} units.</span><br>`;
             }
             if (unit.goal) {
-                html += `🎯 Auto-moving to [${unit.goal.x}, ${unit.goal.z}] `;
-                html += `<button id="cancel-goal-btn" style="font-size:10px; padding:1px 5px;">Cancel</button>`;
+                html += `${svgIcon('target', { size: 13 })} Auto-moving to [${unit.goal.x}, ${unit.goal.z}] `;
+                html += `<button id="cancel-goal-btn" class="btn btn-sm" style="margin-left:4px;">Cancel</button>`;
             } else {
                 html += `<span style="font-size:11px; color:#9ab;">Right-click a tile to set an auto-move goal.</span>`;
             }
@@ -455,7 +480,7 @@ export function bindUI(gameState, callbacks) {
                     if (opts.length) {
                         html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build improvement here:</div>`;
                         for (const b of opts) {
-                            html += `<button class="worker-build-btn" data-bldg="${b.type}" style="font-size:10px; padding:2px 4px; margin:1px; display:block; width:90%;">${b.name} (${formatCost(b.cost)})</button>`;
+                            html += `<button class="worker-build-btn btn btn-sm" data-bldg="${b.type}" style="display:block; width:100%; margin:2px 0;">${b.name} (${formatCost(b.cost)})</button>`;
                         }
                     } else {
                         html += `<span style="font-size:10px; color:#9ab;">No improvement can be built on this tile.</span><br>`;
@@ -467,7 +492,7 @@ export function bindUI(gameState, callbacks) {
             // Disband: destroy this unit, refunding a fraction of its gold cost.
             // Useful to free up the unit cap or remove a stranded unit.
             if (!unit.boarded) {
-                html += `<button id="disband-btn" style="font-size:10px; padding:2px 6px; margin-top:4px; color:#f88;" title="Destroy this unit (refunds 25% of gold cost).">✖ Disband Unit</button><br>`;
+                html += `<button id="disband-btn" class="btn btn-sm" style="margin-top:4px; color:#f88;" title="Destroy this unit (refunds 25% of gold cost).">${svgIcon('exhausted', { size: 13 })} Disband Unit</button><br>`;
             }
             // Join a lord's army: if a lord with command capacity is on the same
             // tile and this unit isn't already in that lord's army, show a button.
@@ -476,7 +501,7 @@ export function bindUI(gameState, callbacks) {
                     l.owner === PLAYER_FACTION && l.x === unit.x && l.z === unit.z &&
                     canCommand(l) && !(l.army || []).includes(unit.id));
                 for (const lord of lordsHere) {
-                    html += `<button class="join-army-btn" data-lord-id="${lord.id}" style="font-size:10px; padding:2px 6px; margin-top:2px; color:#9cf;" title="Join ${lord.name}'s army (${lord.army.length}/${maxArmySize(lord)}).">⚔️ Join ${lord.name}'s Army</button><br>`;
+                    html += `<button class="join-army-btn btn btn-sm" data-lord-id="${lord.id}" style="margin-top:4px; color:#9cf;" title="Join ${lord.name}'s army (${lord.army.length}/${maxArmySize(lord)}).">${svgIcon('join', { size: 13 })} Join ${lord.name}'s Army</button><br>`;
                 }
             }
             // Pillage: a military unit adjacent to an enemy tile with a terrain
@@ -485,7 +510,7 @@ export function bindUI(gameState, callbacks) {
                 const ptile = findAdjacentPillageable(gameState, unit);
                 if (ptile) {
                     const bName = (BUILDING_TYPE[pillageableOn(ptile, gameState.buildings)[0]] || {}).name || 'improvement';
-                    html += `<button id="pillage-btn" data-ptx="${ptile.x}" data-ptz="${ptile.z}" style="font-size:10px; padding:2px 6px; margin-top:2px; color:#fc6;" title="Pillage the enemy ${bName} at [${ptile.x}, ${ptile.z}] for gold.">🔥 Pillage ${bName} [${ptile.x},${ptile.z}]</button><br>`;
+                    html += `<button id="pillage-btn" data-ptx="${ptile.x}" data-ptz="${ptile.z}" class="btn btn-sm" style="margin-top:4px; color:#fc6;" title="Pillage the enemy ${bName} at [${ptile.x}, ${ptile.z}] for gold.">${svgIcon('pillage', { size: 13 })} Pillage ${bName} [${ptile.x},${ptile.z}]</button><br>`;
                 }
             }
         }
@@ -550,27 +575,29 @@ export function bindUI(gameState, callbacks) {
             if (els.unitInfo) els.unitInfo.innerHTML = '';
             return;
         }
-        const cls = LORD_CLASSES[lord.class] || { name: '?', icon: '👑', desc: '' };
+        const cls = LORD_CLASSES[lord.class] || { name: '?', icon: 'star', desc: '' };
         const abilities = lord.abilities.map(a => LORD_ABILITIES[a]?.name || a).join(', ') || 'None';
         const fc = fcOf(lord.owner);
         const army = (lord.army && lord.army.length) ? lord.army.length : 0;
-        let html = `
-            <strong>${cls.icon} ${lord.name} the ${cls.name}</strong> (Lv.${lord.level})${lord.isKing ? ' 👑 KING' : ''}<br>
-            Owner: ${fc.name || lord.owner}<br>
-            HP: ${lord.hp == null ? '?' : Math.max(0, lord.hp|0)}/${lord.maxHp == null ? '?' : lord.maxHp|0}
-             | ATK ${lordAttack(lord)} | DEF ${lordDefense(lord) + kingGuardBonus(lord)}<br>
-            XP: ${lord.xp}/${50 * lord.level}<br>
-            CMD: ${lord.stats.command} | CMB: ${lord.stats.combat} | GOV: ${lord.stats.governance}<br>
-            Class: ${cls.name} — ${cls.desc}<br>
-            Army: ${army}/${maxArmySize(lord)} units${lord.isKing ? ` (King's Guard: +${kingGuardBonus(lord)} DEF from bodyguard)` : ''}<br>
-            Abilities: ${abilities}<br>
-            ${lord.hasAttackedThisTurn ? '' : '(Can attack) '}${lord.hasMovedThisTurn ? '(Moved)' : '(Can move)'}
-        `;
+        const srow = (ic, label, val) => `<div class="stat-row"><span class="stat-ico">${svgIcon(ic, { size: 16 })}</span>${label}<b>${val}</b></div>`;
+        const titleIco = lord.isKing ? 'crown' : cls.icon;
+        let html = `<div class="info-card"><h4>${svgIcon(titleIco, { size: 16 })} ${lord.name} the ${cls.name}${lord.isKing ? ' · KING' : ''}</h4>`;
+        html += srow('hp', 'HP', `${lord.hp == null ? '?' : Math.max(0, lord.hp | 0)}/${lord.maxHp == null ? '?' : lord.maxHp | 0}`);
+        html += srow('attack', 'Attack', lordAttack(lord));
+        html += srow('defense', 'Defense', lordDefense(lord) + kingGuardBonus(lord));
+        html += srow('swords', 'XP', `${lord.xp}/${50 * lord.level}`);
+        html += srow('flag', 'Owner', fc.name || lord.owner);
+        html += srow('join', 'Army', `${army}/${maxArmySize(lord)}${lord.isKing ? ` (+${kingGuardBonus(lord)} guard DEF)` : ''}`);
+        html += `<div class="stat-row"><span class="stat-ico">${svgIcon('star', { size: 16 })}</span>CMD/CMB/GOV<b>${lord.stats.command}/${lord.stats.combat}/${lord.stats.governance}</b></div>`;
+        html += `<div style="font-size:11px; color:var(--muted); margin-top:4px;">${cls.name} — ${cls.desc}</div>`;
+        html += `<div style="font-size:11px; color:var(--muted);">Abilities: ${abilities}</div>`;
+        html += `<div class="stat-row" style="margin-top:4px;"><span class="stat-ico">${svgIcon((!lord.hasMovedThisTurn) ? 'move' : 'exhausted', { size: 16 })}</span><b style="margin-left:0;color:${(!lord.hasMovedThisTurn) ? 'var(--good)' : 'var(--bad)'}">${lord.hasMovedThisTurn ? 'Moved' : 'Can move'}</b></div>`;
+        html += `</div>`;
         // Player lord auto-move goal status + cancel.
         if (lord.owner === PLAYER_FACTION) {
             if (lord.goal) {
-                html += `🎯 Auto-moving to [${lord.goal.x}, ${lord.goal.z}] `;
-                html += `<button id="lord-cancel-goal-btn" style="font-size:10px; padding:1px 5px;">Cancel</button><br>`;
+                html += `${svgIcon('target', { size: 13 })} Auto-moving to [${lord.goal.x}, ${lord.goal.z}] `;
+                html += `<button id="lord-cancel-goal-btn" class="btn btn-sm" style="margin-left:4px;">Cancel</button><br>`;
             } else {
                 html += `<span style="font-size:11px; color:#9ab;">Right-click a tile to set an auto-move goal.</span><br>`;
             }
@@ -579,8 +606,8 @@ export function bindUI(gameState, callbacks) {
         if (lord.isKing && lord.owner === PLAYER_FACTION && lord.active) {
             const cd = (gameState.kingCooldowns && gameState.kingCooldowns[PLAYER_FACTION]) || 0;
             const ready = cd <= 0;
-            html += `<button id="king-act-btn" style="margin-top:4px; padding:4px; width:100%;" ${ready ? '' : 'disabled'}>
-                ${ready ? `⚡ ${lord.active.name}` : `${lord.active.name} (${cd}t)`}
+            html += `<button id="king-act-btn" class="btn btn-primary btn-sm" style="margin-top:6px; width:100%;" ${ready ? '' : 'disabled'}>
+                ${ready ? `${svgIcon('charge', { size: 13 })} ${lord.active.name}` : `${lord.active.name} (${cd}t)`}
             </button>`;
             html += `<div style="font-size:10px; color:#9ab;">${lord.active.desc}</div>`;
         }
@@ -640,13 +667,17 @@ export function bindUI(gameState, callbacks) {
         const inInfluence = influence.has(`${tile.x},${tile.z}`);
         const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles);
         if (els.buildMenu) {
-            els.buildMenu.innerHTML = '<h3>Build</h3>';
-            // Hover description panel (updates as you hover building/unit buttons).
+            els.buildMenu.innerHTML = '';
             const desc = document.createElement('div');
-            desc.style.cssText = 'font-size:11px; color:#cde; background:#11141d; border:1px solid #334; padding:6px; border-radius:4px; min-height:30px; margin-bottom:6px; line-height:1.4;';
+            desc.className = 'bm-desc';
             desc.innerHTML = '<span style="color:#789;">Hover a building or unit to see its description.</span>';
             els.buildMenu.appendChild(desc);
             const setDesc = (html) => { desc.innerHTML = html || '<span style="color:#789;">Hover a building or unit to see its description.</span>'; };
+            const buildingGrid = document.createElement('div');
+            buildingGrid.className = 'bm-grid';
+            els.buildMenu.appendChild(buildingGrid);
+            const unitGrid = document.createElement('div');
+            unitGrid.className = 'bm-grid';
 
             if (!inInfluence) {
                 const note = document.createElement('div');
