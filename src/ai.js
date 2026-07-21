@@ -917,17 +917,28 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // home landmass — the AI cannot found a city, so training more settlers
     // just wastes resources. Also disband idle settlers that can't found.
     const hasFoundSpot = homeMassHasFoundSpot(tiles, owner, land, homeMass);
+    // expand-islands mode: allow extra settlers even when home landmass is full,
+    // as long as we have transports to carry them overseas.
+    const expandIslandsMode = goalKind === 'expand-islands' && hasFoundSpot === false;
+    const liveTransports = expandIslandsMode
+        ? myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length
+        : 0;
+    const expandIslandsExtras = expandIslandsMode && liveTransports > 0 ? Math.min(3, liveTransports + 1) : 0;
+    const hardCapBonusExtra = hardCapBonus + expandIslandsExtras;
     const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION * (scarcityTriggered ? 2 : settlerUrgency > 1 ? 1.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
     while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTarget + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
-        // If there's no valid found spot on our landmass, stop immediately.
-        if (!hasFoundSpot) break;
+        // If there's no valid found spot on our landmass and we have no
+        // transport-based expansion opportunity, stop immediately.
+        if (!hasFoundSpot && !expandIslandsExtras) break;
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
-        if (liveSettlers + queuedSettlers >= settlerCap) break;
-        // Hard cap: never keep more than AI_SETTLER_HARD_CAP (+scarcity bonus)
+        // Cap settlers: allow extra slots when transports are available for
+        // expand-islands — those settlers will board transports and found overseas.
+        if (liveSettlers + queuedSettlers >= settlerCap + expandIslandsExtras) break;
+        // Hard cap: never keep more than AI_SETTLER_HARD_CAP (+scarcity bonus + expand-islands extras)
         // live+queued settlers so a faction doesn't sprawl uncontrollably.
-        if (liveSettlersTotal + queuedSettlers >= AI_SETTLER_HARD_CAP + hardCapBonus) break;
+        if (liveSettlersTotal + queuedSettlers >= AI_SETTLER_HARD_CAP + hardCapBonusExtra) break;
         // A second queued settler requires a defensive floor so the army isn't
         // stripped. The floor is relaxed when resources are scarce (urgency > 1)
         // — claiming resource terrain is worth a slightly thinner garrison —

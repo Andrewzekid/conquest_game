@@ -123,7 +123,7 @@ describe('shouldAcceptPeace', () => {
     const aiState = { goals: [{ kind: 'develop-economy' }] };
     const result = shouldAcceptPeace(aiState, {}, 'golden', 'azure', 20);
     expect(result.accept).toBe(true);
-    expect(result.reason).toBe('long_war_no_objective');
+    expect(result.reason).toBe('long_war');
   });
 
   it('defense goal accepts peace after 5+ turns', () => {

@@ -162,9 +162,15 @@ export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, w
         return { accept: true, reason: 'heavy_army_losses' };
     }
 
-    // Long war with no clear objective: accept peace.
-    if (warTurns >= 15 && (!topGoal || topGoal.kind !== 'conquest')) {
-        return { accept: true, reason: 'long_war_no_objective' };
+    // Long war: accept peace after enough turns even with a conquest goal.
+    // Wars that drag on past 12 turns are costly for both sides.
+    if (warTurns >= 12) {
+        return { accept: true, reason: 'long_war' };
+    }
+
+    // Medium war with no clear objective: accept peace.
+    if (warTurns >= 8 && (!topGoal || topGoal.kind !== 'conquest')) {
+        return { accept: true, reason: 'war_weary' };
     }
 
     // Spy goal: maintain tension to gather intel, but accept peace once enough

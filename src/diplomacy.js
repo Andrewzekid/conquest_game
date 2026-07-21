@@ -302,12 +302,16 @@ export function aiDecideTreaty(personality, type, powerRatio, relationship = 0, 
         return Math.random() < (base + powerMod + relMod + relReq - trustPenalty * 1.5 + allianceSharedBonus + neighborBonus + grievancePenalty);
     }
     if (type === DIPLOMACY_STATES.PEACE) {
-        // Peace is hard to get but easier if both sides are war-weary
+        // Peace is easier when losing badly, but even in a stalemate both sides
+        // get war-weary over time. The old code penalised not-losing (-0.2),
+        // which made peace almost impossible between two equal AIs.
         const base = p.acceptPeace || 0.4;
-        // Only accept peace if we're significantly losing or the war has dragged on
-        const losingMod = powerRatio < 0.5 ? 0.3 : (powerRatio < 0.7 ? 0.1 : -0.2);
-        // Aggressive personalities almost never accept peace unless crushed
-        const aggroMod = personality === 'AGGRESSIVE' ? -0.2 : 0;
+        // Losing badly is the strongest reason to accept peace. In a stalemate
+        // (ratio 0.7-1.3) the base chance applies with no penalty. Only when
+        // we're clearly winning (ratio > 1.3) do we add a mild reluctance.
+        const losingMod = powerRatio < 0.5 ? 0.3 : (powerRatio < 0.7 ? 0.1 : (powerRatio > 1.3 ? -0.1 : 0));
+        // Aggressive personalities are less willing but not implacable
+        const aggroMod = personality === 'AGGRESSIVE' ? -0.1 : 0;
         // Economic factions are more willing to make peace
         const economicMod = personality === 'ECONOMIC' ? 0.15 : 0;
         return Math.random() < (base + losingMod + relMod + aggroMod + economicMod - trustPenalty + sharedEnemyBonus + grievancePenalty);

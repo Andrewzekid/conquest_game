@@ -58,7 +58,7 @@ export const TERRAIN = {
 export const UNIT_TYPE = {
     INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
-    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 3, besiege: true, besiegePower: 1, ranged: true, attackRange: 2 },
+    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 6, besiege: true, besiegePower: 2, ranged: true, attackRange: 3 },
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
