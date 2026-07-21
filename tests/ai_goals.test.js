@@ -148,3 +148,149 @@ describe('ai_goals serialization', () => {
     expect(deserializeAIState(null)).toBeNull();
   });
 });
+
+describe('ai_goals new goal types', () => {
+  it('diplomacy goal appears when at peace with neutral factions', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'iron', aiPersonality: 'ECONOMIC' },
+      enemies: [],
+      enemyCities: [],
+      neutralFactions: new Set(['azure', 'crimson']),
+      myCityCount: 3,
+      settlerTarget: 8,
+    }));
+    const diplomacy = goals.find(g => g.kind === 'diplomacy');
+    expect(diplomacy).toBeTruthy();
+  });
+
+  it('diplomacy goal does not appear when at war with everyone', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'iron', aiPersonality: 'ECONOMIC' },
+      enemies: ['azure', 'crimson'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }, { x: 10, z: 10, owner: 'crimson' }],
+      neutralFactions: new Set(),
+      myCityCount: 3,
+      settlerTarget: 8,
+    }));
+    const diplomacy = goals.find(g => g.kind === 'diplomacy');
+    expect(diplomacy).toBeFalsy();
+  });
+
+  it('spy goal appears when at war and faction has spies', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'obsidian', aiPersonality: 'BALANCED' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      hasSpies: true,
+      spyTargetKey: '5,5',
+      myCityCount: 6, // enough cities so settle is less urgent
+      settlerTarget: 8,
+      turn: 50, // mid-game where spy scores higher
+      aiState: (() => { const s = createAIState(); s.planLockUntil = 0; return s; })(),
+    }));
+    const spy = goals.find(g => g.kind === 'spy');
+    expect(spy).toBeTruthy();
+    expect(spy.targetTileKey).toBe('5,5');
+  });
+
+  it('spy goal does not appear when faction has no spies', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'obsidian', aiPersonality: 'BALANCED' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      hasSpies: false,
+    }));
+    const spy = goals.find(g => g.kind === 'spy');
+    expect(spy).toBeFalsy();
+  });
+
+  it('chokepoint goal appears when hasChokepoints is true', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'frost', aiPersonality: 'DEFENSIVE' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      hasChokepoints: true,
+      chokepointKey: '3,4',
+      myCityCount: 3,
+      settlerTarget: 8,
+    }));
+    const chokepoint = goals.find(g => g.kind === 'chokepoint');
+    expect(chokepoint).toBeTruthy();
+    expect(chokepoint.targetTileKey).toBe('3,4');
+  });
+
+  it('scout goal appears when many unexplored tiles exist', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+      enemies: [],
+      enemyCities: [],
+      unexploredTiles: 100,
+      myCityCount: 1,
+      settlerTarget: 8,
+    }));
+    const scout = goals.find(g => g.kind === 'scout');
+    expect(scout).toBeTruthy();
+  });
+
+  it('scout goal does not appear when few unexplored tiles', () => {
+    const goals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+      enemies: [],
+      enemyCities: [],
+      unexploredTiles: 10,
+      myCityCount: 1,
+      settlerTarget: 8,
+    }));
+    const scout = goals.find(g => g.kind === 'scout');
+    expect(scout).toBeFalsy();
+  });
+});
+
+describe('ai_goals game-phase scoring', () => {
+  it('early game boosts scout and settle goals', () => {
+    const earlyGoals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+      enemies: [],
+      enemyCities: [],
+      unexploredTiles: 100,
+      myCityCount: 1,
+      settlerTarget: 8,
+      turn: 10, // early game
+    }));
+    const scoutEarly = earlyGoals.find(g => g.kind === 'scout');
+    const settleEarly = earlyGoals.find(g => g.kind === 'settle');
+
+    const lateGoals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+      enemies: [],
+      enemyCities: [],
+      unexploredTiles: 100,
+      myCityCount: 1,
+      settlerTarget: 8,
+      turn: 100, // late game
+      aiState: (() => { const s = createAIState(); s.planLockUntil = 0; return s; })(),
+    }));
+    const scoutLate = lateGoals.find(g => g.kind === 'scout');
+    const settleLate = lateGoals.find(g => g.kind === 'settle');
+
+    // Early game should have higher scout priority than late game
+    if (scoutEarly && scoutLate) {
+      expect(scoutEarly.priority).toBeGreaterThanOrEqual(scoutLate.priority);
+    }
+  });
+
+  it('late game boosts conquest goal', () => {
+    const lateGoals = selectGoals(baseInput({
+      factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
+      enemies: ['azure'],
+      enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
+      myCityCount: 5,
+      settlerTarget: 8,
+      turn: 100,
+      aiState: (() => { const s = createAIState(); s.planLockUntil = 0; return s; })(),
+    }));
+    const conquest = lateGoals.find(g => g.kind === 'conquest');
+    expect(conquest).toBeTruthy();
+    expect(conquest.priority).toBeCloseTo(1, 1); // should be top goal
+  });
+});

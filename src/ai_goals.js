@@ -16,26 +16,41 @@
 import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT } from './config.js';
 
 // Goal kinds, in the canonical order used for display/debug.
-export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy'];
+export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
+    'diplomacy', 'spy', 'chokepoint', 'scout'];
 
 // Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
 // conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
 // is the first place `aiPersonality` actually shapes the AI's military/economic
 // posture (it previously only affected diplomacy rolls).
 const PERSONALITY_WEIGHTS = {
-    AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6 },
-    DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0 },
-    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4 },
-    BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0 },
+    AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6,
+                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7 },
+    DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8 },
+    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
+                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9 },
+    BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0 },
 };
 
 // Base scores per goal kind before personality weighting.
 const BASE_SCORE = {
     conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
+    diplomacy: 40, spy: 35, chokepoint: 45, scout: 55,
 };
 
 function manhattan(ax, az, bx, bz) {
     return Math.abs(ax - bx) + Math.abs(az - bz);
+}
+
+/** Classify the current game phase by turn number.
+ *  Early game: exploration and expansion. Mid: military buildup and wars.
+ *  Late: victory-condition push. */
+function computeGamePhase(turn) {
+    if (turn < 30) return 'early';
+    if (turn < 80) return 'mid';
+    return 'late';
 }
 
 /** A fresh per-faction AI state record. */
@@ -125,7 +140,8 @@ function ensureProgress(aiState) {
  *  becomes invalid forces a replan even inside the stability lock window.
  *  `ctx` = { enemies:Set, defensive:boolean, myCityCount, settlerTarget,
  *            scarcityTriggered, needsNavalExpansion, isIslandFaction,
- *            foreignMassWithoutCity } */
+ *            foreignMassWithoutCity, neutralFactions:Set, hasSpies:boolean,
+ *            hasChokepoints:boolean, unexploredTiles:number } */
 function goalValid(goal, ctx) {
     switch (goal.kind) {
         case 'conquest':
@@ -138,6 +154,14 @@ function goalValid(goal, ctx) {
             return ctx.needsNavalExpansion || (ctx.isIslandFaction && ctx.foreignMassWithoutCity);
         case 'develop-economy':
             return true; // always a valid fallback
+        case 'diplomacy':
+            return (ctx.neutralFactions && ctx.neutralFactions.size > 0) || ctx.enemies.size === 0;
+        case 'spy':
+            return ctx.enemies.size > 0 && ctx.hasSpies;
+        case 'chokepoint':
+            return !!ctx.hasChokepoints;
+        case 'scout':
+            return (ctx.unexploredTiles || 0) > 20;
         default:
             return false;
     }
@@ -172,6 +196,12 @@ function nearestEnemyCity(enemyCities, homeAnchor) {
  *   bestFoundSpotKey,   // string|null — cached settle target tile key
  *   foreignShoreKey,    // string|null — expand-islands target tile key
  *   bestEconTileKey,    // string|null — develop-economy target tile key
+ *   neutralFactions,    // Set — factions we're not at war with (for diplomacy goal)
+ *   hasSpies,           // boolean — does the faction have SPY units (for spy goal)
+ *   hasChokepoints,     // boolean — are there mountain passes/bridges near borders
+ *   unexploredTiles,    // number — count of tiles not yet owned by anyone (for scout goal)
+ *   spyTargetKey,       // string|null — tile key of nearest enemy city (for spy goal)
+ *   chokepointKey,      // string|null — tile key of a strategic chokepoint
  * }
  * Returns the ordered Goal[] (also written to aiState.goals when re-planned).
  */
@@ -183,6 +213,8 @@ export function selectGoals(input) {
         isIslandFaction = false, needsNavalExpansion = false, foreignMassWithoutCity = false,
         myCityCount = 0, settlerTarget = 8, scarcityTriggered = false,
         bestFoundSpotKey = null, foreignShoreKey = null, bestEconTileKey = null,
+        neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
+        unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
     } = input;
 
     const enemySet = new Set(enemies || []);
@@ -190,6 +222,7 @@ export function selectGoals(input) {
         enemies: enemySet, defensive: !!activeObjectives.defensive,
         myCityCount, settlerTarget, scarcityTriggered,
         needsNavalExpansion, isIslandFaction, foreignMassWithoutCity,
+        neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
     };
 
     // Stability: keep the existing plan if it's still locked and every goal is
@@ -252,17 +285,65 @@ export function selectGoals(input) {
         BASE_SCORE['develop-economy'] * weights['develop-economy'],
         bestEconTileKey, null, 'long', {});
 
+    // Diplomacy: pursue trade/alliance when at peace with neighbors or not at war.
+    // Higher score when there are neutral factions to trade with and we're not
+    // currently at war (so diplomacy is useful, not wasted).
+    if (neutralFactions.size > 0 || enemySet.size === 0) {
+        const diplomacyBonus = enemySet.size === 0 ? 30 : 0;
+        push('diplomacy',
+            (BASE_SCORE.diplomacy + diplomacyBonus) * weights.diplomacy,
+            null, null, 'medium', {});
+    }
+    // Spy: use espionage when at war and we have spy units.
+    if (enemySet.size > 0 && hasSpies) {
+        push('spy',
+            BASE_SCORE.spy * weights.spy,
+            spyTargetKey, null, 'medium', { spyAction: 'GATHER_INTEL' });
+    }
+    // Chokepoint: control strategic passes/bridges when they exist near borders.
+    if (hasChokepoints) {
+        push('chokepoint',
+            BASE_SCORE.chokepoint * weights.chokepoint,
+            chokepointKey, null, 'medium', {});
+    }
+    // Scout: explore unexplored regions, especially in early game.
+    if (unexploredTiles > 20) {
+        push('scout',
+            BASE_SCORE.scout * weights.scout,
+            null, null, 'long', {});
+    }
+
     // Victory-target modifiers: weight goals based on the chosen victory type.
     const vt = (aiState && aiState.victoryTarget) || 'domination';
     const vtModifiers = {
-        domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7 },
-        science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3 },
-        economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5 },
-        score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1 }
+        domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
+                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7 },
+        science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
+                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0 },
+        economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
+                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9 },
+        score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
+                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0 }
     };
     const vtMod = vtModifiers[vt] || vtModifiers.domination;
     for (const c of candidates) {
         c._score *= (vtMod[c.kind] || 1.0);
+    }
+
+    // Game-phase modifiers: early game favors scouting and expansion, mid-game
+    // favors military buildup and conquest, late game pushes victory conditions.
+    const phase = computeGamePhase(turn);
+    const phaseMod = {
+        early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
+                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5 },
+        mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7 },
+        late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
+                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4 },
+    };
+    const pm = phaseMod[phase] || phaseMod.mid;
+    for (const c of candidates) {
+        c._score *= (pm[c.kind] || 1.0);
     }
 
     // Sort by weighted score desc, keep the top 3.

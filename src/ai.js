@@ -255,6 +255,51 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         threatenedOwnCity = best;
     }
     const cachedFoundSpot = aiState && aiState.progress && aiState.progress.settle && aiState.progress.settle.lastTileKey;
+
+    // Compute new context fields for the expanded goal system.
+    // Neutral factions: factions we're not at war with (for diplomacy goal).
+    const neutralFactions = new Set();
+    for (const [key, rel] of Object.entries(diploState?.relations || {})) {
+        if (rel.state === DIPLOMACY_STATES.NEUTRAL || rel.state === DIPLOMACY_STATES.TRADE_PACT) {
+            const [a, b] = key.split(':');
+            if (a === owner) neutralFactions.add(b);
+            else if (b === owner) neutralFactions.add(a);
+        }
+    }
+    // Spy presence: does the faction have any SPY units.
+    const hasSpies = myUnits.some(u => u.type === 'SPY');
+    // Chokepoints: check for PASS terrain or river bridges near owned territory.
+    let hasChokepoints = false;
+    let chokepointKey = null;
+    for (const t of tiles.values()) {
+        if (t.terrain === 'PASS' || (t.terrain === 'RIVER' && t.bridge)) {
+            // Near owned territory (within 6 tiles of an owned tile).
+            for (const o of owned) {
+                if (manhattan(t.x, t.z, o.x, o.z) <= 6) {
+                    hasChokepoints = true;
+                    chokepointKey = `${t.x},${t.z}`;
+                    break;
+                }
+            }
+            if (hasChokepoints) break;
+        }
+    }
+    // Unexplored tiles: tiles not owned by anyone (likely unexplored frontier).
+    let unexploredTiles = 0;
+    for (const t of tiles.values()) {
+        if (!t.owner && t.terrain !== 'WATER' && t.terrain !== 'MOUNTAIN') unexploredTiles++;
+    }
+    // Spy target: nearest enemy city tile key (for spy goal).
+    let spyTargetKey = null;
+    if (enemyCitiesArr.length > 0 && homeAnchor) {
+        let best = null, bestD = Infinity;
+        for (const c of enemyCitiesArr) {
+            const d = manhattan(homeAnchor.x, homeAnchor.z, c.x, c.z);
+            if (d < bestD) { bestD = d; best = c; }
+        }
+        if (best) spyTargetKey = `${best.x},${best.z}`;
+    }
+
     const goals = selectGoals({
         aiState, turn: aiState ? aiState.lastPlanTurn : 0, factionDef,
         enemies, enemyCities: enemyCitiesArr, ownCities: ownCitiesArr, homeAnchor,
@@ -263,6 +308,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         myCityCount, settlerTarget, scarcityTriggered,
         bestFoundSpotKey: cachedFoundSpot || null,
         foreignShoreKey: null, bestEconTileKey: null,
+        neutralFactions, hasSpies, hasChokepoints,
+        unexploredTiles, spyTargetKey, chokepointKey,
     });
     if (aiState) aiState.goals = goals;
     const topGoal = goals[0] || null;
@@ -1224,6 +1271,47 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
             }
             // Priority 3: If no exploration targets, fall through to army group
+        }
+
+        // a3b) Spies. When a spy goal is active, move toward the target enemy
+        //      city and execute the designated spy action when adjacent.
+        if (unit.type === 'SPY' && !acted.has(unit.id) && goalKind === 'spy' && topGoal) {
+            const spyAction = (topGoal.params && topGoal.params.spyAction) || 'GATHER_INTEL';
+            const targetFaction = topGoal.targetFaction;
+            // Parse spyTargetKey to get target coordinates.
+            let tx, tz;
+            if (topGoal.targetKey) {
+                const parts = String(topGoal.targetKey).split(',');
+                tx = parseInt(parts[0], 10);
+                tz = parseInt(parts[1], 10);
+            }
+            if (tx !== undefined && !isNaN(tx) && targetFaction) {
+                const dist = Math.abs(unit.x - tx) + Math.abs(unit.z - tz);
+                // If adjacent (dist <= 1), execute the spy action.
+                if (dist <= 1 && (res.gold || 0) >= 25) {
+                    actions.push({
+                        type: 'spyAction', unitId: unit.id,
+                        action: spyAction, targetFaction,
+                        targetTileKey: topGoal.targetKey
+                    });
+                    acted.add(unit.id);
+                    continue;
+                }
+                // Otherwise move toward the target city.
+                if (!unit.hasMovedThisTurn) {
+                    const target = { x: tx, z: tz };
+                    const step = stepToward(unit, target, tiles, owner, units, moved, isAtWar);
+                    if (step && (step.x !== unit.x || step.z !== unit.z)) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
+            }
+            // Spy has no path or can't afford action — mark as acted to skip army grouping.
+            acted.add(unit.id);
+            continue;
         }
 
         // a4) Ships. Transports ferry waiting settlers to settleable land on
@@ -2964,6 +3052,29 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         }
     }
 
+    // 1b) Retreat coordination: after the main retreat pass, check if any
+    //     non-retreating units are now isolated (locally outnumbered with no
+    //     nearby allies). These units should also fall back to avoid being
+    //     picked off individually after their support retreated.
+    if (atWar && stance !== 'retreat') {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+            if (isFragile(u) || (u.hp || 0) < (u.maxHp || 1) * 0.5) continue;
+            const bal = localPowerBalance(units, u.x, u.z, owner, atWar, isAtWar, 3);
+            // Isolated: we have no nearby friends and enemies are close.
+            if (bal.friend <= 0 && bal.foe >= 2) {
+                const goal = nearestFriendlyCity(u, tiles, owner);
+                if (!goal) continue;
+                const step = nextStepToward(tiles, units, u, goal, 200, owner);
+                if (step && !moved.has(`${step.x},${step.z}`)) {
+                    out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                    acted.add(u.id);
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+        }
+    }
+
     // 2) Cavalry charge: opening strike for adjacent cavalry before any other action.
     if (atWar) {
         for (const u of members) {
@@ -3250,6 +3361,20 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                     const eTile = tiles.get(`${e.x},${e.z}`);
                     if (eTile && eTile.terrain === 'CITY') score += 6;
                 }
+                // === ROLE-BASED TARGET PRIORITY ===
+                // When raiding (no active siege/defense), prioritize killing
+                // economy units to cripple the enemy's production.
+                if (!activeObjectives?.siege && !activeObjectives?.defensive) {
+                    if (e.type === 'SETTLER') score += 50;
+                    else if (e.type === 'WORKER') score += 30;
+                    else if (e.type === 'ENGINEER') score += 15;
+                }
+                // When defending, prioritize killing siege engines that threaten
+                // our cities.
+                if (activeObjectives?.defensive) {
+                    if (SIEGE_TYPES.has(e.type)) score += 25;
+                    else if (e.type === 'SIEGE_TOWER') score += 20;
+                }
                 if (score > bestScore) { bestScore = score; best = e; }
             }
             if (best) {
@@ -3396,6 +3521,8 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     //    ambush); the conceal timeout in _tickConcealment eventually releases
     //    them (sets concealState=null + a cooldown) so a stalemate where both
     //    sides hide forever can't persist.
+    //    Terrain exploitation: units bias toward defensive terrain (hills/forest)
+    //    when advancing, provided it doesn't add >1 extra move to the objective.
     const advance = (u) => {
         if (acted.has(u.id) || u.hasMovedThisTurn) return;
         if (u.concealState === 'concealing' || u.concealState === 'concealed') return;
@@ -3406,6 +3533,17 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         if (isFragile(u) && !hasScreen(u, units, owner)) return; // hold behind the screen
         const step = stepToward(u, objective, tiles, owner, units, moved, isAtWar);
         if (step && !moved.has(`${step.x},${step.z}`)) {
+            // Terrain bias: prefer defensive terrain if it doesn't slow us down.
+            const directDist = manhattan(step.x, step.z, objective.x, objective.z);
+            const currentDist = manhattan(u.x, u.z, objective.x, objective.z);
+            const tile = tiles.get(`${step.x},${step.z}`);
+            const terrainDef = tile ? (tile.defense || 0) : 0;
+            // If the step has terrain bonus and is still closer or same distance,
+            // it's a free defensive position. If it's 1 tile farther but has
+            // defense >= 2, the defensive value is worth the detour.
+            if (terrainDef >= 2 && directDist > currentDist && directDist > currentDist + 1) {
+                return; // too far a detour, skip this step
+            }
             out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
             acted.add(u.id);
             moved.add(`${step.x},${step.z}`);
