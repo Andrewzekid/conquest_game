@@ -4,178 +4,251 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Project Conquest</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
-        #ui-top {
-            position: absolute;
-            top: 0; left: 0; right: 0; height: 60px;
-            background: rgba(0,0,0,0.85);
-            color: white;
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0 20px;
-            border-bottom: 2px solid #444;
-            z-index: 10;
+        :root {
+            --bg: #0e1320;
+            --panel: #161d2e;
+            --panel-2: #1c2540;
+            --panel-3: #232e4d;
+            --border: #2c3656;
+            --border-soft: #232c46;
+            --gold: #e8c468;
+            --gold-deep: #b8923a;
+            --blue: #5b8def;
+            --text: #e6ebf5;
+            --muted: #93a0b8;
+            --good: #6fbf73;
+            --bad: #e0645a;
+            --shadow: 0 8px 28px rgba(0,0,0,0.45);
+            --radius: 10px;
+            --title-font: 'Cinzel', 'Segoe UI', serif;
+            --ui-font: 'Rajdhani', 'Segoe UI', Tahoma, sans-serif;
         }
-        .resource-bar { display: flex; gap: 20px; flex-wrap: wrap; }
-        .resource { font-weight: bold; font-size: 18px; display: flex; align-items: center; gap: 8px; position: relative; cursor: help; }
-        .res-gold { color: #ffd700; }
-        .res-food { color: #7cfc00; }
-        .res-wood { color: #228b22; }
-        .res-iron { color: #aaa; }
-        .res-prod { color: #4488ff; }
-        /* Resource tooltip on hover */
+        * { box-sizing: border-box; }
+        body { margin: 0; overflow: hidden; background-color: var(--bg); font-family: var(--ui-font); user-select: none; color: var(--text); }
+        canvas { display: block; }
+
+        /* ---------- Top bar ---------- */
+        #ui-top {
+            position: absolute; top: 0; left: 0; right: 0; height: 58px;
+            background: linear-gradient(180deg, #1a2336 0%, #121829 100%);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 18px; border-bottom: 1px solid var(--border);
+            box-shadow: 0 2px 14px rgba(0,0,0,0.5); z-index: 20;
+        }
+        .resource-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .resource {
+            display: flex; align-items: center; gap: 7px; position: relative; cursor: help;
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border-soft);
+            padding: 5px 11px; border-radius: 999px; font-weight: 600; font-size: 15px;
+            letter-spacing: 0.3px; transition: background 0.15s, border-color 0.15s;
+        }
+        .resource:hover { background: rgba(255,255,255,0.07); border-color: var(--border); }
+        .resource .res-ico { display: inline-flex; }
+        .res-gold { color: var(--gold); }
+        .res-food { color: var(--good); }
+        .res-wood { color: #c98b4b; }
+        .res-iron { color: #c2cad6; }
+        .res-prod { color: var(--blue); }
+        .resource.plain { color: var(--text); background: none; border: none; padding: 5px 6px; cursor: default; }
+        .resource.plain.phase { color: var(--gold); }
+
+        /* Resource tooltip */
         .resource-tooltip {
-            display: none;
-            position: absolute;
-            top: 100%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(20, 25, 35, 0.95);
-            border: 1px solid #555;
-            border-radius: 6px;
-            padding: 10px 14px;
-            font-size: 12px;
-            font-weight: normal;
-            color: #ddd;
-            white-space: nowrap;
-            z-index: 100;
-            margin-top: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            display: none; position: absolute; top: calc(100% + 10px); left: 50%;
+            transform: translateX(-50%); min-width: 200px;
+            background: linear-gradient(180deg, #1b2336, #141b2b);
+            border: 1px solid var(--border); border-radius: 8px; padding: 11px 14px;
+            font-size: 13px; font-weight: 500; color: var(--text);
+            white-space: nowrap; z-index: 100; box-shadow: var(--shadow);
         }
         .resource-tooltip::before {
-            content: '';
-            position: absolute;
-            top: -6px;
-            left: 50%;
-            transform: translateX(-50%);
-            border-left: 6px solid transparent;
-            border-right: 6px solid transparent;
-            border-bottom: 6px solid #555;
+            content: ''; position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
+            border-left: 7px solid transparent; border-right: 7px solid transparent; border-bottom: 7px solid var(--border);
         }
         .resource:hover .resource-tooltip { display: block; }
-        .tooltip-line { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-        .tooltip-label { color: #999; }
-        .tooltip-value { color: #fff; font-weight: bold; }
-        .tooltip-positive { color: #7cfc00; }
-        .tooltip-negative { color: #ff6666; }
-        .tooltip-divider { border-top: 1px solid #444; margin: 4px 0; }
+        .tooltip-line { display: flex; justify-content: space-between; gap: 18px; padding: 3px 0; }
+        .tooltip-label { color: var(--muted); }
+        .tooltip-value { color: var(--text); font-weight: 700; }
+        .tooltip-positive { color: var(--good); }
+        .tooltip-negative { color: var(--bad); }
+        .tooltip-divider { border-top: 1px solid var(--border-soft); margin: 5px 0; }
 
-        #btn-end-turn {
-            background: #b22222; color: white; border: none;
-            padding: 10px 20px; font-size: 16px; font-weight: bold;
-            cursor: pointer; border-radius: 4px; transition: background 0.2s;
+        /* ---------- Buttons ---------- */
+        .btn {
+            font-family: var(--ui-font); font-weight: 700; font-size: 15px; letter-spacing: 0.4px;
+            border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+            padding: 9px 18px; color: var(--text); background: linear-gradient(180deg, #28324f, #1d2640);
+            transition: transform 0.08s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+            display: inline-flex; align-items: center; gap: 8px;
         }
-        #btn-end-turn:hover { background: #ff4500; }
-        #btn-end-turn:active { transform: translateY(2px); }
+        .btn:hover { background: linear-gradient(180deg, #2f3b5d, #232e4d); border-color: #3a466e; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
+        .btn:active { transform: translateY(2px); }
+        .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+        .btn-primary {
+            color: #1a1206; border: none;
+            background: linear-gradient(180deg, #f2d27e 0%, var(--gold) 55%, var(--gold-deep) 100%);
+            box-shadow: 0 3px 0 var(--gold-deep), 0 6px 16px rgba(232,196,104,0.25);
+        }
+        .btn-primary:hover { background: linear-gradient(180deg, #ffe39a 0%, #f0cd74 55%, #c79a3f 100%); }
+        .btn-primary:active { box-shadow: 0 1px 0 var(--gold-deep); }
+        .btn-ghost { background: transparent; }
+        .btn-icon { padding: 8px 10px; }
+        .btn-sm { font-size: 13px; padding: 6px 12px; }
 
+        #btn-end-turn { font-size: 16px; }
+
+        /* ---------- Bottom-left intel panel ---------- */
         #ui-bottom {
-            position: absolute; bottom: 20px; left: 20px;
-            color: white; background: rgba(0,0,0,0.7);
-            padding: 15px; border-radius: 8px; pointer-events: none;
-            border-left: 4px solid #ffd700; max-width: 320px;
+            position: absolute; bottom: 20px; left: 20px; width: 320px;
+            background: linear-gradient(180deg, rgba(22,29,46,0.96), rgba(17,23,38,0.96));
+            border: 1px solid var(--border); border-left: 3px solid var(--gold);
+            border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
+            pointer-events: none;
         }
-        #ui-bottom h2 { margin: 0 0 10px 0; font-size: 18px; }
-        #unit-info { margin-top: 8px; font-size: 13px; color: #9cf; pointer-events: auto; }
-    #unit-info button { pointer-events: auto; cursor: pointer; }
+        #ui-bottom h2 {
+            margin: 0 0 10px 0; font-size: 16px; font-family: var(--title-font);
+            color: var(--gold); letter-spacing: 1px; text-transform: uppercase;
+        }
+        #ui-bottom #info { font-size: 14px; line-height: 1.5; color: var(--text); }
+        #ui-bottom #ownership { margin-top: 6px; font-style: italic; color: var(--muted); font-size: 13px; }
+        #unit-info { margin-top: 8px; font-size: 13px; pointer-events: auto; }
 
+        /* ---------- Side panels ---------- */
         .side-panel {
-            position: absolute; top: 70px; width: 220px;
-            color: white; background: rgba(0,0,0,0.75);
-            padding: 0; border-radius: 8px; z-index: 10;
-            max-height: 80vh; display: flex; flex-direction: column;
-            transition: opacity 0.15s;
+            position: absolute; top: 70px; width: 250px;
+            background: linear-gradient(180deg, rgba(24,31,50,0.97), rgba(18,24,39,0.97));
+            border: 1px solid var(--border); border-radius: var(--radius); z-index: 15;
+            max-height: 82vh; display: flex; flex-direction: column; overflow: hidden;
+            box-shadow: var(--shadow);
         }
-        .side-panel.minimized .panel-body { display: none; }
         .side-panel.minimized { max-height: none; }
+        .side-panel.minimized .panel-body { display: none; }
         .panel-drag-handle {
-            cursor: grab; padding: 6px 10px; font-weight: bold; font-size: 13px;
-            border-bottom: 1px solid #444; user-select: none; flex: 0 0 auto;
-            display: flex; align-items: center; justify-content: space-between;
+            cursor: grab; padding: 9px 12px; font-weight: 700; font-size: 13px; letter-spacing: 1px;
+            text-transform: uppercase; color: var(--text);
+            background: linear-gradient(180deg, #222c47, #1a2238);
+            border-bottom: 1px solid var(--border); display: flex; align-items: center;
+            justify-content: space-between; user-select: none;
         }
         .panel-drag-handle:active { cursor: grabbing; }
         .panel-minimize {
-            cursor: pointer; background: none; border: none; color: #aaa;
-            font-size: 16px; padding: 0 4px; line-height: 1;
+            cursor: pointer; background: none; border: none; color: var(--muted);
+            font-size: 18px; line-height: 1; padding: 0 4px; transition: color 0.15s;
         }
-        .panel-minimize:hover { color: #fff; }
-        .panel-body { padding: 10px; overflow-y: auto; }
-        #build-menu { right: 20px; border-left: 4px solid #4488ff; }
-        #diplomacy-panel { right: 250px; border-left: 4px solid #ffaa00; }
-        #lord-panel { right: 480px; border-left: 4px solid #ffd700; }
+        .panel-minimize:hover { color: var(--text); }
+        .panel-body { padding: 12px; overflow-y: auto; }
+        #build-menu { right: 20px; border-top: 3px solid var(--blue); }
+        #diplomacy-panel { right: 280px; border-top: 3px solid var(--gold); }
+        #lord-panel { right: 540px; border-top: 3px solid var(--gold); }
+
+        /* Scrollbars */
+        .panel-body::-webkit-scrollbar, #combat-log::-webkit-scrollbar { width: 9px; }
+        .panel-body::-webkit-scrollbar-thumb, #combat-log::-webkit-scrollbar-thumb {
+            background: #2f3a5c; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box;
+        }
+        .panel-body::-webkit-scrollbar-track, #combat-log::-webkit-scrollbar-track { background: transparent; }
+
+        /* ---------- Combat log ---------- */
         #combat-log {
-            position: absolute; bottom: 20px; right: 20px;
-            width: 280px; max-height: 200px; overflow-y: auto;
-            color: white; background: rgba(0,0,0,0.75);
-            padding: 12px; border-radius: 8px; z-index: 10;
-            border-left: 4px solid #888; font-size: 12px;
+            position: absolute; bottom: 20px; right: 20px; width: 300px; max-height: 220px;
+            overflow-y: auto; background: linear-gradient(180deg, rgba(22,29,46,0.96), rgba(17,23,38,0.96));
+            border: 1px solid var(--border); border-left: 3px solid var(--muted);
+            border-radius: var(--radius); padding: 12px 14px; font-size: 13px; box-shadow: var(--shadow);
         }
-        #combat-log .log-combat { border-left: 3px solid #ff4444; padding-left: 6px; margin: 2px 0; }
-        #combat-log .log-diplomacy { border-left: 3px solid #ffaa00; padding-left: 6px; margin: 2px 0; }
-        #combat-log .log-economy { border-left: 3px solid #7cfc00; padding-left: 6px; margin: 2px 0; }
-        #combat-log .log-production { border-left: 3px solid #4488ff; padding-left: 6px; margin: 2px 0; }
-        #combat-log .log-default { border-left: 3px solid #666; padding-left: 6px; margin: 2px 0; }
-        .side-panel h3 { margin: 4px 0; font-size: 14px; }
-        canvas { display: block; }
-        #game-over {
-            display: none;
-            position: fixed; inset: 0;
-            align-items: center; justify-content: center;
-            flex-direction: column; gap: 16px;
-            color: white; font-size: 28px; font-weight: bold;
-            text-align: center; z-index: 100;
-        }
-        #game-over button {
-            font-size: 16px; padding: 10px 24px; cursor: pointer;
-            border: none; border-radius: 6px; background: #fff; color: #111;
-        }
+        #combat-log .log-combat { border-left: 3px solid var(--bad); padding-left: 8px; margin: 3px 0; color: #ffd9d4; }
+        #combat-log .log-diplomacy { border-left: 3px solid var(--gold); padding-left: 8px; margin: 3px 0; color: #fbeec4; }
+        #combat-log .log-economy { border-left: 3px solid var(--good); padding-left: 8px; margin: 3px 0; color: #d6f4d8; }
+        #combat-log .log-production { border-left: 3px solid var(--blue); padding-left: 8px; margin: 3px 0; color: #d6e4ff; }
+        #combat-log .log-default { border-left: 3px solid #5a6480; padding-left: 8px; margin: 3px 0; color: var(--muted); }
 
-        /* --- Overlays: start menu + pause menu --- */
+        /* ---------- Build menu items ---------- */
+        .bm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .bm-item {
+            display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-align: left;
+            background: linear-gradient(180deg, #1e2742, #18203a); border: 1px solid var(--border-soft);
+            border-radius: 8px; padding: 9px 10px; cursor: pointer; color: var(--text);
+            font-family: var(--ui-font); font-weight: 600; font-size: 13px; transition: border-color 0.15s, background 0.15s, transform 0.08s;
+        }
+        .bm-item:hover { border-color: var(--blue); background: linear-gradient(180deg, #25315a, #1c2748); }
+        .bm-item:active { transform: translateY(1px); }
+        .bm-item.disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.4); }
+        .bm-item.disabled:hover { border-color: var(--border-soft); background: linear-gradient(180deg, #1e2742, #18203a); transform: none; }
+        .bm-item .bm-ico { display: inline-flex; }
+        .bm-item .bm-name { font-size: 13px; }
+        .bm-item .bm-cost { font-size: 11px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+        .bm-item .bm-cost .ok { color: var(--good); }
+        .bm-item .bm-cost .no { color: var(--bad); }
+        .bm-head { font-family: var(--title-font); font-size: 13px; color: var(--gold); letter-spacing: 1px; text-transform: uppercase; margin: 4px 0 8px; }
+        .bm-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+
+        /* ---------- Unit / Lord info cards ---------- */
+        .stat-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
+        .stat-row .stat-ico { display: inline-flex; width: 20px; justify-content: center; color: var(--muted); }
+        .stat-row b { color: var(--text); margin-left: auto; font-weight: 700; }
+        .info-card {
+            background: linear-gradient(180deg, #1b2338, #161d2e);
+            border: 1px solid var(--border-soft); border-radius: 8px; padding: 9px 11px; margin-top: 8px;
+        }
+        .info-card h4 { margin: 0 0 6px; font-family: var(--title-font); font-size: 14px; color: var(--gold); letter-spacing: 0.5px; }
+        /* Dynamically-created unit action buttons (conceal/charge/build/etc.) */
+        #unit-info button {
+            font-family: var(--ui-font); font-weight: 600; font-size: 12px;
+            background: linear-gradient(180deg, #28324f, #1d2640); color: var(--text);
+            border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, transform 0.08s;
+        }
+        #unit-info button:hover { background: linear-gradient(180deg, #2f3b5d, #232e4d); border-color: #3a466e; }
+        #unit-info button:active { transform: translateY(1px); }
+
+        /* ---------- Overlays ---------- */
         .overlay {
-            display: none;
-            position: fixed; inset: 0; z-index: 200;
-            background: rgba(8,10,18,0.94);
-            color: #fff; font-family: inherit;
-            align-items: center; justify-content: center; flex-direction: column;
-            gap: 18px; padding: 30px; overflow-y: auto;
+            display: none; position: fixed; inset: 0; z-index: 200;
+            background: radial-gradient(circle at 50% 30%, rgba(30,40,66,0.96), rgba(8,11,20,0.98));
+            color: var(--text); align-items: center; justify-content: center; flex-direction: column;
+            gap: 20px; padding: 36px; overflow-y: auto;
         }
-        .overlay h1 { margin: 0; font-size: 34px; letter-spacing: 2px; color: #ffd700; }
-        .overlay h2 { margin: 0; font-size: 18px; color: #9ab; font-weight: normal; }
-        .overlay .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; justify-content: center; }
-        .overlay button.big {
-            font-size: 18px; padding: 12px 30px; cursor: pointer;
-            border: none; border-radius: 6px; background: #b22222; color: #fff;
-            font-weight: bold;
+        .overlay h1 { margin: 0; font-size: 46px; letter-spacing: 4px; font-family: var(--title-font); color: var(--gold); text-shadow: 0 3px 14px rgba(232,196,104,0.3); }
+        .overlay h2 { margin: 0; font-size: 18px; color: var(--muted); font-weight: 600; letter-spacing: 1px; }
+        .overlay .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; justify-content: center; }
+        .overlay select {
+            font-family: var(--ui-font); font-size: 15px; padding: 8px 12px; background: var(--panel-2);
+            color: var(--text); border: 1px solid var(--border); border-radius: 8px;
         }
-        .overlay button.big:hover { background: #ff4500; }
-        .overlay button.sec {
-            font-size: 14px; padding: 8px 16px; cursor: pointer;
-            border: 1px solid #555; border-radius: 6px; background: #2a2f3a; color: #ddd;
-        }
-        .overlay select { font-size: 15px; padding: 6px 10px; background: #1c2230; color: #fff; border: 1px solid #444; border-radius: 4px; }
-        #start-factions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 1100px; }
+        .overlay label { font-size: 15px; color: var(--muted); }
+        #start-factions { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 1120px; }
         .faction-card {
-            width: 200px; padding: 12px; border-radius: 8px; cursor: pointer;
-            background: #161a26; border: 2px solid #333; transition: border-color 0.15s, transform 0.1s;
+            width: 196px; padding: 14px; border-radius: 12px; cursor: pointer;
+            background: linear-gradient(180deg, #18203a, #131a2c); border: 2px solid var(--border-soft);
+            transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
         }
-        .faction-card:hover { transform: translateY(-3px); }
-        .faction-card.selected { border-color: #ffd700; box-shadow: 0 0 14px rgba(255,215,0,0.4); }
-        .fc-emoji { font-size: 30px; }
-        .fc-name { font-size: 16px; font-weight: bold; margin: 4px 0 6px; }
-        .fc-line { font-size: 11px; color: #bcd; line-height: 1.4; }
-        .fc-line b { color: #ffd700; }
-        #pause-menu { background: rgba(8,10,18,0.88); }
+        .faction-card:hover { transform: translateY(-4px); box-shadow: var(--shadow); }
+        .faction-card.selected { border-color: var(--gold); box-shadow: 0 0 18px rgba(232,196,104,0.35); }
+        .fc-emoji { display: flex; justify-content: center; margin-bottom: 6px; }
+        .fc-name { font-size: 17px; font-weight: 700; font-family: var(--title-font); margin: 4px 0 8px; letter-spacing: 0.5px; }
+        .fc-line { font-size: 12px; color: var(--muted); line-height: 1.5; }
+        .fc-line b { color: var(--gold); }
+        #pause-menu { background: rgba(8,11,20,0.9); }
 
-        #btn-mute {
-            background: #2a2f3a; color: #ddd; border: 1px solid #555;
-            padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 14px;
+        /* ---------- Game over ---------- */
+        #game-over {
+            display: none; position: fixed; inset: 0; align-items: center; justify-content: center;
+            flex-direction: column; gap: 18px; color: var(--text); font-size: 30px; font-weight: 700;
+            text-align: center; z-index: 250; background: rgba(8,11,20,0.85);
+            font-family: var(--title-font);
         }
-        #btn-mute:hover { background: #3a4150; }
+        #game-over button { font-family: var(--ui-font); }
+
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
     <div id="ui-top">
         <div class="resource-bar">
-            <div class="resource res-gold">💰 Gold: <span id="res-gold">100</span>
+            <div class="resource res-gold"><span class="res-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" fill="#e8c468" stroke="#b8923a" stroke-width="1.5"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="#b8923a" stroke-width="1.2"/></svg></span> Gold: <span id="res-gold">100</span>
                 <div class="resource-tooltip" id="tooltip-gold">
                     <div class="tooltip-line"><span class="tooltip-label">Cities:</span><span class="tooltip-value" id="gold-cities">+0</span></div>
                     <div class="tooltip-line"><span class="tooltip-label">Markets:</span><span class="tooltip-value" id="gold-markets">+0</span></div>
@@ -186,7 +259,7 @@
                     <div class="tooltip-line"><span class="tooltip-label">Net/turn:</span><span class="tooltip-value" id="gold-net">+0</span></div>
                 </div>
             </div>
-            <div class="resource res-food">🌾 Food: <span id="res-food">100</span>
+            <div class="resource res-food"><span class="res-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3 C7 3 5 7 5 11 c0 4 3 5 7 5 s7 -1 7 -5 c0 -4 -2 -8 -7 -8 Z" fill="#6fbf73"/><path d="M12 19 v3 M9 21 h6" stroke="#6e4a25" stroke-width="1.5" stroke-linecap="round"/></svg></span> Food: <span id="res-food">100</span>
                 <div class="resource-tooltip" id="tooltip-food">
                     <div class="tooltip-line"><span class="tooltip-label">Farms:</span><span class="tooltip-value" id="food-farms">+0</span></div>
                     <div class="tooltip-line"><span class="tooltip-label">Cities:</span><span class="tooltip-value" id="food-cities">+0</span></div>
@@ -197,7 +270,7 @@
                     <div class="tooltip-line"><span class="tooltip-label">Net/turn:</span><span class="tooltip-value" id="food-net">+0</span></div>
                 </div>
             </div>
-            <div class="resource res-wood">🪵 Wood: <span id="res-wood">0</span>
+            <div class="resource res-wood"><span class="res-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="5" y="9" width="14" height="3" rx="1.2" fill="#a9743b" stroke="#6e4a25" stroke-width="0.8"/><rect x="5" y="13" width="14" height="3" rx="1.2" fill="#a9743b" stroke="#6e4a25" stroke-width="0.8"/></svg></span> Wood: <span id="res-wood">0</span>
                 <div class="resource-tooltip" id="tooltip-wood">
                     <div class="tooltip-line"><span class="tooltip-label">Lumbermills:</span><span class="tooltip-value" id="wood-mills">+0</span></div>
                     <div class="tooltip-line"><span class="tooltip-label">Cities:</span><span class="tooltip-value" id="wood-cities">+0</span></div>
@@ -208,7 +281,7 @@
                     <div class="tooltip-line"><span class="tooltip-label">Net/turn:</span><span class="tooltip-value" id="wood-net">+0</span></div>
                 </div>
             </div>
-            <div class="resource res-iron">⛓️ Iron: <span id="res-iron">0</span>
+            <div class="resource res-iron"><span class="res-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 8 h12 l-2 11 H8 Z" fill="#9aa3b0" stroke="#6b7480" stroke-width="1.2"/><path d="M5 8 h14" stroke="#6b7480" stroke-width="1.5" stroke-linecap="round"/></svg></span> Iron: <span id="res-iron">0</span>
                 <div class="resource-tooltip" id="tooltip-iron">
                     <div class="tooltip-line"><span class="tooltip-label">Mines:</span><span class="tooltip-value" id="iron-mines">+0</span></div>
                     <div class="tooltip-line"><span class="tooltip-label">Mountains:</span><span class="tooltip-value" id="iron-mountains">+0</span></div>
@@ -219,7 +292,7 @@
                     <div class="tooltip-line"><span class="tooltip-label">Net/turn:</span><span class="tooltip-value" id="iron-net">+0</span></div>
                 </div>
             </div>
-            <div class="resource res-prod">⚙️ Prod: <span id="res-production">0</span>
+            <div class="resource res-prod"><span class="res-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3 a9 9 0 1 1 -8.5 6.2" fill="none" stroke="#5b8def" stroke-width="2.4" stroke-linecap="round"/><path d="M12 3 v6 l4 2.5" fill="none" stroke="#5b8def" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span> Prod: <span id="res-production">0</span>
                 <div class="resource-tooltip" id="tooltip-prod">
                     <div class="tooltip-line"><span class="tooltip-label">Cities:</span><span class="tooltip-value" id="prod-cities">+0</span></div>
                     <div class="tooltip-line"><span class="tooltip-label">Barracks:</span><span class="tooltip-value" id="prod-barracks">+0</span></div>
@@ -228,18 +301,18 @@
                     <div class="tooltip-line"><span class="tooltip-label">Net/turn:</span><span class="tooltip-value" id="prod-net">+0</span></div>
                 </div>
             </div>
-            <div class="resource" style="color: #fff; margin-left: 20px;">Turn: <span id="turn-count">1</span></div>
-            <div class="resource" style="color: #ffaa00;">Phase: <span id="phase-indicator">PLAYER</span></div>
+            <div class="resource plain">Turn: <span id="turn-count">1</span></div>
+            <div class="resource plain phase">Phase: <span id="phase-indicator">PLAYER</span></div>
         </div>
-        <button id="btn-end-turn">End Turn</button>
+        <button id="btn-end-turn" class="btn btn-primary">End Turn</button>
         <div id="spectate-controls" style="display:none; gap:8px; align-items:center;">
-            <button id="btn-ff-1" class="sec" style="padding:4px 8px; font-size:12px;">FF 1</button>
-            <button id="btn-ff-5" class="sec" style="padding:4px 8px; font-size:12px;">FF 5</button>
-            <button id="btn-ff-10" class="sec" style="padding:4px 8px; font-size:12px;">FF 10</button>
-            <button id="btn-ff-auto" class="sec" style="padding:4px 8px; font-size:12px;">⏩ Auto</button>
-            <span id="ff-status" style="font-size:11px; color:#aaa;"></span>
+            <button id="btn-ff-1" class="btn btn-ghost btn-sm">FF 1</button>
+            <button id="btn-ff-5" class="btn btn-ghost btn-sm">FF 5</button>
+            <button id="btn-ff-10" class="btn btn-ghost btn-sm">FF 10</button>
+            <button id="btn-ff-auto" class="btn btn-ghost btn-sm">Auto</button>
+            <span id="ff-status" style="font-size:12px; color:var(--muted);"></span>
         </div>
-        <button id="btn-mute" title="Toggle sound">🔊</button>
+        <button id="btn-mute" class="btn btn-icon" title="Toggle sound"></button>
     </div>
 
     <!-- Start menu overlay -->
@@ -248,7 +321,7 @@
         <h2>Choose your faction and battlefield</h2>
         <div id="start-factions"></div>
         <div class="row">
-            <label style="font-size:14px; color:#9ab;">Map size:</label>
+            <label style="color:var(--muted);">Map size:</label>
             <select id="start-size">
                 <option value="tiny">Tiny (~400 tiles)</option>
                 <option value="small">Small (~800 tiles)</option>
@@ -259,55 +332,55 @@
             </select>
         </div>
         <div class="row">
-            <label style="font-size:14px; color:#9ab;">Players: <span id="start-players-display">4</span></label>
-            <input type="range" id="start-players" min="2" max="10" value="4" style="width:150px;">
+            <label style="color:var(--muted);">Players: <span id="start-players-display">4</span></label>
+            <input type="range" id="start-players" min="2" max="10" value="4" style="width:160px;">
         </div>
         <div class="row">
-            <label style="font-size:14px; color:#9ab;">
+            <label style="color:var(--muted);">
                 <input type="checkbox" id="start-spectate" style="margin-right:6px;">
                 Spectate Mode (AI vs AI)
             </label>
         </div>
         <div class="row">
-            <button id="start-continue" class="sec" style="display:none;">Continue Last Save</button>
-            <button id="start-go" class="big">Start Game</button>
+            <button id="start-continue" class="btn btn-ghost" style="display:none;">Continue Last Save</button>
+            <button id="start-go" class="btn btn-primary">Start Game</button>
         </div>
     </div>
 
     <!-- Pause menu overlay -->
     <div id="pause-menu" class="overlay">
         <h1>PAUSED</h1>
-        <button id="pause-resume" class="big">Resume</button>
-        <button id="pause-save" class="sec">Save Game</button>
-        <button id="pause-load" class="sec">Load Game</button>
-        <button id="pause-mute" class="sec">Mute</button>
-        <button id="pause-menu-btn" class="sec">Main Menu</button>
+        <button id="pause-resume" class="btn btn-primary">Resume</button>
+        <button id="pause-save" class="btn btn-ghost">Save Game</button>
+        <button id="pause-load" class="btn btn-ghost">Load Game</button>
+        <button id="pause-mute" class="btn btn-ghost">Mute</button>
+        <button id="pause-menu-btn" class="btn btn-ghost">Main Menu</button>
     </div>
 
     <div id="ui-bottom">
-        <h2 style="margin: 0 0 10px 0; font-size: 18px;">Province Intel</h2>
+        <h2>Province Intel</h2>
         <div id="info">Hover over a tile</div>
-        <div id="ownership" style="margin-top: 5px; font-style: italic; color: #ccc;"></div>
+        <div id="ownership" style="margin-top: 6px; font-style: italic; color: var(--muted);"></div>
         <div id="unit-info"></div>
     </div>
 
     <div id="lord-panel" class="side-panel">
-        <div class="panel-drag-handle"><span>lords ⠿</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div class="panel-drag-handle"><span>Lords</span><button class="panel-minimize" title="Minimize">−</button></div>
         <div id="lord-panel-body" class="panel-body"></div>
     </div>
     <div id="diplomacy-panel" class="side-panel">
-        <div class="panel-drag-handle"><span>diplomacy ⠿</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div class="panel-drag-handle"><span>Diplomacy</span><button class="panel-minimize" title="Minimize">−</button></div>
         <div id="diplomacy-panel-body" class="panel-body"></div>
     </div>
     <div id="build-menu" class="side-panel">
-        <div class="panel-drag-handle"><span>build ⠿</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div class="panel-drag-handle"><span>Build</span><button class="panel-minimize" title="Minimize">−</button></div>
         <div id="build-menu-body" class="panel-body"></div>
     </div>
     <div id="combat-log"></div>
 
     <div id="game-over">
         <div id="game-over-text"></div>
-        <button onclick="location.reload()">Play Again</button>
+        <button class="btn btn-primary" onclick="location.reload()">Play Again</button>
     </div>
 
     <script type="importmap">
@@ -320,10 +393,7 @@
     </script>
 
     <script>
-        // Make any element with a .panel-drag-handle draggable by its handle.
-        // Clicking the minimize button toggles the panel's minimized state.
         (function () {
-            // Minimize buttons: toggle panel body visibility.
             document.addEventListener('click', (e) => {
                 const btn = e.target.closest('.panel-minimize');
                 if (!btn) return;
@@ -333,10 +403,7 @@
                 btn.textContent = panel.classList.contains('minimized') ? '+' : '−';
                 e.stopPropagation();
             });
-
-            // Drag handling: only start drag on the handle itself, not on buttons.
             document.addEventListener('mousedown', (e) => {
-                // Ignore clicks on minimize buttons (they handle themselves).
                 if (e.target.closest('.panel-minimize')) return;
                 const handle = e.target.closest('.panel-drag-handle');
                 if (!handle) return;
@@ -344,14 +411,11 @@
                 const rect = panel.getBoundingClientRect();
                 const offsetX = e.clientX - rect.left;
                 const offsetY = e.clientY - rect.top;
-                // Switch from right-anchored to left/top positioning so it follows the cursor.
                 panel.style.left = rect.left + 'px';
                 panel.style.top = rect.top + 'px';
                 panel.style.right = 'auto';
-                panel.style.opacity = '0.9';
-                let moved = false;
+                panel.style.opacity = '0.92';
                 function move(ev) {
-                    moved = true;
                     panel.style.left = (ev.clientX - offsetX) + 'px';
                     panel.style.top = (ev.clientY - offsetY) + 'px';
                 }
@@ -370,9 +434,9 @@
     <script type="module">
         import { Game } from './src/game.js';
         import { showStartMenu, bindPauseButtons } from './src/menus.js';
+        import { svgIcon } from './src/icons.js';
 
         let game = null;
-        // Wire pause-menu buttons once; the handlers route through the live game.
         bindPauseButtons({
             onResume: () => { if (game && game.resume) game.resume(); },
             onSave:   () => { if (game && game.save) game.save(); },
@@ -383,28 +447,26 @@
         });
 
         function startGame(opts) {
+            document.getElementById('btn-mute').innerHTML = svgIcon('unmute', { size: 18 });
             game = new Game(opts, {
                 onPause: () => {},
                 onMuteChanged: (m) => {
                     const btn = document.getElementById('btn-mute');
-                    if (btn) btn.textContent = m ? '🔇' : '🔊';
+                    if (btn) btn.innerHTML = svgIcon(m ? 'mute' : 'unmute', { size: 18 });
                 }
             });
         }
 
-        // Mute button in the top bar.
         document.getElementById('btn-mute').addEventListener('click', () => {
             if (game && game.toggleMute) game.toggleMute();
         });
 
-        // Esc toggles the pause menu.
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && game && !game.gameState.gameOver) {
                 game.togglePause();
             }
         });
 
-        // Spectate mode fast forward buttons
         document.getElementById('btn-ff-1')?.addEventListener('click', () => {
             if (game && game.spectateMode) game.fastForwardTurns(1);
         });
