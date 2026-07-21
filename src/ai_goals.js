@@ -50,6 +50,7 @@ export function createAIState() {
         prevStock: null,            // last turn's resource stock snapshot (for flow calc)
         drainingResource: null,     // worst per-turn-draining resource this turn (food/wood/iron/gold)
         lastFlow: null,              // per-resource net change vs prevStock { gold, food, wood, iron }
+        victoryTarget: null,        // chosen victory type string ('domination'|'science'|'economic'|'score')
     };
 }
 
@@ -58,6 +59,55 @@ export function initAIState(factions) {
     const out = {};
     for (const f of factions) out[f] = createAIState();
     return out;
+}
+
+/** Choose a victory target for an AI faction based on personality and game state.
+ *  Returns a VICTORY_TYPES string. */
+export function chooseVictoryTarget(personality, cityCount, techCount, gold, tradeRoutes) {
+    const weights = {
+        AGGRESSIVE: { domination: 60, science: 10, economic: 15, score: 15 },
+        DEFENSIVE:  { domination: 40, science: 15, economic: 20, score: 25 },
+        ECONOMIC:   { domination: 15, science: 25, economic: 45, score: 15 },
+        BALANCED:   { domination: 35, science: 15, economic: 25, score: 25 }
+    };
+    const w = { ...(weights[personality] || weights.BALANCED) };
+
+    // Adjust based on game state
+    if (cityCount >= 5) w.domination += 10;
+    if (cityCount <= 2) w.domination -= 15;
+    if (techCount >= 5) w.science += 15;
+    if (gold > 500) w.economic += 10;
+    if (tradeRoutes >= 3) w.economic += 10;
+
+    // Pick the weighted random winner
+    const entries = Object.entries(w).filter(([, v]) => v > 0);
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    let r = Math.random() * total;
+    for (const [type, weight] of entries) {
+        r -= weight;
+        if (r <= 0) return type;
+    }
+    return 'domination';
+}
+
+/** Re-evaluate victory target every 20 turns. If we're far behind on our
+ *  current target, switch to a more achievable one. */
+export function reevaluateVictoryTarget(aiState, personality, scores, myFaction, turn) {
+    if (turn % 20 !== 0 || turn < 20) return;
+    const myScore = scores[myFaction] || 0;
+    const maxScore = Math.max(...Object.values(scores));
+    if (maxScore === 0) return;
+
+    const ratio = myScore / maxScore;
+    if (ratio >= 0.8) return; // we're competitive, keep current target
+
+    // We're falling behind — consider switching
+    const vt = aiState.victoryTarget;
+    if (vt === 'domination' && ratio < 0.5) {
+        aiState.victoryTarget = personality === 'ECONOMIC' ? 'economic' : 'score';
+    } else if (vt === 'economic' && ratio < 0.6) {
+        aiState.victoryTarget = 'score';
+    }
 }
 
 /** JSON-safe serialization (the record uses only plain objects/arrays). Kept
@@ -201,6 +251,19 @@ export function selectGoals(input) {
     push('develop-economy',
         BASE_SCORE['develop-economy'] * weights['develop-economy'],
         bestEconTileKey, null, 'long', {});
+
+    // Victory-target modifiers: weight goals based on the chosen victory type.
+    const vt = (aiState && aiState.victoryTarget) || 'domination';
+    const vtModifiers = {
+        domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7 },
+        science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3 },
+        economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5 },
+        score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1 }
+    };
+    const vtMod = vtModifiers[vt] || vtModifiers.domination;
+    for (const c of candidates) {
+        c._score *= (vtMod[c.kind] || 1.0);
+    }
 
     // Sort by weighted score desc, keep the top 3.
     candidates.sort((a, b) => b._score - a._score);

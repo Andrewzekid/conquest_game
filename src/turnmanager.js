@@ -5,7 +5,7 @@ import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
 import { regenFortification } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
          processWarWeariness } from './diplomacy.js';
-import { addResearch, calculateResearchOutput } from './tech.js';
+import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS } from './tech.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -110,6 +110,31 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 if (completed && completed.length > 0) {
                     for (const techId of completed) {
                         if (logger) logger(`Research complete: ${techId}!`);
+                    }
+                }
+            }
+        }
+
+        // AI factions research from the shared tech tree.
+        if (gameState.aiTechStates) {
+            for (const ai of aiFactions) {
+                if (gameState.eliminated && gameState.eliminated.has(ai)) continue;
+                const aiTs = gameState.aiTechStates[ai];
+                if (!aiTs) continue;
+                if (!aiTs.current) {
+                    const def = (gameState.factionDefs && gameState.factionDefs[ai]) || null;
+                    const personality = (def && def.aiPersonality) || 'BALANCED';
+                    autoSelectResearch(aiTs, personality);
+                }
+                const researchPts = calculateResearchOutput(gameState.tiles, ai);
+                if (researchPts > 0) {
+                    const completed = addResearch(aiTs, researchPts);
+                    if (completed && completed.length && logger) {
+                        const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;
+                        for (const techId of completed) {
+                            const tech = TECHS[techId];
+                            logger(`${fname} researched ${tech ? tech.name : techId}!`);
+                        }
                     }
                 }
             }

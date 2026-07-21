@@ -40,7 +40,7 @@ import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
          createTradeRoute, validateTradeRoute, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
 import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
          getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
-import { initAIState, createAIState, serializeAIState, deserializeAIState } from './ai_goals.js';
+import { initAIState, createAIState, serializeAIState, deserializeAIState, chooseVictoryTarget, reevaluateVictoryTarget } from './ai_goals.js';
 import { addEvent as addEventEntry } from './eventlog.js';
 import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
 import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
@@ -54,7 +54,7 @@ import { createTechState, serializeTechState, deserializeTechState,
          getUnlockedUnits, getUnlockedBuildings, getTechBonuses, getCurrentEra,
          TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
-         ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES } from './config.js';
+         ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES } from './config.js';
 
 const DRAG_THRESHOLD = 6; // px; under this a press→release is a click
 
@@ -285,6 +285,13 @@ export class Game {
         // Tech tree state (4X feature): single-track research progress.
         this.gameState.techState = createTechState();
 
+        // Per-faction AI tech states (player uses the global techState).
+        this.gameState.aiTechStates = {};
+        for (const f of FACTIONS) {
+            if (f === PLAYER_FACTION) continue;
+            this.gameState.aiTechStates[f] = createTechState();
+        }
+
         // Victory tracking state.
         this.gameState.victoryState = {
             // Science victory: projects built per faction
@@ -299,6 +306,14 @@ export class Game {
         // faction's ordered goals + scarcity streak across turns so plans are
         // stable instead of recomputed (and thrashing) every turn.
         this.gameState.aiState = initAIState(FACTIONS);
+
+        // Choose victory targets for AI factions based on personality.
+        for (const slot of FACTIONS) {
+            if (slot === PLAYER_FACTION) continue;
+            const def = this.factionDefs[slot];
+            const personality = (def && def.aiPersonality) || 'BALANCED';
+            this.gameState.aiState[slot].victoryTarget = chooseVictoryTarget(personality, 1, 0, 0, 0);
+        }
 
         // Create a starting unit + king lord for each faction at its start city.
         for (const slot of FACTIONS) {
@@ -389,6 +404,17 @@ export class Game {
         if (!this.gameState.techState) this.gameState.techState = createTechState();
         if (this.gameState.techState && this.gameState.techState.researched && Array.isArray(this.gameState.techState.researched)) {
             this.gameState.techState.researched = new Set(this.gameState.techState.researched);
+        }
+        // Per-faction AI tech states — absent on old saves.
+        if (!this.gameState.aiTechStates) this.gameState.aiTechStates = {};
+        for (const f of FACTIONS) {
+            if (f === PLAYER_FACTION) continue;
+            if (!this.gameState.aiTechStates[f]) {
+                this.gameState.aiTechStates[f] = createTechState();
+            } else if (this.gameState.aiTechStates[f].researched &&
+                       Array.isArray(this.gameState.aiTechStates[f].researched)) {
+                this.gameState.aiTechStates[f].researched = new Set(this.gameState.aiTechStates[f].researched);
+            }
         }
         // Victory state — absent on old saves.
         if (!this.gameState.victoryState) {
@@ -490,6 +516,8 @@ export class Game {
             onActivateKing: (lord) => this.handleActivateKing(lord),
             onSkillInvestment: (lordId, skillId) => this.handleSkillInvestment(lordId, skillId),
             getVictoryProgress: () => this.getVictoryProgress(),
+            getAllFactionProgress: () => this.getAllFactionProgress(),
+            factionColors: this.factionColors,
             onCancelGoal: (unit) => this.handleCancelGoal(unit),
             onFoundCity: (unit) => this.handleFoundCity(unit),
             onBuildSiegeTower: (unit) => this.handleBuildSiegeTower(unit),
@@ -3302,6 +3330,49 @@ export class Game {
         return units + cities * 2 + Math.floor(gold / 100);
     }
 
+    /** Calculate comprehensive power rankings for all factions.
+     *  Returns { factionId: { score, cities, units, techs, gold, tilePercent, isDominant, isLeading } } */
+    calculatePowerRankings() {
+        const gs = this.gameState;
+        const rankings = {};
+        const totalTiles = this.tiles.size;
+
+        for (const f of FACTIONS) {
+            if (gs.eliminated && gs.eliminated.has(f)) continue;
+            let cities = 0, units = 0, tilesOwned = 0;
+            for (const t of this.tiles.values()) {
+                if (t.owner === f) {
+                    tilesOwned++;
+                    if (t.terrain === 'CITY') cities++;
+                }
+            }
+            for (const u of gs.units.values()) {
+                if (u.owner === f && !u.boarded) units++;
+            }
+            const gold = (gs.resources[f] && gs.resources[f].gold) || 0;
+            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            const techs = fTs && fTs.researched ? fTs.researched.size : 0;
+            const tilePercent = totalTiles > 0 ? tilesOwned / totalTiles : 0;
+
+            const score = cities * 20 + units * 3 + techs * 10 + Math.floor(gold / 50) + Math.floor(tilePercent * 100);
+
+            rankings[f] = {
+                score, cities, units, techs, gold, tilesOwned,
+                tilePercent,
+                isDominant: tilePercent > 0.3 || cities >= 6,
+                isLeading: false
+            };
+        }
+
+        let maxScore = 0, leader = null;
+        for (const [f, r] of Object.entries(rankings)) {
+            if (r.score > maxScore) { maxScore = r.score; leader = f; }
+        }
+        if (leader) rankings[leader].isLeading = true;
+
+        return rankings;
+    }
+
     /** AI may unilaterally declare war on a faction it's at peace/trade/
      *  alliance with when it has a clear power advantage. War declarations are
      *  gated by personality (warChance) and the power ratio; breaking an
@@ -3356,10 +3427,79 @@ export class Game {
         return false;
     }
 
+    /** Should this AI faction consider forming or joining a coalition against
+     *  a dominant/leading faction? Returns { target, allies } or null. */
+    _evaluateCoalition(faction) {
+        const gs = this.gameState;
+        const rankings = this.calculatePowerRankings();
+        const myRank = rankings[faction];
+        if (!myRank) return null;
+
+        // Find the dominant or leading faction
+        let target = null;
+        for (const [f, r] of Object.entries(rankings)) {
+            if (f === faction) continue;
+            if (r.isDominant || r.isLeading) {
+                target = f;
+                break;
+            }
+        }
+        if (!target) return null;
+
+        // Check if we're already at war with the target
+        const relTarget = getRelation(gs.diplomacy, faction, target);
+        if (relTarget.state === DIPLOMACY_STATES.WAR) return null;
+
+        // Find potential allies: factions that are NOT the target and are at peace
+        const candidates = FACTIONS.filter(f =>
+            f !== faction && f !== target &&
+            !(gs.eliminated && gs.eliminated.has(f)) &&
+            getRelation(gs.diplomacy, f, target).state !== DIPLOMACY_STATES.WAR
+        );
+
+        // Score potential allies by relationship with us
+        const allies = [];
+        for (const a of candidates) {
+            const rel = getRelation(gs.diplomacy, faction, a);
+            if (rel.state === DIPLOMACY_STATES.ALLIANCE || (rel.relationship || 0) >= 30) {
+                allies.push(a);
+            }
+        }
+
+        if (allies.length === 0) return null;
+
+        return { target, allies: allies.slice(0, COALITION_MAX_ALLIES) };
+    }
+
     /** AI may declare war based on personality, strategy, and distance ("attack close").
-     *  At most one declaration per turn. */
+     *  At most one declaration per turn. Checks for coalition opportunity first. */
     _aiMaybeDeclareWar(faction, def, factionName) {
         if (!def) return;
+
+        // Coalition war: if a faction is dominant, form a coalition against it.
+        const coalition = this._evaluateCoalition(faction);
+        if (coalition) {
+            const targetPower = this._factionPower(coalition.target);
+            const myPower0 = this._factionPower(faction);
+            if (targetPower > myPower0 * 1.2) {
+                let alliedPower = myPower0;
+                for (const a of coalition.allies) alliedPower += this._factionPower(a);
+                if (alliedPower > targetPower * 0.8) {
+                    const joiners = declareCoalitionWar(
+                        this.gameState.diplomacy, faction, coalition.target,
+                        coalition.allies, this.gameState.turn
+                    );
+                    if (this.logger) {
+                        const targetName = this.factionColors[coalition.target]?.name || coalition.target;
+                        const joinerNames = joiners.filter(j => j !== faction)
+                            .map(j => this.factionColors[j]?.name || j).join(', ');
+                        this.logger(`${factionName} formed a coalition against ${targetName}! Allies: ${joinerNames}`);
+                    }
+                    return; // coalition war declared, skip solo war
+                }
+            }
+        }
+
         const personality = def.aiPersonality || 'DEFENSIVE';
         const strategy = this._getDiplomaticStrategy(personality);
         const myPower = this._factionPower(faction);
@@ -3398,6 +3538,13 @@ export class Game {
             // we're not badly outmatched, this is a strong candidate to strike
             // first (Civ6 "grievance builds until war").
             if (tension >= GRIEVANCE_WAR_THRESHOLD && ratio >= 0.8) score += 50;
+            // Threat assessment: target dominant/leading factions more aggressively.
+            const rankings = this.calculatePowerRankings();
+            const targetRank = rankings[other];
+            if (targetRank) {
+                if (targetRank.isDominant) score += 40;
+                if (targetRank.isLeading) score += 20;
+            }
             return { other, score };
         });
         scored.sort((a, b) => b.score - a.score);
@@ -4048,6 +4195,14 @@ export class Game {
         // need or friendship. AI->player offers land in pendingOffers. ---
         this._aiMaybeProposeTreaty(faction, def, factionName);
 
+        // Re-evaluate victory target every 20 turns if falling behind.
+        const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        if (aiSt) {
+            const scores = this._calculateScores();
+            const personality = (def && def.aiPersonality) || 'BALANCED';
+            reevaluateVictoryTarget(aiSt, personality, scores, faction, this.gameState.turn);
+        }
+
         // Tick this AI faction's in-progress Siege Tower builds.
         this._tickConstructionFor(faction);
 
@@ -4062,7 +4217,9 @@ export class Game {
 
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy,
             this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState,
-            this.gameState.aiState ? this.gameState.aiState[faction] : null);
+            this.gameState.aiState ? this.gameState.aiState[faction] : null,
+            this.gameState.aiTechStates || null,
+            this.gameState.victoryState || null);
 
         // AI king: activate when off cooldown and a heuristic trigger is met.
         if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && this._aiShouldActivateKing(faction, def)) {
@@ -4153,6 +4310,15 @@ export class Game {
                         const msgs = upgradeBuilding(action.buildingType, tile, pool, this.gameState.buildings, this.gameState.buildingState);
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                     }
+                    break;
+                }
+                case 'buildSpaceProgram': {
+                    if (!this.gameState.victoryState) this.gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+                    if (!this.gameState.victoryState.projects) this.gameState.victoryState.projects = {};
+                    const prev = this.gameState.victoryState.projects[faction] || 0;
+                    this.gameState.victoryState.projects[faction] = prev + 1;
+                    const prog = this.gameState.victoryState.projects[faction];
+                    this.log(`${factionName}: Space Program ${prog}/${SCIENCE_VICTORY_BUILD_TURNS}`);
                     break;
                 }
                 case 'pillage': {
@@ -4717,9 +4883,10 @@ export class Game {
             for (const u of gs.units.values()) {
                 if (u.owner === f) score += 2;
             }
-            // Techs researched (10 pts each). Single-track: only player can research.
-            if (f === PLAYER_FACTION && gs.techState && gs.techState.researched) {
-                score += gs.techState.researched.size * 10;
+            // Techs researched (10 pts each) — all factions.
+            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            if (fTs && fTs.researched) {
+                score += fTs.researched.size * 10;
             }
             // Gold (0.1 pts per gold).
             score += Math.floor(((gs.resources && gs.resources[f] && gs.resources[f].gold) || 0) * 0.1);
@@ -4777,6 +4944,75 @@ export class Game {
                 progress: Math.min(1, (gs.turn || 0) / Math.max(1, SCORE_VICTORY_TURN))
             }
         };
+    }
+
+    /** Get victory progress for ALL factions (not just the player).
+     *  Used by the scoreboard/ranking panel. */
+    getAllFactionProgress() {
+        const gs = this.gameState;
+        const result = {};
+        const totalTechs = Object.keys(TECHS).length;
+        const scores = this._calculateScores();
+
+        for (const f of FACTIONS) {
+            if (gs.eliminated && gs.eliminated.has(f)) {
+                result[f] = { eliminated: true, score: 0 };
+                continue;
+            }
+
+            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            const techs = fTs && fTs.researched ? fTs.researched.size : 0;
+            const cities = countCities(this.tiles, f);
+            const gold = (gs.resources[f] && gs.resources[f].gold) || 0;
+            const tradeRoutes = (gs.victoryState && gs.victoryState.tradeRoutes &&
+                gs.victoryState.tradeRoutes[f]) || 0;
+
+            // Victory-specific progress
+            let dominationProg = 0, scienceProg = 0, economicProg = 0;
+            const otherFactions = FACTIONS.filter(x => x !== f && !(gs.eliminated && gs.eliminated.has(x)));
+            if (otherFactions.length > 0) {
+                const eliminated = otherFactions.filter(x => gs.eliminated && gs.eliminated.has(x)).length;
+                dominationProg = eliminated / otherFactions.length;
+            }
+            scienceProg = techs / totalTechs;
+            economicProg = Math.min(
+                gold / Math.max(1, ECONOMIC_VICTORY_GOLD),
+                tradeRoutes / Math.max(1, ECONOMIC_VICTORY_TRADE_ROUTES)
+            );
+
+            // Closest victory
+            const victories = [
+                { type: 'domination', progress: dominationProg },
+                { type: 'science', progress: scienceProg },
+                { type: 'economic', progress: economicProg },
+                { type: 'score', progress: (gs.turn || 0) / SCORE_VICTORY_TURN }
+            ];
+            const closest = victories.reduce((a, b) => b.progress > a.progress ? b : a);
+
+            const aiSt = gs.aiState && gs.aiState[f];
+
+            result[f] = {
+                score: scores[f] || 0,
+                cities,
+                techs,
+                totalTechs,
+                gold,
+                victoryTarget: aiSt ? aiSt.victoryTarget : null,
+                closestVictory: closest.type,
+                closestProgress: closest.progress,
+                isDominant: false // will be set from power rankings if available
+            };
+        }
+
+        // Apply power rankings
+        const rankings = this.calculatePowerRankings();
+        for (const [f, r] of Object.entries(rankings)) {
+            if (result[f]) {
+                result[f].isDominant = r.isDominant || r.isLeading;
+            }
+        }
+
+        return result;
     }
 
     /** Append an event to the rolling event log (Feature 6). The log is capped;

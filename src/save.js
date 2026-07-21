@@ -2,12 +2,11 @@
  *  Phase F: enhanced persistence with verification for growth, burn, workshop,
  *  wonders, diplomacy relationship scores, and all new state fields. */
 import { serializeAIState, deserializeAIState } from './ai_goals.js';
+import { serializeTechState, deserializeTechState } from './tech.js';
 
 const SAVE_KEY = 'conquest_save';
-// Bumped 4 -> 5 for Phase G (new European factions + 6 new unit types + unit
-// factionId backfill). Older saves are rejected by the version check below;
-// unit.factionId is backfilled on load in Game.loadFromState.
-const SAVE_VERSION = 5;
+// Bumped 5 -> 6 for per-faction AI tech states (shared tech tree).
+const SAVE_VERSION = 6;
 
 export function saveGame(gameState) {
     try {
@@ -54,6 +53,10 @@ export function saveGame(gameState) {
             } : null,
             // AI goal-sequence state (per-faction goals + scarcity streak).
             aiState: serializeAIState(gameState.aiState),
+            // Per-faction AI tech states (shared tech tree, per-faction research progress).
+            aiTechStates: gameState.aiTechStates ? Object.fromEntries(
+                Object.entries(gameState.aiTechStates).map(([f, ts]) => [f, serializeTechState(ts)])
+            ) : null,
             // Trade routes (Feature 3): array of route objects + id counter.
             tradeRoutes: gameState.tradeRoutes || [],
             tradeRouteNextId: gameState.tradeRouteNextId || 1
@@ -159,6 +162,10 @@ export function loadGame() {
             // AI goal-sequence state (per-faction). Absent on old saves -> null,
             // backfilled by Game.loadFromState.
             aiState: deserializeAIState(data.aiState),
+            // Per-faction AI tech states. Absent on old saves -> null.
+            aiTechStates: data.aiTechStates ? Object.fromEntries(
+                Object.entries(data.aiTechStates).map(([f, ts]) => [f, deserializeTechState(ts)])
+            ) : null,
             // Trade routes (Feature 3). Absent on old saves -> empty array.
             tradeRoutes: Array.isArray(data.tradeRoutes) ? data.tradeRoutes : [],
             tradeRouteNextId: data.tradeRouteNextId || 1

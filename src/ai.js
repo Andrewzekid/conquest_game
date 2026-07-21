@@ -12,7 +12,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
           MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
           AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT, AI_ARTILLERY_RESERVE_SIEGE,
           AI_SETTLER_SCARCITY_TURN_THRESHOLD, AI_SETTLER_SCARCE_CAP_RELAX, AI_SETTLER_SCARCE_FLOOR_RELAX,
-          SCARCITY_FLOW_THRESHOLDS } from './config.js';
+          SCARCITY_FLOW_THRESHOLDS, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { sellAtMarket, getUnitCap } from './economy.js';
@@ -23,6 +23,7 @@ import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy } from './lords.js';
 import { selectGoals } from './ai_goals.js';
+import { getUnlockedUnits, TECHS } from './tech.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
  *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
@@ -84,7 +85,7 @@ export function computeScarcity(stock, prev, thresholds) {
  * @param diploState - diplomacy state (used to respect peace/trade/alliance:
  *                     the AI only attacks factions it is at war with)
  */
-export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null, buildingState = null, aiState = null) {
+export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null, buildingState = null, aiState = null, aiTechStates = null, victoryState = null) {
     const actions = [];
     const myUnits = [...units.values()].filter(u => u.owner === owner && !u.boarded);
     let res = { ...resources };
@@ -104,6 +105,29 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // medics, …) — without them most factions never field any cavalry.
     const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u)),
         ...(hasSiegeWorkshop ? ['CATAPULT', 'TREBUCHET'].filter(u => !roster.includes(u)) : [])];
+    // Filter roster by the faction's tech state: only train units unlocked by
+    // researched techs. Faction-roster units are always available (they don't
+    // need tech gating). Naval/harbor units are gated by the HARBOR building,
+    // not tech, so they pass through.
+    const aiTs = aiTechStates && aiTechStates[owner];
+    if (aiTs && aiTs.researched) {
+        const unlocked = getUnlockedUnits(aiTs);
+        const filtered = fullRoster.filter(u => {
+            if (roster.includes(u)) return true; // faction-roster always available
+            if (EXTRA_UNITS.includes(u) && !unlocked.has(u)) {
+                // Extra units that require tech: only block if they have a tech unlock
+                const hasTechUnlock = Object.values(TECHS).some(t =>
+                    t.unlocks.some(ul => ul.type === 'unit' && ul.id === u));
+                if (hasTechUnlock) return unlocked.has(u);
+            }
+            return true;
+        });
+        // Only use filtered roster if it's not empty (fallback to full if somehow empty)
+        if (filtered.length > 0) {
+            fullRoster.length = 0;
+            for (const u of filtered) fullRoster.push(u);
+        }
+    }
     // Whether the faction can train a direct siege unit (roster SIEGE/ARTILLERY
     // or a workshop's CATAPULT/TREBUCHET). Factions with neither — Verdant,
     // Storm — have no trainable siege and must rely on ENGINEER-built Siege
@@ -475,6 +499,29 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 res = payBuilding('WALLS', res);
                 break; // one wall per turn
             }
+        }
+    }
+
+    // 1af. MARKET in cities — always useful for gold income, but especially
+    //      important for economic victory. Build in one city per turn if affordable.
+    const vt = aiState && aiState.victoryTarget;
+    const hasMarket = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
+    if (!hasMarket && myCityCount >= 1) {
+        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
+            !(buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
+        if (city && canAffordBuilding('MARKET', res)) {
+            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${city.x},${city.z}` });
+            res = payBuilding('MARKET', res);
+        }
+    }
+    // Economic victory: build MARKET in more cities
+    if (vt === 'economic' && myCityCount >= 2) {
+        const citiesWithoutMarket = owned.filter(t => t.terrain === 'CITY' && canBuildAt(t) &&
+            !(buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
+        if (citiesWithoutMarket.length > 0 && canAffordBuilding('MARKET', res)) {
+            const city = citiesWithoutMarket[0];
+            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${city.x},${city.z}` });
+            res = payBuilding('MARKET', res);
         }
     }
 
@@ -873,6 +920,32 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 actions.push({ type: 'levelUpCity', tileKey: `${t.x},${t.z}` });
                 res = { ...res, gold: res.gold - cost.gold, food: res.food - cost.food,
                         production: (res.production || 0) - cost.production };
+            }
+        }
+    }
+
+    // 3c. Science Victory Project: when all techs are researched, start building
+    //     the space program. Requires resources from SCIENCE_VICTORY_COST.
+    if (vt === 'science') {
+        const aiTs = aiTechStates && aiTechStates[owner];
+        const allTechsResearched = aiTs && aiTs.researched &&
+            aiTs.researched.size >= Object.keys(TECHS).length;
+        if (allTechsResearched) {
+            if (!gameState.victoryState) gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+            if (!gameState.victoryState.projects) gameState.victoryState.projects = {};
+            const progress = gameState.victoryState.projects[owner] || 0;
+            if (progress < SCIENCE_VICTORY_BUILD_TURNS) {
+                // Find a city to build the project
+                const city = owned.find(t => t.terrain === 'CITY');
+                if (city) {
+                    const cost = SCIENCE_VICTORY_COST;
+                    if ((res.gold || 0) >= cost.gold && (res.food || 0) >= cost.food &&
+                        (res.wood || 0) >= cost.wood && (res.iron || 0) >= cost.iron) {
+                        res = { ...res, gold: res.gold - cost.gold, food: res.food - cost.food,
+                                wood: res.wood - cost.wood, iron: res.iron - cost.iron };
+                        actions.push({ type: 'buildSpaceProgram', tileKey: `${city.x},${city.z}` });
+                    }
+                }
             }
         }
     }

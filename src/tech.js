@@ -325,3 +325,39 @@ export function calculateResearchOutput(tiles, owner) {
     }
     return total;
 }
+
+/** Auto-select a research target for an AI faction based on personality.
+ *  Returns the selected tech id, or null if nothing to research. */
+export function autoSelectResearch(state, personality) {
+    if (state.current) return state.current;
+    const available = getAvailableTechs(state);
+    if (available.length === 0) return null;
+
+    const priorities = {
+        AGGRESSIVE: ['CHIVALRY', 'GUNPOWDER', 'SIEGE_CRAFT', 'FORTIFICATION',
+                     'MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'ANIMAL_HUSBANDRY',
+                     'ARCHERY', 'BRONZE_WORKING', 'CARTOGRAPHY', 'FEUDALISM',
+                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION'],
+        DEFENSIVE:  ['FORTIFICATION', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
+                     'BRONZE_WORKING', 'SIEGE_CRAFT', 'MATHEMATICS', 'ARCHERY',
+                     'ANIMAL_HUSBANDRY', 'NAVAL_ENGINEERING', 'CHIVALRY', 'GUNPOWDER',
+                     'CARTOGRAPHY', 'MACHINERY', 'MASS_PRODUCTION'],
+        ECONOMIC:   ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
+                     'CARTOGRAPHY', 'ARCHERY', 'ANIMAL_HUSBANDRY', 'BRONZE_WORKING',
+                     'SIEGE_CRAFT', 'FORTIFICATION', 'CHIVALRY', 'GUNPOWDER',
+                     'MEDICINE', 'FEUDALISM', 'MACHINERY'],
+        BALANCED:   ['ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
+                     'ENGINEERING', 'NAVAL_ENGINEERING', 'SIEGE_CRAFT', 'FORTIFICATION',
+                     'CHIVALRY', 'CARTOGRAPHY', 'FEUDALISM', 'GUNPOWDER',
+                     'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION']
+    };
+    const list = priorities[personality] || priorities.BALANCED;
+    for (const id of list) {
+        if (available.includes(id)) {
+            selectResearch(state, id);
+            return id;
+        }
+    }
+    selectResearch(state, available[0]);
+    return available[0];
+}

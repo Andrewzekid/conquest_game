@@ -1270,6 +1270,14 @@ export function bindUI(gameState, callbacks) {
         });
     }
 
+    // Scoreboard button: shows the faction rankings panel.
+    const sbBtn = document.getElementById('btn-scoreboard');
+    if (sbBtn) {
+        sbBtn.addEventListener('click', () => {
+            showScoreboard();
+        });
+    }
+
     function updateAll() {
         updateResourceBar();
         showDiplomacyPanel();
@@ -1337,6 +1345,62 @@ export function bindUI(gameState, callbacks) {
         els.victoryPanel.innerHTML = html;
     }
 
+    // Scoreboard Panel: shows all factions' power rankings, scores, and
+    // closest victory progress. Accessible via the scoreboard button.
+    function showScoreboard() {
+        if (typeof callbacks.getAllFactionProgress !== 'function') return;
+        let progress;
+        try { progress = callbacks.getAllFactionProgress(); }
+        catch (e) { return; }
+        if (!progress) return;
+
+        // Sort by score descending
+        const sorted = Object.entries(progress)
+            .filter(([, p]) => !p.eliminated)
+            .sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+
+        const eliminated = Object.entries(progress).filter(([, p]) => p.eliminated);
+
+        let html = '<div class="scoreboard">';
+        html += '<h3>Scoreboard</h3>';
+        html += '<div class="sb-header"><span>#</span><span>Faction</span><span>Score</span><span>Cities</span><span>Tech</span><span>Gold</span><span>Target</span><span>Closest Victory</span></div>';
+
+        sorted.forEach(([faction, data], i) => {
+            const color = callbacks.factionColors && callbacks.factionColors[faction];
+            const hex = color ? '#' + color.tile.toString(16).padStart(6, '0') : '#888';
+            const name = color?.name || faction;
+            const pct = Math.round((data.closestProgress || 0) * 100);
+            const isDom = data.isDominant ? ' <span class="dominant-tag">DOMINANT</span>' : '';
+            html += `<div class="sb-row" style="border-left:3px solid ${hex};">
+                <span>${i + 1}</span>
+                <span style="color:${hex};font-weight:600;">${name}${isDom}</span>
+                <span>${data.score || 0}</span>
+                <span>${data.cities || 0}</span>
+                <span>${data.techs || 0}/${data.totalTechs || 16}</span>
+                <span>${data.gold || 0}g</span>
+                <span>${data.victoryTarget || '—'}</span>
+                <span>${data.closestVictory} ${pct}%</span>
+            </div>`;
+        });
+
+        if (eliminated.length) {
+            html += '<div class="sb-eliminated"><h4>Eliminated</h4>';
+            eliminated.forEach(([f]) => {
+                const name = callbacks.factionColors && callbacks.factionColors[f] ? callbacks.factionColors[f].name : f;
+                html += `<span class="eliminated-tag">${name}</span> `;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        // Display in the victory panel area or a dedicated panel
+        if (els.victoryPanel) {
+            els.victoryPanel.innerHTML = html;
+            if (els.victoryPanelWrap) els.victoryPanelWrap.style.display = 'block';
+        }
+    }
+
     return {
         updateResourceBar,
         showTileInfo,
@@ -1347,6 +1411,7 @@ export function bindUI(gameState, callbacks) {
         showLordPanel,
         showAIGoalsPanel,
         showVictoryPanel,
+        showScoreboard,
         addCombatLog,
         updateAll
     };
