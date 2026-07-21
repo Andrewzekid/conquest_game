@@ -4383,6 +4383,14 @@ export class Game {
                     }
                     break;
                 }
+                case 'disband': {
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (unit && unit.owner === faction) {
+                        this.gameState.units.delete(unit.id);
+                        this.log(`${factionName} disbanded ${UNIT_TYPE[unit.type].name}`);
+                    }
+                    break;
+                }
                 case 'recruitLord': {
                     const nonKings = (this.gameState.lords || []).filter(l => l.owner === faction && !l.isKing);
                     const cities = getOwnedCities(this.tiles, faction);

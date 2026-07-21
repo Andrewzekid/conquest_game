@@ -87,29 +87,13 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
 
     // One of each type per tile
     const existing = buildings.get(tileKey) || [];
-    if (existing.includes(buildingType)) {
-        messages.push(`${bData.name} already built at [${tile.x}, ${tile.z}].`);
+    if (existing.length > 0 && !(buildingType === 'CITADEL' && existing.includes('WALLS'))) {
+        messages.push(`${bData.name} cannot be built here — a building already occupies this tile.`);
         return messages;
     }
 
-    // One of each type per city (across all influence tiles)
-    if (tiles) {
-        const parentCity = findParentCity(tiles, tile);
-        if (parentCity) {
-            const cr = cityRadius(parentCity);
-            for (let dx = -cr; dx <= cr; dx++) {
-                for (let dz = -cr; dz <= cr; dz++) {
-                    const k = `${parentCity.x + dx},${parentCity.z + dz}`;
-                    if (k === tileKey) continue;
-                    const list = buildings.get(k) || [];
-                    if (list.includes(buildingType)) {
-                        messages.push(`${bData.name} already built in this city.`);
-                        return messages;
-                    }
-                }
-            }
-        }
-    }
+    // One of each type per city (across all influence tiles) — removed in
+    // favour of the 1-building-per-tile rule above.
 
     // CITADEL requires WALLS to be present (it upgrades Walls)
     if (buildingType === 'CITADEL' && !existing.includes('WALLS')) {
@@ -278,28 +262,10 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
             canBuild = false;
             reason = 'City not coastal';
         }
-        if (canBuild && existing.includes(type)) {
-            canBuild = false;
-            reason = 'Already built';
-        }
-        // One of each type per city (across all influence tiles)
-        if (canBuild && tiles) {
-            const parentCity = findParentCity(tiles, tile);
-            if (parentCity) {
-                const cr = cityRadius(parentCity);
-                for (let dx = -cr; dx <= cr; dx++) {
-                    for (let dz = -cr; dz <= cr; dz++) {
-                        const k = `${parentCity.x + dx},${parentCity.z + dz}`;
-                        if (k === tileKey) continue;
-                        const list = buildings.get(k) || [];
-                        if (list.includes(type)) {
-                            canBuild = false;
-                            reason = 'Already built in this city';
-                            break;
-                        }
-                    }
-                    if (!canBuild) break;
-                }
+        if (canBuild && existing.length > 0) {
+            if (!(type === 'CITADEL' && existing.includes('WALLS'))) {
+                canBuild = false;
+                reason = 'Tile occupied';
             }
         }
         // Tech gate: building requires a tech that hasn't been researched yet

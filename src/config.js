@@ -456,8 +456,8 @@ export const BUILDING_TYPE = {
     CITADEL:     { name: 'Citadel',     cost: { gold: 120, wood: 40, iron: 30 }, bonus: { defense: 8 }, terrain: 'CITY', upgradesFrom: 'WALLS',
                   desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.', techRequired: 'BASTION_FORT' },
     // === ENLIGHTENMENT ERA BUILDINGS ===
-    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 3 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+3 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ACADEMY' },
+    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+5 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ACADEMY' },
     BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'BANKING' },
     // === MODERN ERA BUILDINGS ===
@@ -878,8 +878,8 @@ export const UNREST_THRESHOLDS = {
 };
 
 export const UNREST_DECAY_RATES = {
-    GARRISON: 4,           // per turn, a friendly unit sits on the city tile
-    GOVERNOR: 6,           // per turn, a lord is assigned as the city's governor
+    GARRISON: 6,           // per turn, a friendly unit sits on the city tile (scales ×1/1.5/2 with count)
+    GOVERNOR: 8,           // per turn, a lord is assigned as the city's governor
     WALLS: 3,              // per turn, if WALLS building present on the city
     CITY_LEVEL: 1          // per turn per city level
 };

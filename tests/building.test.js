@@ -91,10 +91,16 @@ describe('building', () => {
       expect(msgs.some(m => m.includes('terrain'))).toBe(true);
     });
 
-    it('rejects duplicate', () => {
+    it('rejects duplicate on same tile', () => {
       const buildings = new Map([['0,0', ['MARKET']]]);
       const msgs = constructBuilding('MARKET', makeTile(0, 0, 'CITY'), { gold: 200, wood: 200 }, buildings);
-      expect(msgs.some(m => m.includes('already built'))).toBe(true);
+      expect(msgs.some(m => m.includes('already occupies this tile'))).toBe(true);
+    });
+
+    it('rejects different building type on occupied tile', () => {
+      const buildings = new Map([['0,0', ['MARKET']]]);
+      const msgs = constructBuilding('BARRACKS', makeTile(0, 0, 'CITY'), { gold: 200, wood: 200 }, buildings);
+      expect(msgs.some(m => m.includes('already occupies this tile'))).toBe(true);
     });
 
     it('rejects if cannot afford', () => {
@@ -108,16 +114,27 @@ describe('building', () => {
       expect(msgs.some(m => m.includes('water') || m.includes('river'))).toBe(true);
     });
 
-    it('rejects building same type in another tile within city influence (one per city)', () => {
+    it('allows different building on empty tile in same city (1 per tile limit)', () => {
       const tiles = new Map([
         ['0,0', makeTile(0, 0, 'CITY')],
         ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
       ]);
       const buildings = new Map([['0,0', ['MARKET']]]);
       const resources = { gold: 200, wood: 200, iron: 200 };
-      // Try to build another MARKET on influence tile
-      const msgs = constructBuilding('MARKET', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
-      expect(msgs.some(m => m.includes('already built in this city'))).toBe(true);
+      // Different type on a different (empty) tile should be allowed
+      const msgs = constructBuilding('BARRACKS', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      expect(msgs.some(m => m.includes('Built'))).toBe(true);
+    });
+
+    it('rejects any building on occupied tile', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+      ]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, wood: 200, iron: 200 };
+      const msgs = constructBuilding('MARKET', makeTile(0, 0, 'CITY'), resources, buildings, null, tiles);
+      expect(msgs.some(m => m.includes('already occupies this tile'))).toBe(true);
     });
 
     it('allows building same type in different city', () => {
@@ -132,15 +149,16 @@ describe('building', () => {
       expect(msgs.some(m => m.includes('Built'))).toBe(true);
     });
 
-    it('rejects building on influence tile when city tile already has the building', () => {
+    it('allows building on empty tile even if city tile has same type (1 per tile)', () => {
       const tiles = new Map([
         ['0,0', makeTile(0, 0, 'CITY')],
         ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
       ]);
       const buildings = new Map([['0,0', ['BARRACKS']]]);
       const resources = { gold: 200, wood: 200, iron: 200 };
+      // Same type on a different, empty tile is now allowed (1 per tile rule)
       const msgs = constructBuilding('BARRACKS', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
-      expect(msgs.some(m => m.includes('already built in this city'))).toBe(true);
+      expect(msgs.some(m => m.includes('Built'))).toBe(true);
     });
   });
 
@@ -157,7 +175,21 @@ describe('building', () => {
       expect(market.canBuild).toBe(false);
     });
 
-    it('marks building as cannotBuild if already built in city on another tile', () => {
+    it('marks building as cannotBuild if tile is occupied', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+      ]);
+      const buildings = new Map([['0,0', ['BARRACKS']]]);
+      const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
+      // Check if MARKET can be built on the OCCUPIED tile 0,0
+      const result = getBuildableBuildings(makeTile(0, 0, 'CITY'), resources, buildings);
+      const market = result.find(b => b.type === 'MARKET');
+      expect(market.canBuild).toBe(false);
+      expect(market.reason).toBe('Tile occupied');
+    });
+
+    it('allows building on empty tile even if another tile has same type', () => {
       const tiles = new Map([
         ['0,0', makeTile(0, 0, 'CITY')],
         ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
@@ -166,8 +198,7 @@ describe('building', () => {
       const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
       const result = getBuildableBuildings(makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
       const barracks = result.find(b => b.type === 'BARRACKS');
-      expect(barracks.canBuild).toBe(false);
-      expect(barracks.reason).toBe('Already built in this city');
+      expect(barracks.canBuild).toBe(true);
     });
 
     it('allows building in different city', () => {

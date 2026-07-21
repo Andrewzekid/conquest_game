@@ -913,10 +913,16 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
     const settlerCap = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency)) + hardCapBonus + settleGoalBoost;
+    // Stop training settlers entirely when no valid found spot exists on our
+    // home landmass — the AI cannot found a city, so training more settlers
+    // just wastes resources. Also disband idle settlers that can't found.
+    const hasFoundSpot = homeMassHasFoundSpot(tiles, owner, land, homeMass);
     const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION * (scarcityTriggered ? 2 : settlerUrgency > 1 ? 1.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
     while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTarget + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
+        // If there's no valid found spot on our landmass, stop immediately.
+        if (!hasFoundSpot) break;
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         if (liveSettlers + queuedSettlers >= settlerCap) break;
         // Hard cap: never keep more than AI_SETTLER_HARD_CAP (+scarcity bonus)
@@ -1160,6 +1166,16 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             const tr = adjacentTransport(unit, units, owner);
             if (tr) {
                 actions.push({ type: 'board', unitId: unit.id, transportId: tr.id });
+                acted.add(unit.id);
+                continue;
+            }
+            // If the settler is truly stuck — no found spot, no transport,
+            // and we already have cities — disband it to free unit cap and
+            // recover resources. Keep at least one idle settler in reserve
+            // in case a transport arrives next turn.
+            const idleSettlers = myUnits.filter(u2 => u2.type === 'SETTLER' && !acted.has(u2.id)).length;
+            if (idleSettlers > 1 && myCityCount >= 2 && !needsExpansionFleet) {
+                actions.push({ type: 'disband', unitId: unit.id });
                 acted.add(unit.id);
                 continue;
             }
@@ -3797,6 +3813,30 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     };
     members.filter(u => isScreener(u)).forEach(advance);
     members.filter(u => !isScreener(u)).forEach(advance);
+
+    // 8) Unrest garrison: idle military units move to garrison the nearest
+    //    high-unrest (>50) owned city. This ensures the AI actively manages
+    //    unrest in newly conquered or frontier cities.
+    for (const u of members) {
+        if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+        if (u.type === 'SETTLER' || u.type === 'WORKER' || u.type === 'SCOUT') continue;
+        // Find the nearest owned city with unrest > 50
+        let bestCity = null, bestDist = Infinity;
+        for (const t of tiles.values()) {
+            if (t.terrain !== 'CITY' || t.owner !== owner) continue;
+            if ((t.unrest || 0) <= 50) continue;
+            const d = manhattan(u.x, u.z, t.x, t.z);
+            if (d < bestDist) { bestDist = d; bestCity = t; }
+        }
+        if (bestCity && bestDist <= 10) {
+            const step = nextStepToward(tiles, units, u, bestCity, 200, owner);
+            if (step && !moved.has(`${step.x},${step.z}`)) {
+                out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                acted.add(u.id);
+                moved.add(`${step.x},${step.z}`);
+            }
+        }
+    }
 
     return out;
 }

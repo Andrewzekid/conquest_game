@@ -663,8 +663,15 @@ export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn
     }
 
     // Garrison present (counteracts the no_garrison penalty above).
-    if (hasGarrison) {
-        const decay = UNREST_DECAY_RATES.GARRISON;
+    // Decay scales with the number of friendly military units on the city tile:
+    // 1 unit = base rate, 2 units = 1.5x, 3+ units = 2x. A lord governing
+    // the city also counts (its governor bonus stacks separately).
+    const garrisonCount = units ? [...units.values()].filter(u =>
+        u.owner === owner && u.x === tile.x && u.z === tile.z &&
+        u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT').length : 0;
+    if (garrisonCount > 0) {
+        const garrisonMult = garrisonCount >= 3 ? 2.0 : garrisonCount === 2 ? 1.5 : 1.0;
+        const decay = Math.round(UNREST_DECAY_RATES.GARRISON * garrisonMult);
         unrest = Math.max(0, unrest - decay);
         reasons.push({ reason: 'garrison', amount: -decay });
     }
