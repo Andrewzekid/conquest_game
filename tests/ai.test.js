@@ -73,10 +73,10 @@ describe('findAffordableUnit artillery reservation', () => {
 
 describe('artillery cost reduction', () => {
   it('CATAPULT gold cost lowered from 80 to 70', () => {
-    expect(UNIT_COST.CATAPULT.gold).toBe(70);
+    expect(UNIT_COST.CATAPULT.gold).toBe(55);
   });
   it('TREBUCHET gold cost lowered from 100 to 85', () => {
-    expect(UNIT_COST.TREBUCHET.gold).toBe(85);
+    expect(UNIT_COST.TREBUCHET.gold).toBe(65);
   });
   it('CATAPULT no longer requires iron (lowered barrier)', () => {
     expect(UNIT_COST.CATAPULT.iron).toBe(0);

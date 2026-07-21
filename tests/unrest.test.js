@@ -244,15 +244,15 @@ describe('City Unrest System — processUnrest', () => {
   });
 
   it('conquest-count dampening reduces unrest gains for recaptured cities (Fix 13)', () => {
-    // Same setup as the no-garrison test, but with conquestCount = 3 (so
-    // dampening = 1 - 3*0.2 = 0.4). The no-garrison penalty should be reduced
-    // from 3 to floor(3 * 0.4) = 1.
+    // Same setup as the no-garrison test, but with conquestCount = 2 (so
+    // dampening = 1 - 2*0.25 = 0.5). The no-garrison penalty should be reduced
+    // from 2 to floor(2 * 0.5) = 1.
     const tiles = mkTiles([
-      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0, conquestCount: 3 }
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0, conquestCount: 2 }
     ]);
     const result = calculateUnrest(tiles, '5,5', 'player', new Map(), [], 10, new Map());
     const noGarrison = result.reasons.find(r => r.reason === 'no_garrison');
     expect(noGarrison).toBeTruthy();
-    expect(noGarrison.amount).toBe(1); // floor(3 * 0.4)
+    expect(noGarrison.amount).toBe(1); // floor(2 * 0.5)
   });
 });

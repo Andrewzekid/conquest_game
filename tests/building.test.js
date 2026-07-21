@@ -136,7 +136,8 @@ describe('building', () => {
 
   describe('upgradeBuilding', () => {
     it('rejects non-military building', () => {
-      const result = upgradeBuilding('MARKET', makeTile(0, 0, 'CITY'), {}, new Map(), new Map());
+      // WALLS is city-only and not military-upgradeable (no level table).
+      const result = upgradeBuilding('WALLS', makeTile(0, 0, 'CITY'), {}, new Map(), new Map());
       expect(result).toContain('Cannot upgrade');
     });
 
@@ -168,13 +169,17 @@ describe('building', () => {
 
   describe('removeBuilding', () => {
     it('removes pillageable building', () => {
+      // MARKET is now pillageable (it's an influence-buildable economic
+      // building that can be raided by enemy units).
       const buildings = new Map([['0,0', ['FARM', 'MARKET']]]);
       const removed = removeBuilding(makeTile(0, 0, 'CITY'), buildings);
       expect(removed).toBe('FARM');
     });
 
     it('returns null for no pillageable buildings', () => {
-      const buildings = new Map([['0,0', ['MARKET']]]);
+      // WALLS is not in PILLAGEABLE_BUILDINGS (stays on the city tile, not
+      // an economic/military structure that raiders can destroy).
+      const buildings = new Map([['0,0', ['WALLS']]]);
       const removed = removeBuilding(makeTile(0, 0, 'CITY'), buildings);
       expect(removed).toBeNull();
     });
@@ -182,12 +187,14 @@ describe('building', () => {
 
   describe('pillageableOn', () => {
     it('returns pillageable buildings', () => {
+      // Both FARM and MARKET are pillageable now.
       const buildings = new Map([['0,0', ['FARM', 'MARKET']]]);
-      expect(pillageableOn(makeTile(0, 0), buildings)).toEqual(['FARM']);
+      expect(pillageableOn(makeTile(0, 0), buildings)).toEqual(['FARM', 'MARKET']);
     });
 
     it('empty for no pillageable', () => {
-      const buildings = new Map([['0,0', ['MARKET']]]);
+      // WALLS is not pillageable.
+      const buildings = new Map([['0,0', ['WALLS']]]);
       expect(pillageableOn(makeTile(0, 0), buildings)).toEqual([]);
     });
   });

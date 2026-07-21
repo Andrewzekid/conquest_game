@@ -104,7 +104,7 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Tech tree: accumulate research for the player each turn.
         if (gameState.techState) {
-            const researchPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION);
+            const researchPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION, gameState.buildings);
             if (researchPts > 0) {
                 const completed = addResearch(gameState.techState, researchPts);
                 if (completed && completed.length > 0) {
@@ -126,7 +126,7 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                     const personality = (def && def.aiPersonality) || 'BALANCED';
                     autoSelectResearch(aiTs, personality);
                 }
-                const researchPts = calculateResearchOutput(gameState.tiles, ai);
+                const researchPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
                 if (researchPts > 0) {
                     const completed = addResearch(aiTs, researchPts);
                     if (completed && completed.length && logger) {

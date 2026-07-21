@@ -85,7 +85,7 @@ export function computeScarcity(stock, prev, thresholds) {
  * @param diploState - diplomacy state (used to respect peace/trade/alliance:
  *                     the AI only attacks factions it is at war with)
  */
-export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null, buildingState = null, aiState = null, aiTechStates = null, victoryState = null) {
+export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null, buildingState = null, aiState = null, aiTechStates = null, victoryState = null, currentTurn = 0) {
     const actions = [];
     const myUnits = [...units.values()].filter(u => u.owner === owner && !u.boarded);
     let res = { ...resources };
@@ -141,6 +141,37 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const activeObjectives = detectActiveObjectives(units, tiles, owner, isAtWar);
 
     const canBuildAt = (t) => !influence || influence.has(`${t.x},${t.z}`);
+    // Find a tile to build a military building (BARRACKS/SIEGE_WORKSHOP/
+    // HARBOR). These are `influenceBuildable` — they can go on ANY passable
+    // land tile in a city's influence, not just the city tile itself. The city
+    // tile is scarce (only one per city) and should be reserved for city-only
+    // buildings (MARKET, WALLS, UNIVERSITY, etc.), so we prefer a NON-city
+    // influence tile. Falls back to the city tile only if no other influence
+    // tile is available (small empires with a 1-tile radius).
+    const findBuildSite = (buildingType, ownedTiles, buildingsMap, tilesMap) => {
+        const bData = BUILDING_TYPE[buildingType];
+        if (!bData) return null;
+        const existing = (t) => (buildingsMap.get(`${t.x},${t.z}`) || []).includes(buildingType);
+        // First pass: passable non-city land in influence, not already built.
+        for (const t of ownedTiles) {
+            if (t.terrain === 'CITY') continue;
+            if (!canBuildAt(t)) continue;
+            if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN' || t.terrain === 'RIVER') continue;
+            if (existing(t)) continue;
+            // Harbor must be coastal.
+            if (buildingType === 'HARBOR' && !isCoastalCity(t, tilesMap)) continue;
+            return t;
+        }
+        // Fallback: the city tile itself (only if no influence tile was found).
+        for (const t of ownedTiles) {
+            if (t.terrain !== 'CITY') continue;
+            if (!canBuildAt(t)) continue;
+            if (existing(t)) continue;
+            if (buildingType === 'HARBOR' && !isCoastalCity(t, tilesMap)) continue;
+            return t;
+        }
+        return null;
+    };
     const owned = [...tiles.values()].filter(t => t.owner === owner);
     const myCityCount = owned.filter(t => t.terrain === 'CITY').length;
     const hasBarracks = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('BARRACKS'));
@@ -312,7 +343,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }));
 
     const goals = selectGoals({
-        aiState, turn: aiState ? aiState.lastPlanTurn : 0, factionDef,
+        aiState, turn: currentTurn || (aiState ? aiState.lastPlanTurn : 0), factionDef,
         enemies, enemyCities: enemyCitiesArr, ownCities: ownCitiesArr, homeAnchor,
         activeObjectives, threatenedOwnCity,
         isIslandFaction, needsNavalExpansion, foreignMassWithoutCity,
@@ -468,8 +499,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor && (isIslandFaction || needsNavalExpansion)) {
-            const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-                !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
+            const coastal = findBuildSite('HARBOR', owned, buildings, tiles);
             if (coastal) {
                 if (canAffordBuilding('HARBOR', res)) {
                     actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
@@ -493,12 +523,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const wantsConquest = atWar || goalKind === 'conquest';
     const needsSiegeWorkshopFirst = wantsConquest && !hasTrainableSiege && !hasSiegeWorkshop && myCityCount >= 1;
     if (needsSiegeWorkshopFirst) {
-        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-            !(buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
-        if (city) {
+        const site = findBuildSite('SIEGE_WORKSHOP', owned, buildings, tiles);
+        if (site) {
             const swCost = BUILDING_TYPE.SIEGE_WORKSHOP.cost;
             if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
-                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${city.x},${city.z}` });
+                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${site.x},${site.z}` });
                 res = payBuilding('SIEGE_WORKSHOP', res);
             } else {
                 // Can't afford yet — reserve the funds so later spending this
@@ -509,10 +538,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     if (!hasBarracks && !needsSiegeWorkshopFirst) {
-        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-            !(buildings.get(`${t.x},${t.z}`) || []).includes('BARRACKS'));
-        if (city && canAffordBuilding('BARRACKS', res)) {
-            actions.push({ type: 'build', buildingType: 'BARRACKS', tileKey: `${city.x},${city.z}` });
+        const site = findBuildSite('BARRACKS', owned, buildings, tiles);
+        if (site && canAffordBuilding('BARRACKS', res)) {
+            actions.push({ type: 'build', buildingType: 'BARRACKS', tileKey: `${site.x},${site.z}` });
             res = payBuilding('BARRACKS', res);
         }
     }
@@ -524,11 +552,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     unlock artillery even before the first war declaration. (When at war
     //     and lacking siege it was already built above, before Barracks.)
     if (!hasSiegeWorkshop && myCityCount >= 1 && !needsSiegeWorkshopFirst) {
-        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-            !(buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
-        if (city) {
+        const site = findBuildSite('SIEGE_WORKSHOP', owned, buildings, tiles);
+        if (site) {
             if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
-                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${city.x},${city.z}` });
+                actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${site.x},${site.z}` });
                 res = payBuilding('SIEGE_WORKSHOP', res);
             } else if (!hasTrainableSiege) {
                 // No-siege-roster faction (Verdant, Golden, Storm): the Siege
@@ -561,25 +588,23 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 1af. MARKET in cities — always useful for gold income, but especially
-    //      important for economic victory. Build in one city per turn if affordable.
+    // 1af. MARKET — always useful for gold income, but especially
+    //      important for economic victory. Built on an influence tile (not the
+    //      city tile, which is reserved for WALLS). Build one per turn if affordable.
     const vt = aiState && aiState.victoryTarget;
     const hasMarket = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
     if (!hasMarket && myCityCount >= 1) {
-        const city = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-            !(buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
-        if (city && canAffordBuilding('MARKET', res)) {
-            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${city.x},${city.z}` });
+        const site = findBuildSite('MARKET', owned, buildings, tiles);
+        if (site && canAffordBuilding('MARKET', res)) {
+            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${site.x},${site.z}` });
             res = payBuilding('MARKET', res);
         }
     }
-    // Economic victory: build MARKET in more cities
+    // Economic victory: build MARKET on more influence tiles
     if (vt === 'economic' && myCityCount >= 2) {
-        const citiesWithoutMarket = owned.filter(t => t.terrain === 'CITY' && canBuildAt(t) &&
-            !(buildings.get(`${t.x},${t.z}`) || []).includes('MARKET'));
-        if (citiesWithoutMarket.length > 0 && canAffordBuilding('MARKET', res)) {
-            const city = citiesWithoutMarket[0];
-            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${city.x},${city.z}` });
+        const site = findBuildSite('MARKET', owned, buildings, tiles);
+        if (site && canAffordBuilding('MARKET', res)) {
+            actions.push({ type: 'build', buildingType: 'MARKET', tileKey: `${site.x},${site.z}` });
             res = payBuilding('MARKET', res);
         }
     }
@@ -818,8 +843,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor) {
-            const coastal = owned.find(t => t.terrain === 'CITY' && canBuildAt(t) &&
-                !(buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') && isCoastalCity(t, tiles));
+            const coastal = findBuildSite('HARBOR', owned, buildings, tiles);
             if (coastal && canAffordBuilding('HARBOR', res) &&
                 (isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands' ||
                  myCityCount >= 2 || hasBarracks)) {
@@ -1698,7 +1722,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         const objective = groupObjectives.get(g);
         const stance = groupStances.get(g);
         actions.push(...planGroup(g, objective, stance, units, tiles, owner,
-            lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures));
+            lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures, activeObjectives));
     }
 
     return actions;
@@ -3160,7 +3184,7 @@ function flankingStep(unit, target, units, tiles, owner, moved, isAtWar) {
  *   6. Advance: remaining units move toward the objective in formation (melee
  *      screens first; fragile units only advance behind a screen).
  */
-function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures = null) {
+function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures = null, activeObjectives = null) {
     const out = [];
     const members = group.units.filter(u => !acted.has(u.id));
     if (!members.length) return out;

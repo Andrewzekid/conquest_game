@@ -451,11 +451,21 @@ export function getResearchProgress(state) {
 }
 
 /** Calculate total research output from all cities. */
-export function calculateResearchOutput(tiles, owner) {
+export function calculateResearchOutput(tiles, owner, buildings) {
     let total = 0;
     for (const tile of tiles.values()) {
-        if (tile.owner === owner && tile.terrain === 'CITY') {
+        if (tile.owner !== owner) continue;
+        if (tile.terrain === 'CITY') {
             total += tile.cityLevel || 1;
+        }
+    }
+    // UNIVERSITY buildings (now buildable on influence tiles outside the city)
+    // grant +3 research each. Scan all owned tiles, not just city tiles.
+    if (buildings) {
+        for (const tile of tiles.values()) {
+            if (tile.owner !== owner) continue;
+            const list = buildings.get(`${tile.x},${tile.z}`) || [];
+            if (list.includes('UNIVERSITY')) total += 3;
         }
     }
     return total;

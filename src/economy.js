@@ -142,12 +142,13 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
         const resType = terrainData.resource;
         let amount = terrainData.amount || 0;
         const tileBuildings = buildings.get(key) || [];
+        // Terrain-matched improvements (FARM/LUMBERMILL/MINE) boost the
+        // terrain's own resource yield.
         for (const bType of tileBuildings) {
             const bData = BUILDING_TYPE[bType];
             if (bData && bData.bonus) {
                 for (const [res, bonus] of Object.entries(bData.bonus)) {
                     if (res === resType) amount += bonus;
-                    else add(res, 'terrain', bonus);
                 }
             }
         }
@@ -157,6 +158,45 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
             else if (resType === 'wood') add('wood', tileBuildings.includes('LUMBERMILL') ? 'lumbermill' : 'terrain', amount);
             else if (resType === 'iron') add('iron', tileBuildings.includes('MINE') ? 'mine' : 'terrain', amount);
             else add(resType, 'terrain', amount);
+        }
+    }
+
+    // Non-terrain buildings (MARKET/BARRACKS/SIEGE_WORKSHOP/HARBOR/UNIVERSITY/
+    // BANK/COMMAND_POST/POWER_PLANT) now sit on influence tiles outside the
+    // city, so their bonuses must be collected from ALL owned tiles — not just
+    // the city tile or the worked-tile set. WALLS/CITADEL stay on the city
+    // tile and only grant defense (no economic bonus to collect here).
+    for (const t of tiles.values()) {
+        if (t.owner !== owner) continue;
+        const key = `${t.x},${t.z}`;
+        if (key === `${t.x},${t.z}` && t.terrain === 'CITY') {
+            // City-tile buildings were already collected in the city loop above.
+            continue;
+        }
+        const tileBuildings = buildings.get(key) || [];
+        for (const bType of tileBuildings) {
+            const bData = BUILDING_TYPE[bType];
+            if (!bData || !bData.bonus) continue;
+            for (const [res, bonus] of Object.entries(bData.bonus)) {
+                if (res === 'defense') continue;
+                if (res === 'gold') {
+                    if (bType === 'MARKET') add('gold', 'market', bonus);
+                    else if (bType === 'BANK') add('gold', 'bank', bonus);
+                    else add('gold', 'city', bonus);
+                } else if (res === 'production') {
+                    if (bType === 'BARRACKS') add('production', 'barracks', bonus);
+                    else if (bType === 'SIEGE_WORKSHOP') add('production', 'workshop', bonus);
+                    else if (bType === 'HARBOR') add('production', 'harbor', bonus);
+                    else if (bType === 'COMMAND_POST') add('production', 'commandPost', bonus);
+                    else if (bType === 'POWER_PLANT') add('production', 'powerPlant', bonus);
+                    else add('production', 'city', bonus);
+                } else if (res === 'research') {
+                    if (bType === 'UNIVERSITY') add('research', 'university', bonus);
+                    else add('research', 'city', bonus);
+                } else {
+                    add(res, 'city', bonus);
+                }
+            }
         }
     }
 
@@ -566,11 +606,11 @@ export function calculateUnrest(tiles, cityKey, owner, units, lords, currentTurn
     const reasons = [];
 
     // Conquest-history dampening: each prior capture of this city reduces
-    // unrest GAINS by 20% (min 20% of base), so a hotly-contested border
+    // unrest GAINS by 25% (min 15% of base), so a hotly-contested border
     // city stops cycling to 100 unrest forever. Only applies to increases;
     // decay bonuses (garrison/governor/walls/level) keep full strength.
     const conquestCount = tile.conquestCount || 0;
-    const dampening = Math.max(0.2, 1 - conquestCount * 0.2);
+    const dampening = Math.max(0.15, 1 - conquestCount * 0.25);
 
     // --- INCREASES ---
     // Distance from the nearest other same-owner city (frontier cities are rowdier).

@@ -143,6 +143,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
     // (Defense bonus applied below in defender section)
 
+    // Precompute isCity once — used by several per-unit bonus blocks below
+    // BEFORE the general siege-bonus section. Declaring it here (before the
+    // per-unit blocks that reference it) avoids a temporal-dead-zone
+    // ReferenceError ("Cannot access 'isCity' before initialization").
+    const isCity = terrain === 'CITY';
+
     // CANNON siege bonus: additional +4 vs cities (stacks with base siegeBonus).
     if (attackerUnit.type === 'CANNON' && isCity) {
         effectiveAttack += 4;
@@ -179,7 +185,6 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     // Siege bonus: artillery vs cities, lord siege ability, or Conqueror class.
-    const isCity = terrain === 'CITY';
     if (isCity) {
         if (atkStats.siegeBonus) {
             effectiveAttack += atkStats.siegeBonus;

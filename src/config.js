@@ -161,7 +161,11 @@ export const UNIT_TYPE = {
 };
 
 // Units available to every faction in addition to its themed roster. Ships
-// are unlocked per-city by a Harbor.
+// are unlocked per-city by a Harbor. Faction-signature units (LEGIONNAIRE,
+// BERSERKER, VARANGIAN_GUARD, CONQUISTADOR, WINGED_HUSSAR) appear here because
+// they're also tech-unlocked — other factions can reach them via research, but
+// the UI must tech-gate them (only show once the unlocking tech is researched)
+// rather than showing them all from turn 1.
 export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
@@ -185,62 +189,62 @@ export const TERRAIN_BONUS = {
 export const UNIT_COST = {
     INFANTRY:    { gold: 30, food: 10, wood: 0,  iron: 0,  production: 10 },
     ARCHER:      { gold: 40, food: 0,  wood: 20, iron: 0,  production: 15 },
-    ARTILLERY:   { gold: 60, food: 0,  wood: 20, iron: 20, production: 25 },
+    ARTILLERY:   { gold: 45, food: 0,  wood: 15, iron: 12, production: 18 },
     CAVALRY:     { gold: 50, food: 30, wood: 0,  iron: 10, production: 20 },
-    PIKEMAN:     { gold: 45, food: 10, wood: 10, iron: 10, production: 15 },
-    SCOUT:       { gold: 25, food: 5,  wood: 5,  iron: 0,  production: 8 },
-    SIEGE:       { gold: 55, food: 5,  wood: 10, iron: 10, production: 20 },
-    SETTLER:     { gold: 50, food: 25, wood: 0,  iron: 0,  production: 20 },
-    ENGINEER:    { gold: 60, food: 10, wood: 20, iron: 10, production: 20 },
-    WORKER:      { gold: 30, food: 10, wood: 5,  iron: 0,  production: 10 },
-    LONGBOWMAN:  { gold: 60, food: 0,  wood: 25, iron: 0,  production: 18 },
-    CATAPHRACT:  { gold: 90, food: 20, wood: 0,  iron: 15, production: 25 },
-    CHARIOT:     { gold: 65, food: 20, wood: 15, iron: 10, production: 20 },
-    MEDIC:       { gold: 55, food: 10, wood: 10, iron: 0,  production: 15 },
-    SIEGE_TOWER: { gold: 40, food: 5,  wood: 15, iron: 0,  production: 15 },
-    LEGIONNAIRE:    { gold: 45, food: 10, wood: 5,  iron: 5,  production: 15 },
-    BERSERKER:      { gold: 50, food: 10, wood: 5,  iron: 5,  production: 16 },
-    VARANGIAN_GUARD:{ gold: 85, food: 10, wood: 0,  iron: 15, production: 24 },
-    CONQUISTADOR:   { gold: 80, food: 15, wood: 5,  iron: 15, production: 22 },
-    WINGED_HUSSAR:  { gold: 95, food: 20, wood: 0,  iron: 15, production: 26 },
-    CROSSBOWMAN:    { gold: 65, food: 0,  wood: 25, iron: 0,  production: 18 },
-    CATAPULT:    { gold: 70,  food: 0,  wood: 12, iron: 0,  production: 22 },
-    TREBUCHET:   { gold: 85,  food: 0,  wood: 18, iron: 8,  production: 26 },
-    GALLEY:      { gold: 40, food: 10, wood: 20, iron: 0,  production: 16 },
-    TRANSPORT:   { gold: 35, food: 5,  wood: 20, iron: 0,  production: 20 },
-    FRIGATE:     { gold: 60, food: 15, wood: 30, iron: 10, production: 24 },
-    GALLEON:     { gold: 90, food: 20, wood: 40, iron: 20, production: 30 },
+    PIKEMAN:     { gold: 35, food: 8,  wood: 5,  iron: 8,  production: 12 },
+    SCOUT:       { gold: 20, food: 5,  wood: 5,  iron: 0,  production: 6 },
+    SIEGE:       { gold: 40, food: 5,  wood: 8,  iron: 8,  production: 15 },
+    SETTLER:     { gold: 40, food: 20, wood: 0,  iron: 0,  production: 15 },
+    ENGINEER:    { gold: 45, food: 8,  wood: 15, iron: 8,  production: 15 },
+    WORKER:      { gold: 25, food: 8,  wood: 5,  iron: 0,  production: 8 },
+    LONGBOWMAN:  { gold: 45, food: 0,  wood: 18, iron: 0,  production: 14 },
+    CATAPHRACT:  { gold: 65, food: 15, wood: 0,  iron: 12, production: 18 },
+    CHARIOT:     { gold: 50, food: 15, wood: 12, iron: 8,  production: 15 },
+    MEDIC:       { gold: 40, food: 8,  wood: 8,  iron: 0,  production: 12 },
+    SIEGE_TOWER: { gold: 30, food: 5,  wood: 12, iron: 0,  production: 12 },
+    LEGIONNAIRE:    { gold: 35, food: 8,  wood: 5,  iron: 5,  production: 12 },
+    BERSERKER:      { gold: 40, food: 8,  wood: 5,  iron: 5,  production: 13 },
+    VARANGIAN_GUARD:{ gold: 60, food: 8,  wood: 0,  iron: 12, production: 18 },
+    CONQUISTADOR:   { gold: 60, food: 12, wood: 5,  iron: 12, production: 17 },
+    WINGED_HUSSAR:  { gold: 70, food: 15, wood: 0,  iron: 12, production: 20 },
+    CROSSBOWMAN:    { gold: 50, food: 0,  wood: 18, iron: 0,  production: 14 },
+    CATAPULT:    { gold: 55,  food: 0,  wood: 10, iron: 0,  production: 18 },
+    TREBUCHET:   { gold: 65,  food: 0,  wood: 15, iron: 5,  production: 20 },
+    GALLEY:      { gold: 30, food: 8,  wood: 15, iron: 0,  production: 12 },
+    TRANSPORT:   { gold: 25, food: 5,  wood: 15, iron: 0,  production: 15 },
+    FRIGATE:     { gold: 45, food: 12, wood: 22, iron: 8,  production: 18 },
+    GALLEON:     { gold: 65, food: 15, wood: 30, iron: 15, production: 22 },
     // === RENAISSANCE ERA UNIT COSTS ===
-    MUSKETEER:   { gold: 80, food: 15, wood: 10, iron: 15, production: 22 },
-    ARQUEBUSIER: { gold: 70, food: 10, wood: 10, iron: 12, production: 20 },
-    MAN_OF_WAR:  { gold: 120, food: 20, wood: 50, iron: 25, production: 35 },
-    GALLEASS:    { gold: 90, food: 15, wood: 40, iron: 15, production: 28 },
-    PINNACE:     { gold: 50, food: 8, wood: 25, iron: 5, production: 18 },
+    MUSKETEER:   { gold: 60, food: 12, wood: 8,  iron: 12, production: 17 },
+    ARQUEBUSIER: { gold: 55, food: 8,  wood: 8,  iron: 10, production: 15 },
+    MAN_OF_WAR:  { gold: 90, food: 15, wood: 35, iron: 18, production: 25 },
+    GALLEASS:    { gold: 65, food: 12, wood: 30, iron: 12, production: 20 },
+    PINNACE:     { gold: 40, food: 6,  wood: 18, iron: 5,  production: 14 },
     // === ENLIGHTENMENT ERA UNIT COSTS ===
-    LINE_INFANTRY: { gold: 100, food: 20, wood: 10, iron: 20, production: 28 },
-    DRAGOON:     { gold: 110, food: 25, wood: 10, iron: 18, production: 30 },
-    CANNON:      { gold: 120, food: 10, wood: 15, iron: 30, production: 35 },
-    MORTAR:      { gold: 100, food: 10, wood: 15, iron: 25, production: 30 },
-    CORVETTE:    { gold: 70, food: 12, wood: 35, iron: 10, production: 22 },
-    FROLIC:      { gold: 100, food: 18, wood: 45, iron: 15, production: 30 },
-    MERCHANTMAN: { gold: 80, food: 15, wood: 35, iron: 5, production: 25 },
+    LINE_INFANTRY: { gold: 75, food: 15, wood: 8,  iron: 15, production: 22 },
+    DRAGOON:     { gold: 80, food: 18, wood: 8,  iron: 14, production: 24 },
+    CANNON:      { gold: 90, food: 8,  wood: 12, iron: 22, production: 28 },
+    MORTAR:      { gold: 75, food: 8,  wood: 12, iron: 18, production: 24 },
+    CORVETTE:    { gold: 55, food: 10, wood: 25, iron: 8,  production: 18 },
+    FROLIC:      { gold: 75, food: 14, wood: 32, iron: 12, production: 24 },
+    MERCHANTMAN: { gold: 60, food: 12, wood: 25, iron: 5,  production: 20 },
     // === MODERN ERA UNIT COSTS ===
-    RIFLEMAN:    { gold: 140, food: 25, wood: 10, iron: 30, production: 35 },
-    SHARPSHOOTER: { gold: 150, food: 20, wood: 10, iron: 25, production: 38 },
-    RAILGUN:     { gold: 160, food: 15, wood: 10, iron: 45, production: 42 },
-    ARMORED_TRAIN: { gold: 150, food: 20, wood: 15, iron: 40, production: 40 },
-    FIELD_GUN:   { gold: 140, food: 15, wood: 12, iron: 35, production: 38 },
-    HORSE_ARTILLERY: { gold: 145, food: 20, wood: 12, iron: 35, production: 40 },
-    DEMOLITION_SQUAD: { gold: 90, food: 10, wood: 15, iron: 10, production: 25 },
-    SIEGE_CANNON: { gold: 150, food: 10, wood: 15, iron: 40, production: 40 },
-    IRONCLAD:    { gold: 180, food: 25, wood: 20, iron: 50, production: 45 },
-    STEAM_TRANSPORT: { gold: 120, food: 15, wood: 25, iron: 30, production: 35 },
-    GUNBOAT:     { gold: 80, food: 10, wood: 20, iron: 15, production: 22 },
-    IRONCLAD_FRIGATE: { gold: 200, food: 30, wood: 20, iron: 60, production: 50 },
-    MONITOR:     { gold: 190, food: 25, wood: 15, iron: 55, production: 48 },
-    FRIGATE_2:   { gold: 130, food: 20, wood: 40, iron: 20, production: 32 },
-    SUBMARINE:   { gold: 160, food: 12, wood: 10, iron: 45, production: 40 },
-    TORPEDO_BOAT: { gold: 100, food: 8, wood: 10, iron: 30, production: 28 }
+    RIFLEMAN:    { gold: 100, food: 18, wood: 8,  iron: 22, production: 28 },
+    SHARPSHOOTER: { gold: 110, food: 15, wood: 8,  iron: 18, production: 30 },
+    RAILGUN:     { gold: 120, food: 12, wood: 8,  iron: 32, production: 32 },
+    ARMORED_TRAIN: { gold: 110, food: 15, wood: 12, iron: 28, production: 30 },
+    FIELD_GUN:   { gold: 100, food: 12, wood: 10, iron: 25, production: 30 },
+    HORSE_ARTILLERY: { gold: 105, food: 15, wood: 10, iron: 25, production: 30 },
+    DEMOLITION_SQUAD: { gold: 65, food: 8,  wood: 12, iron: 8,  production: 20 },
+    SIEGE_CANNON: { gold: 110, food: 8,  wood: 12, iron: 28, production: 30 },
+    IRONCLAD:    { gold: 130, food: 18, wood: 15, iron: 35, production: 35 },
+    STEAM_TRANSPORT: { gold: 90, food: 12, wood: 18, iron: 22, production: 28 },
+    GUNBOAT:     { gold: 60, food: 8,  wood: 15, iron: 12, production: 18 },
+    IRONCLAD_FRIGATE: { gold: 140, food: 22, wood: 15, iron: 42, production: 38 },
+    MONITOR:     { gold: 135, food: 18, wood: 12, iron: 38, production: 36 },
+    FRIGATE_2:   { gold: 95, food: 15, wood: 30, iron: 15, production: 25 },
+    SUBMARINE:   { gold: 115, food: 10, wood: 8,  iron: 32, production: 30 },
+    TORPEDO_BOAT: { gold: 75, food: 6,  wood: 8,  iron: 22, production: 22 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -297,7 +301,7 @@ export const CAPTURE_COST = 20; // Gold to capture an unowned tile
 // Pillage: a military unit can destroy an enemy terrain improvement on an
 // adjacent tile, pocketing a gold reward. One improvement per pillage action.
 export const PILLAGE_GOLD_REWARD = 15;
-export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE', 'BARRACKS', 'SIEGE_WORKSHOP', 'HARBOR'];
+export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE', 'BARRACKS', 'SIEGE_WORKSHOP', 'HARBOR', 'MARKET', 'UNIVERSITY', 'BANK', 'COMMAND_POST', 'POWER_PLANT'];
 
 // AOE/fire ailment tuning for siege engines (CATAPULT, TREBUCHET).
 export const AOE_RADIUS = 1;            // Chebyshev radius around the target tile for splash
@@ -429,39 +433,43 @@ export const TRADE_ROUTE_GOLD = 10; // per turn per route
 export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 
 // --- Buildings ---
-// Military buildings (BARRACKS / SIEGE_WORKSHOP / HARBOR) may be built on any
-// passable land tile inside a city's influence (not just the city tile) — set
-// `influenceBuildable: true`. MARKET/WALLS stay city-only; FARM/LUMBERMILL/MINE
-// remain terrain-matched.
+// All buildings below may be built on any passable land tile inside a city's
+// influence (not just the city tile) — set `influenceBuildable: true`. This
+// keeps the scarce city tile free and lets the player fortify/equip the
+// surrounding region. Military buildings (and economic ones with HP) can be
+// attacked, damaged, and pillaged. FARM/LUMBERMILL/MINE remain terrain-matched.
 export const BUILDING_TYPE = {
     FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 3 },   terrain: 'PLAINS', desc: '+3 food/turn.' },
     LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 5 },   terrain: 'FOREST', desc: '+5 wood/turn.' },
     MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
-    MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', desc: '+10 gold/turn.' },
+    MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.' },
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+10 production/turn. Units trained in this city start as veterans and cost less gold. Buildable in the city or its influence.' },
-    WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY', desc: '+5 defense to units defending this tile (strong fortification).' },
+    WALLS:      { name: 'Walls',      cost: { gold: 70, wood: 0, iron: 30 },    bonus: { defense: 5 }, terrain: 'CITY',
+                  desc: '+5 defense to units defending this tile (strong fortification). Stays on the city tile.' },
     HARBOR:     { name: 'Harbor',     cost: { gold: 60, wood: 30, iron: 0 },    bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.' },
     // === RENAISSANCE ERA BUILDINGS ===
     CITADEL:     { name: 'Citadel',     cost: { gold: 120, wood: 40, iron: 30 }, bonus: { defense: 8 }, terrain: 'CITY', upgradesFrom: 'WALLS',
-                  desc: '+8 defense to units defending this tile. Upgrades Walls.' },
+                  desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.' },
     // === ENLIGHTENMENT ERA BUILDINGS ===
-    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 3 }, terrain: 'CITY',
-                  desc: '+3 research points per turn.' },
-    BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY',
-                  desc: '+20 gold per turn.' },
+    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 3 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+3 research points per turn. Buildable in the city or its influence; pillageable by enemy units.' },
+    BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.' },
     // === MODERN ERA BUILDINGS ===
-    COMMAND_POST:{ name: 'Command Post', cost: { gold: 180, wood: 50, iron: 40 }, bonus: { production: 8 }, terrain: 'CITY',
-                  desc: '+8 production per turn. Lords gain +2 command range.' },
-    POWER_PLANT: { name: 'Power Plant', cost: { gold: 250, wood: 60, iron: 50 }, bonus: { production: 12 }, terrain: 'CITY',
-                  desc: '+12 production per turn.' }
+    COMMAND_POST:{ name: 'Command Post', cost: { gold: 180, wood: 50, iron: 40 }, bonus: { production: 8 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+8 production per turn. Lords gain +2 command range. Buildable in the city or its influence; pillageable by enemy units.' },
+    POWER_PLANT: { name: 'Power Plant', cost: { gold: 250, wood: 60, iron: 50 }, bonus: { production: 12 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+12 production per turn. Buildable in the city or its influence; pillageable by enemy units.' }
 };
 
 // Military structures outside cities can be attacked, damaged, and pillaged.
-export const MILITARY_BUILDING_HP = { BARRACKS: 20, SIEGE_WORKSHOP: 25, HARBOR: 30 };
+// All influence-buildable buildings have HP so they can be attacked/pillaged.
+export const MILITARY_BUILDING_HP = { BARRACKS: 20, SIEGE_WORKSHOP: 25, HARBOR: 30, MARKET: 15, UNIVERSITY: 20, BANK: 20, COMMAND_POST: 25, POWER_PLANT: 30 };
 export const MILITARY_BUILDING_DEFENSE = { BARRACKS: 2, SIEGE_WORKSHOP: 3, HARBOR: 3 };
 
 // Per-level upgrade curves for military buildings (max level 3). Each level
@@ -855,17 +863,17 @@ export const UNREST_DECAY_RATES = {
 
 export const UNREST_INCREASE_RATES = {
     DISTANCE: 1,           // per tile distance from the nearest same-owner city
-    NO_GARRISON: 3,        // per turn, no friendly unit on the city tile
-    CULTURAL_PRESSURE: 2,  // per adjacent enemy-owned city tile
-    RECENT_CONQUEST: 8,   // immediate on capture, decays 1/turn over 12 turns
-    RECENT_CONQUEST_DECAY_TURNS: 12,
+    NO_GARRISON: 2,        // per turn, no friendly unit on the city tile
+    CULTURAL_PRESSURE: 1,  // per adjacent enemy-owned city tile
+    RECENT_CONQUEST: 6,   // immediate on capture, decays 1/turn over 14 turns
+    RECENT_CONQUEST_DECAY_TURNS: 14,
     OCCUPATION: 1,         // per turn while enemy units are on adjacent tiles
-    CAPTURE_INITIAL: 35   // captured cities start at this unrest
+    CAPTURE_INITIAL: 25   // captured cities start at this unrest
 };
 
 // Rebellion: at 100 unrest a city has this chance per turn to flip to the
 // most influential neighboring owner (or go independent).
-export const UNREST_REBEL_CHANCE = 0.15;
+export const UNREST_REBEL_CHANCE = 0.1;
 
 // Stability factors: reduce (or increase) unrest based on the empire's
 // overall condition — prosperity, military strength, fortifications,

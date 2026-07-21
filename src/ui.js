@@ -13,6 +13,7 @@ import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAv
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
+import { getUnlockedUnits, TECHS } from './tech.js';
 
 // Map building types to their icon names in src/icons.js.
 const BUILDING_ICON = {
@@ -808,6 +809,28 @@ export function bindUI(gameState, callbacks) {
                 const def = defOf(PLAYER_FACTION);
                 const roster = (def && def.roster) || Object.keys(UNIT_TYPE);
                 const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
+                // Tech gating: faction-roster units are always available, but
+                // EXTRA_UNITS that are unlocked by a tech are only shown once
+                // that tech is researched. Mirrors the AI's filter in ai.js. This
+                // stops gunpowder-era units (and other faction's signature units
+                // like LEGIONNAIRE/BERSERKER) appearing in the build menu from
+                // turn 1 — they must be researched first.
+                const ts = gameState.techState;
+                if (ts && ts.researched) {
+                    const unlocked = getUnlockedUnits(ts);
+                    const filtered = fullRoster.filter(u => {
+                        if (roster.includes(u)) return true; // faction-roster always available
+                        if (EXTRA_UNITS.includes(u) && !unlocked.has(u)) {
+                            // Only block if some tech actually unlocks this unit.
+                            const hasTechUnlock = Object.values(TECHS).some(t =>
+                                t.unlocks.some(ul => ul.type === 'unit' && ul.id === u));
+                            if (hasTechUnlock) return false;
+                        }
+                        return true;
+                    });
+                    fullRoster.length = 0;
+                    for (const u of filtered) fullRoster.push(u);
+                }
                 // Ships are unlocked per-city by a Harbor (coastal cities only).
                 const hasHarbor = (gameState.buildings.get(cityKey) || []).includes('HARBOR');
                 if (hasHarbor) {

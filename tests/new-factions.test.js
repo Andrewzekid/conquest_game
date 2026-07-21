@@ -107,7 +107,7 @@ describe('new factions — unit mods', () => {
     expect(s.defense).toBe(3); // base 2 + 1
     expect(s.hp).toBe(12);     // base 10 + 2
     const cost = getUnitCostFor('SIEGE', r);
-    expect(cost.gold).toBe(Math.floor(55 * 0.85));
+    expect(cost.gold).toBe(Math.floor(UNIT_COST.SIEGE.gold * 0.85));
   });
 
   it('spanish SETTLER cost is reduced 30% via the faction passive', () => {

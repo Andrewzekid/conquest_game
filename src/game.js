@@ -798,12 +798,17 @@ export class Game {
             if (dist === 1) { this.handleBuildBridge(sel, tile); return; }
         }
 
-        // 1) Besiege: a selected player SIEGE/ARTILLERY clicks an adjacent fortified enemy city.
+        // 1) Besiege: a selected player SIEGE/ARTILLERY clicks a fortified enemy
+        //    city within besiege range. Ranged siege (CATAPULT/TREBUCHET/CANNON/
+        //    SIEGE_CANNON/etc.) can besiege from their full attackRange; melee
+        //    siege (SIEGE_TOWER) must be adjacent.
         if (sel && sel.owner === PLAYER_FACTION && tile && tile.terrain === 'CITY' &&
             tile.owner !== PLAYER_FACTION && (tile.fortification || 0) > 0 &&
             UNIT_TYPE[sel.type].besiege && !sel.hasAttackedThisTurn) {
+            const udef = UNIT_TYPE[sel.type];
+            const besiegeRange = (udef.attackRange) || 1;
             const dist = Math.abs(sel.x - tile.x) + Math.abs(sel.z - tile.z);
-            if (dist <= 1) { this.handleBesiege(sel, tile); return; }
+            if (dist <= besiegeRange) { this.handleBesiege(sel, tile); return; }
         }
 
         // 1c) Arrow bombard: a selected player Archer/Longbowman fires at an
@@ -2556,6 +2561,19 @@ export class Game {
             this.log('Your faction cannot train that unit.');
             return;
         }
+        // Tech gating: EXTRA_UNITS unlocked by a tech require that tech to be
+        // researched before the player can train them. Faction-roster units are
+        // always available (they don't need tech gating). Mirrors the AI filter.
+        if (!def.roster.includes(unitType) && EXTRA_UNITS.includes(unitType)) {
+            const ts = this.gameState.techState;
+            const unlocked = ts && ts.researched ? getUnlockedUnits(ts) : new Set();
+            const hasTechUnlock = Object.values(TECHS).some(t =>
+                t.unlocks.some(ul => ul.type === 'unit' && ul.id === unitType));
+            if (hasTechUnlock && !unlocked.has(unitType)) {
+                this.log('That unit requires a tech you have not yet researched.');
+                return;
+            }
+        }
         // Ships require a Harbor in this city's influence (and the harbor must be coastal).
         if (NAVAL_UNITS.includes(unitType)) {
             const harborInfo = this.bestMilitaryLevel(tile, 'HARBOR');
@@ -2643,9 +2661,9 @@ export class Game {
     /** Upgrade a military building (BARRACKS/HARBOR) on a tile to the next level. */
     handleUpgradeBuilding(buildingType, tile) {
         if (!tile) return;
-        const msgs = upgradeBuilding(buildingType, tile, this.gameState.resources.player,
+        const msg = upgradeBuilding(buildingType, tile, this.gameState.resources.player,
             this.gameState.buildings, this.gameState.buildingState);
-        msgs.forEach(m => this.log(m));
+        this.log(msg);
         sfx.click();
         this.ui.showBuildMenu(tile);
         this.renderAll();
@@ -4239,7 +4257,8 @@ export class Game {
             this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState,
             this.gameState.aiState ? this.gameState.aiState[faction] : null,
             this.gameState.aiTechStates || null,
-            this.gameState.victoryState || null);
+            this.gameState.victoryState || null,
+            this.gameState.turn || 0);
 
         // AI king: activate when off cooldown and a heuristic trigger is met.
         if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && this._aiShouldActivateKing(faction, def)) {
@@ -4327,8 +4346,8 @@ export class Game {
                 case 'upgradeBuilding': {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
-                        const msgs = upgradeBuilding(action.buildingType, tile, pool, this.gameState.buildings, this.gameState.buildingState);
-                        msgs.forEach(m => this.log(`${factionName}: ${m}`));
+                        const msg = upgradeBuilding(action.buildingType, tile, pool, this.gameState.buildings, this.gameState.buildingState);
+                        this.log(`${factionName}: ${msg}`);
                     }
                     break;
                 }
