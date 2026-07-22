@@ -90,6 +90,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
+    // Siege-only units (SIEGE) can only attack cities — block attacks on units.
+    const atkType = UNIT_TYPE[attackerUnit.type];
+    if (atkType && atkType.siegeOnly && terrain !== 'CITY') {
+        return { messages: [`${combatName(attackerUnit)} can only attack cities!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
+    }
+
     const atkStats = combatStats(attackerUnit);
     const defStats = combatStats(defenderUnit);
     // A breached city gives no defensive terrain bonus — treat it as open ground.

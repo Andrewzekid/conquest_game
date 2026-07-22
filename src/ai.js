@@ -604,9 +604,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     reserve its cost so the spending spree can't starve it.
     const wantsConquest = atWar || goalKind === 'conquest';
     const needsSiegeWorkshopFirst = wantsConquest && !hasTrainableSiege && !hasSiegeWorkshop && myCityCount >= 1;
+    let workshopSiteFound = false;
     if (needsSiegeWorkshopFirst) {
         const site = findBuildSite('SIEGE_WORKSHOP', owned, buildings, tiles);
         if (site) {
+            workshopSiteFound = true;
             const swCost = BUILDING_TYPE.SIEGE_WORKSHOP.cost;
             if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
                 actions.push({ type: 'build', buildingType: 'SIEGE_WORKSHOP', tileKey: `${site.x},${site.z}` });
@@ -617,9 +619,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 res = subtractCost(res, swCost);
             }
         }
+        // If the workshop site wasn't found (tech not yet researched), fall
+        // through to build Barracks anyway — the workshop will be built later
+        // when SIEGE_CRAFT is researched. Without this fallback, the AI
+        // builds NOTHING military and the spending spree drains resources.
     }
 
-    if (!hasBarracks && !needsSiegeWorkshopFirst) {
+    if (!hasBarracks && (!needsSiegeWorkshopFirst || !workshopSiteFound)) {
         const site = findBuildSite('BARRACKS', owned, buildings, tiles);
         if (site && canAffordBuilding('BARRACKS', res)) {
             actions.push({ type: 'build', buildingType: 'BARRACKS', tileKey: `${site.x},${site.z}` });
@@ -633,7 +639,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     harder under a conquest goal so no-siege-roster factions (Golden, etc.)
     //     unlock artillery even before the first war declaration. (When at war
     //     and lacking siege it was already built above, before Barracks.)
-    if (!hasSiegeWorkshop && myCityCount >= 1 && !needsSiegeWorkshopFirst) {
+    //     Also runs when needsSiegeWorkshopFirst was true but the tech gate
+    //     prevented finding a site earlier (SIEGE_CRAFT not yet researched).
+    if (!hasSiegeWorkshop && myCityCount >= 1 && (!needsSiegeWorkshopFirst || !workshopSiteFound)) {
         const site = findBuildSite('SIEGE_WORKSHOP', owned, buildings, tiles);
         if (site) {
             if (canAffordBuilding('SIEGE_WORKSHOP', res)) {
@@ -785,7 +793,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         u.type === 'CANNON' || u.type === 'MORTAR' || u.type === 'FIELD_GUN' ||
         u.type === 'HORSE_ARTILLERY' || u.type === 'SIEGE_CANNON' || u.type === 'RAILGUN').length;
     const engineerCount = myUnits.filter(u => u.type === 'ENGINEER').length;
-    const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY' ||
+    // Siege-only units (SIEGE) require a Siege Workshop — they're city-breachers,
+    // not field combat units. CATAPULT/TREBUCHET are also workshop-gated but
+    // provide AOE splash, making them far more useful in the field.
+    const siegeOptions = roster.filter(t => (t === 'SIEGE' && hasSiegeWorkshop) || t === 'ARTILLERY' ||
         t === 'CANNON' || t === 'MORTAR' || t === 'FIELD_GUN' ||
         t === 'HORSE_ARTILLERY' || t === 'SIEGE_CANNON' || t === 'RAILGUN');
     if (hasSiegeWorkshop) {
@@ -2150,12 +2161,16 @@ function cheapestSiege(options, factionDef) {
 }
 
 /** Best siege pick from available options, preferring modern units over
- *  obsolete ones. Ranks by tech era (modern first) then by total cost. */
+ *  obsolete ones. Ranks by tech era (modern first) then by total cost.
+ *  Siege-only units (SIEGE) rank low — CATAPULT/TREBUCHET are preferred
+ *  because their AOE splash makes them useful in field battles, while SIEGE
+ *  can only attack cities. */
 const SIEGE_ERA_RANK = {
     'SIEGE_CANNON': 6, 'RAILGUN': 6, 'FIELD_GUN': 5,
     'CANNON': 4, 'MORTAR': 4, 'HORSE_ARTILLERY': 4,
-    'ARTILLERY': 3, 'SIEGE': 3,
+    'ARTILLERY': 3,
     'TREBUCHET': 2, 'CATAPULT': 1,
+    'SIEGE': 0,
 };
 function bestSiegePick(options, factionDef) {
     let best = null, bestEra = -1, bestCost = Infinity;
@@ -4000,6 +4015,10 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         for (const u of members) {
             if (acted.has(u.id) || u.hasAttackedThisTurn) continue;
             if (!isRanged(u)) continue;
+            // Siege-only units can't attack enemy units — skip them here.
+            // They attack cities via the besiege action (block 4b).
+            const uType = UNIT_TYPE[u.type];
+            if (uType && uType.siegeOnly) continue;
             const targets = getAttackTargets(u, units)
                 .filter(e => (!isAtWar || isAtWar(e.owner)) && e.concealState !== 'concealed');
             if (!targets.length) continue;
@@ -4094,6 +4113,9 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     if (atWar && groupTarget) {
         for (const u of members) {
             if (acted.has(u.id)) continue;
+            // Siege-only units can't melee attack enemy units.
+            const uType = UNIT_TYPE[u.type];
+            if (uType && uType.siegeOnly) continue;
             const adjacent = Math.max(Math.abs(u.x - groupTarget.x), Math.abs(u.z - groupTarget.z)) <= 1;
             if (adjacent && !u.hasAttackedThisTurn) {
                 if (isFavorableAttack(u, groupTarget, units, tiles, lords, buildings, tempBonuses, structures)) {

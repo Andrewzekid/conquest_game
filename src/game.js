@@ -978,27 +978,33 @@ export class Game {
         }
 
         if (!unit.hasAttackedThisTurn) {
-            // Only factions we're at war with may be attacked �?peace, trade
+            // Only factions we're at war with may be attacked — peace, trade
             // pact, and alliance units are never valid attack targets.
             const warTargets = getAttackTargets(unit, this.gameState.units)
                 .filter(t => canAttack(this.gameState.diplomacy, unit.owner, t.owner));
-            this.gameState.attackTargets = warTargets;
+            // Siege-only units (SIEGE) can only target cities, not units.
+            const udef = UNIT_TYPE[unit.type];
+            this.gameState.attackTargets = (udef && udef.siegeOnly)
+                ? []  // siege-only: no unit targets; city siege uses handleBesiege
+                : warTargets;
             // Lords/kings fight too: an EXPOSED enemy lord (no friendly unit
             // bodyguarding it on the same tile) within attack range can be
             // struck directly. A lord stacked with a unit is protected by that
             // unit (attack the unit first; once it dies the lord is exposed).
-            const udef = UNIT_TYPE[unit.type];
             const range = (udef && udef.attackRange) || (udef && udef.ranged ? 2 : 1);
-            for (const l of (this.gameState.lords || [])) {
-                if (!l || l.owner === unit.owner) continue;
-                if ((l.hp || 0) <= 0) continue;
-                if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
-                const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
-                if (dist > range) continue;
-                const guarded = [...this.gameState.units.values()].some(
-                    u => u.owner === l.owner && u.x === l.x && u.z === l.z);
-                if (guarded) continue;
-                this.gameState.attackTargets.push(lordCombatant(l));
+            // Siege-only units can't target lords either.
+            if (!(udef && udef.siegeOnly)) {
+                for (const l of (this.gameState.lords || [])) {
+                    if (!l || l.owner === unit.owner) continue;
+                    if ((l.hp || 0) <= 0) continue;
+                    if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
+                    const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
+                    if (dist > range) continue;
+                    const guarded = [...this.gameState.units.values()].some(
+                        u => u.owner === l.owner && u.x === l.x && u.z === l.z);
+                    if (guarded) continue;
+                    this.gameState.attackTargets.push(lordCombatant(l));
+                }
             }
         } else {
             this.gameState.attackTargets = [];
@@ -4508,8 +4514,10 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
                         if (this.gameState.trainedThisTurn.has(action.tileKey)) break;
-                        // Siege engines require a Siege Workshop in this city's influence.
+                        // Siege engines (CATAPULT/TREBUCHET) require a Siege Workshop in this city's influence.
                         if (SIEGE_ENGINES.includes(action.unitType) && !this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP')) break;
+                        // SIEGE unit also requires a Siege Workshop (siege-only city breacher).
+                        if (action.unitType === 'SIEGE' && !this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP')) break;
                         // Ships require a Harbor in this city's influence.
                         if (NAVAL_UNITS.includes(action.unitType)) {
                             if (!this.bestMilitaryLevel(tile, 'HARBOR')) break;
@@ -5127,13 +5135,17 @@ export class Game {
         // --- Spectate mode: check AI-only victory conditions ---
         if (this.spectateMode) {
             const aiAlive = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
-            // Domination: only one AI faction remains.
+            // Domination: only one AI faction remains AND owns every city.
             if (aiAlive.length === 1) {
                 const winner = aiAlive[0];
-                const name = this.factionColors[winner] ? this.factionColors[winner].name : winner;
-                this.log(`${name} has conquered all rivals and WON!`);
-                this.endGame('victory', VICTORY_TYPES.DOMINATION);
-                return;
+                const allCitiesOwned = [...this.tiles.values()].filter(t => t.terrain === 'CITY');
+                const winnerCities = allCitiesOwned.filter(t => t.owner === winner);
+                if (allCitiesOwned.length > 0 && winnerCities.length === allCitiesOwned.length) {
+                    const name = this.factionColors[winner] ? this.factionColors[winner].name : winner;
+                    this.log(`${name} has conquered all rivals and WON!`);
+                    this.endGame('victory', VICTORY_TYPES.DOMINATION);
+                    return;
+                }
             }
             // Score victory: at turn 200, highest-scoring AI wins.
             if (this.gameState.turn >= SCORE_VICTORY_TURN && aiAlive.length > 0) {
@@ -5166,9 +5178,12 @@ export class Game {
             return;
         }
 
-        // Domination victory: all AI eliminated.
-        const aiRemaining = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
-        if (aiRemaining.length === 0) {
+        // Domination victory: player owns EVERY city on the map (all AI
+        // eliminated + all neutral cities captured). This is the hardest
+        // victory condition — total map conquest.
+        const allCitiesOwned = [...this.tiles.values()].filter(t => t.terrain === 'CITY');
+        const playerCities = allCitiesOwned.filter(t => t.owner === PLAYER_FACTION);
+        if (allCitiesOwned.length > 0 && playerCities.length === allCitiesOwned.length) {
             this.endGame('victory', VICTORY_TYPES.DOMINATION);
         }
     }

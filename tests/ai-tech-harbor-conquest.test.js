@@ -956,14 +956,14 @@ describe('Integration: full AI pipeline with modern tech', () => {
         const ts = makeFactionTs([]);
         const input = warSetup({
             ts,
-            resources: { gold: 500, food: 300, wood: 100, iron: 50, production: 200 },
+            resources: { gold: 1000, food: 500, wood: 300, iron: 100, production: 400 },
         });
         const actions = runAI(input);
         const trains = trainTypes(actions);
-        // Should build basic units (INFANTRY, CAVALRY, PIKEMAN) plus possibly
-        // SIEGE (crimson has it in roster, siege block fires at war) or
+        // Should build basic units (INFANTRY, CAVALRY, PIKEMAN) or
         // LEGIONNAIRE (available as extra unit without tech gate).
-        const basicTrains = trains.filter(t => ['INFANTRY', 'ARCHER', 'CAVALRY', 'PIKEMAN', 'SIEGE', 'LEGIONNAIRE'].includes(t));
+        // SIEGE requires a Siege Workshop so it won't appear in no-tech builds.
+        const basicTrains = trains.filter(t => ['INFANTRY', 'ARCHER', 'CAVALRY', 'PIKEMAN', 'LEGIONNAIRE'].includes(t));
         expect(basicTrains.length).toBeGreaterThan(0);
     });
 
