@@ -252,7 +252,7 @@ export const BRIDGE_COST = { gold: 40, wood: 20 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 40, wood: 15, iron: 0, production: 15 };
+export const SIEGE_TOWER_COST = { gold: 25, wood: 10, iron: 0, production: 10 };
 export const SIEGE_TOWER_BUILD_TURNS = 3;
 export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
@@ -383,6 +383,30 @@ export const FREEZE_TURNS = 1; // units frozen by Winter's Grasp skip 1 move
 // nerfed (1/turn) vs proper siege engines — bows harass, they don't breach.
 export const RANGED_BOMBARD_FORT_DAMAGE = 1;
 export const RANGED_BOMBARD_TYPES = ['ARCHER', 'LONGBOWMAN'];
+
+// --- Siege pressure (fortification wear-down) ---
+// Each time a city takes fortification damage (besiege, arrow bombard, or a
+// ranged combat chip) its `siegePressure` counter rises. While pressure > 0
+// the city's fortification does NOT regenerate; pressure decays by 1 per
+// unattacked turn, after which the normal +1/turn regen resumes. A freshly
+// breached city therefore stays at 0 through the following turn (a real
+// capture window), and sustained bombardment keeps a city pinned down even
+// without an adjacent besieger.
+export const SIEGE_PRESSURE_PER_HIT = 1;
+export const SIEGE_PRESSURE_MAX = 4;
+
+// --- Ranged combat chip vs unbreached cities ---
+// When a ranged unit attacks a defender standing on an UNBREACHED enemy city,
+// the city's fortification is chipped as well as damaging the defender: heavy
+// siege artillery chips by its besiegePower, all other ranged units (archers
+// and the like) chip by RANGED_BOMBARD_FORT_DAMAGE.
+export const HEAVY_SIEGE_FORT_CHIP_TYPES = ['ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'CATAPULT', 'TREBUCHET'];
+
+// --- Siege Tower assault support ---
+// A friendly SIEGE_TOWER adjacent to an unbreached city undermines its
+// defenses: combat against that city's garrison reduces the city's defense
+// bonus by this amount (half of TERRAIN_BONUS.CITY.defense).
+export const SIEGE_TOWER_CITY_DEFENSE_REDUCTION = 4;
 
 // City area of influence (Civ 6 style): buildings may only be constructed on
 // tiles within this Chebyshev radius of an owned city. Cities level up to grow it.

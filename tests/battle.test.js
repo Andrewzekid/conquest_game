@@ -55,6 +55,38 @@ describe('battle', () => {
       expect(result.messages.some(m => m.includes('breached'))).toBe(true);
     });
 
+    it('adjacent friendly siege tower lowers city defense', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { attack: 20 });
+      const defNoTower = makeUnit('INFANTRY', 'b', 1, 0, { hp: 100, maxHp: 100 });
+      const r1 = resolveCombat(atk, defNoTower, 'CITY');
+
+      const tower = { id: 'tower1', type: 'SIEGE_TOWER', owner: 'a', x: 1, z: 1 }; // orthogonally adjacent to defender
+      const units = new Map([[atk.id, atk], [tower.id, tower]]);
+      const defTower = makeUnit('INFANTRY', 'b', 1, 0, { hp: 100, maxHp: 100 });
+      const r2 = resolveCombat(atk, defTower, 'CITY', null, null, null, null, null, false, null, false, false, units);
+
+      expect(r2.messages.some(m => m.includes('siege tower undermines'))).toBe(true);
+      expect(r2.damageToDefender).toBeGreaterThan(r1.damageToDefender);
+    });
+
+    it('siege tower gives no reduction once the city is breached', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { attack: 20 });
+      const tower = { id: 'tower1', type: 'SIEGE_TOWER', owner: 'a', x: 1, z: 1 };
+      const units = new Map([[atk.id, atk], [tower.id, tower]]);
+      const def = makeUnit('INFANTRY', 'b', 1, 0, { hp: 100, maxHp: 100 });
+      const r = resolveCombat(atk, def, 'CITY', null, null, null, null, null, false, null, true, false, units);
+      expect(r.messages.some(m => m.includes('siege tower undermines'))).toBe(false);
+    });
+
+    it('an enemy-owned siege tower does not help the attacker', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { attack: 20 });
+      const tower = { id: 'tower1', type: 'SIEGE_TOWER', owner: 'b', x: 1, z: 1 }; // defender's tower
+      const units = new Map([[atk.id, atk], [tower.id, tower]]);
+      const def = makeUnit('INFANTRY', 'b', 1, 0, { hp: 100, maxHp: 100 });
+      const r = resolveCombat(atk, def, 'CITY', null, null, null, null, null, false, null, false, false, units);
+      expect(r.messages.some(m => m.includes('siege tower undermines'))).toBe(false);
+    });
+
     it('type advantage message appears', () => {
       const atk = makeUnit('INFANTRY', 'a', 0, 0);
       const def = makeUnit('ARCHER', 'b', 1, 0, { hp: 50, maxHp: 50 });

@@ -1,7 +1,7 @@
 /** Map generation: terrain, ownership, starting positions.
  *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
  *  and per-faction city names. */
-import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY } from './config.js';
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY, SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX } from './config.js';
 import { getFactionDef } from './faction.js';
 
 // Per-faction city name counters
@@ -849,6 +849,11 @@ export function besiegeCity(unit, cityTile) {
     if (cityTile.owner === unit.owner) return msgs; // don't besiege own/ally city
     const power = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].besiegePower) || (unit.type === 'SIEGE' ? 2 : 1);
     cityTile.fortification = Math.max(0, cityTile.fortification - power);
+    // Siege pressure: taking fort damage wears the city's recovery down — it
+    // cannot regrow fortification until the pressure decays (see
+    // regenFortification). This also keeps a freshly breached city at 0
+    // through the following turn so it can actually be captured.
+    cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
     msgs.push(`City at [${cityTile.x}, ${cityTile.z}] besieged (fortification ${cityTile.fortification}/${cityTile.fortMax})`);
     if (cityTile.fortification === 0) msgs.push(`City at [${cityTile.x}, ${cityTile.z}] is BREACHED — it can now be captured!`);
     return msgs;
@@ -856,7 +861,10 @@ export function besiegeCity(unit, cityTile) {
 
 /** Regenerate fortification on every city whose fortification is below max and
  *  that is not currently pinned at 0 by an adjacent enemy siege unit. Called
- *  once per turn so a city you stop besieging recovers. */
+ *  once per turn so a city you stop besieging recovers. A city with
+ *  `siegePressure` (recent fort damage) does not regen — the pressure decays
+ *  by 1 per unattacked turn instead, so a breached city stays at 0 through
+ *  the following turn and sustained bombardment wears recovery down. */
 export function regenFortification(tiles, units) {
     const siegeAdjacent = new Set(); // city keys pinned at 0 by an enemy besieger
     if (units) {
@@ -878,6 +886,11 @@ export function regenFortification(tiles, units) {
         if (t.fortification >= t.fortMax) continue;
         // A city being actively pushed to 0 stays down while besieged; otherwise regrow.
         if (t.fortification === 0 && siegeAdjacent.has(`${t.x},${t.z}`)) continue;
+        // Siege pressure: a city that has taken fort damage recently does not
+        // recover — pressure decays by 1 per unattacked turn, then regen
+        // resumes. A freshly breached city thus stays at 0 through the next
+        // turn (a capture window), fixing the re-breach/regen infinite loop.
+        if ((t.siegePressure || 0) > 0) { t.siegePressure--; continue; }
         t.fortification = Math.min(t.fortMax, t.fortification + 1);
     }
 }

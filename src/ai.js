@@ -450,7 +450,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const claimedCityKeys = new Set();
     for (const unit of myUnits) {
         if (unit.hasMovedThisTurn) continue;
-        const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar);
+        const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units, currentTurn);
         if (cap && !claimedCityKeys.has(`${cap.x},${cap.z}`)) {
             claimedCityKeys.add(`${cap.x},${cap.z}`);
             actions.push({ type: 'capture', unitId: unit.id, tileKey: `${cap.x},${cap.z}` });
@@ -1372,7 +1372,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (unit.type === 'WORKER') {
             // 1) Adjacent breached city: capture immediately.
             if (!unit.hasMovedThisTurn && !acted.has(unit.id)) {
-                const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar);
+                const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units, currentTurn);
                 if (cap) {
                     actions.push({ type: 'capture', unitId: unit.id, tileKey: `${cap.x},${cap.z}` });
                     res = subtractCost(res, { gold: CAPTURE_COST });
@@ -2120,7 +2120,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         const objective = groupObjectives.get(g);
         const stance = groupStances.get(g);
         actions.push(...planGroup(g, objective, stance, units, tiles, owner,
-            lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures, activeObjectives));
+            lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures, activeObjectives, currentTurn));
     }
 
     // Store the last turn's actions in aiState for the debug panel to display.
@@ -3071,8 +3071,11 @@ function getNeighbors(x, z, range, tiles) {
  *  - Neutral cities (owner=null, from eliminated factions) — these are always
  *    capturable since no one owns them, giving the AI a path to expand into
  *    the ruins of fallen empires.
- *  Non-city tiles are never captured by moving onto them. */
-function findAdjacentCapturable(unit, tiles, owner, res, isAtWar) {
+ *  Non-city tiles are never captured by moving onto them.
+ *  A city is NOT capturable while the breach delay is still running
+ *  (currentTurn < breachedTurn) or while any unit still occupies the city
+ *  tile — the defender must be killed first. */
+function findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units = null, currentTurn = null) {
     if (res.gold < CAPTURE_COST) return null;
     let city = null;
     for (let dx = -1; dx <= 1; dx++) {
@@ -3082,6 +3085,17 @@ function findAdjacentCapturable(unit, tiles, owner, res, isAtWar) {
             if (!t) continue;
             if (t.owner === owner) continue;
             if (t.terrain === 'CITY') {
+                // Breach delay: a freshly breached city can't be captured until
+                // the turn after the breach.
+                if (t.breachedTurn && currentTurn !== null && currentTurn < t.breachedTurn) continue;
+                // Occupied city: the defender must be cleared first.
+                if (units) {
+                    let occupied = false;
+                    for (const u of units.values()) {
+                        if (u.x === t.x && u.z === t.z) { occupied = true; break; }
+                    }
+                    if (occupied) continue;
+                }
                 // Neutral city (no owner) — always capturable.
                 if (!t.owner) {
                     if ((t.fortification || 0) <= 0 && !city) city = t;
@@ -3724,7 +3738,7 @@ function flankingStep(unit, target, units, tiles, owner, moved, isAtWar) {
  *   6. Advance: remaining units move toward the objective in formation (melee
  *      screens first; fragile units only advance behind a screen).
  */
-function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures = null, activeObjectives = null) {
+function planGroup(group, objective, stance, units, tiles, owner, lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures = null, activeObjectives = null, currentTurn = null) {
     const out = [];
     const members = group.units.filter(u => !acted.has(u.id));
     if (!members.length) return out;
@@ -3976,7 +3990,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 }
             }
             // Capture an adjacent breached enemy city.
-            const cap = findAdjacentCapturable(u, tiles, owner, res, isAtWar);
+            const cap = findAdjacentCapturable(u, tiles, owner, res, isAtWar, units, currentTurn);
             if (cap) {
                 out.push({ type: 'capture', unitId: u.id, tileKey: `${cap.x},${cap.z}` });
                 res.gold -= CAPTURE_COST;

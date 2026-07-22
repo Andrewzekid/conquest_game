@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -258,6 +258,21 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
     if (structureDef > 0) {
         messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
+    }
+    // Siege Tower support: a friendly SIEGE_TOWER adjacent to an unbreached
+    // city undermines its defenses — the garrison can't fully man the walls
+    // while a tower is at the gates. Lowers the city's defense bonus for
+    // combat against that city (attackers of the tower's owner only).
+    if (isCity && !defenderCityBreached && units) {
+        let towerSupport = false;
+        for (const u of units.values()) {
+            if (u.owner !== attackerUnit.owner || u.type !== 'SIEGE_TOWER') continue;
+            if (Math.abs(u.x - defenderUnit.x) + Math.abs(u.z - defenderUnit.z) === 1) { towerSupport = true; break; }
+        }
+        if (towerSupport) {
+            effectiveDefense -= SIEGE_TOWER_CITY_DEFENSE_REDUCTION;
+            messages.push(`A siege tower undermines the city walls (-${SIEGE_TOWER_CITY_DEFENSE_REDUCTION} def)`);
+        }
     }
     // --- New European-faction/unit defender bonuses (Phase G) ---
     const defDef = getFactionDef(defenderUnit.factionId);

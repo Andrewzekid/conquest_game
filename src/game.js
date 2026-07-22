@@ -11,7 +11,8 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_STUN_TURNS,
          CHARIOT_CHARGE_ATTACK_BONUS, CHARIOT_CHARGE_VULN_TYPES, CHARIOT_CHARGE_VULN_MULT,
-         RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
+         RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES, HEAVY_SIEGE_FORT_CHIP_TYPES,
+         SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX,
          LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
          STRUCTURE_TYPE, STRUCTURE_COST,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS,
@@ -1216,6 +1217,30 @@ export class Game {
         this.checkVictory();
     }
 
+    /** Ranged attacks against a defender standing on an UNBREACHED enemy city
+     *  also chip the city's fortification: heavy siege artillery (CANNON,
+     *  TREBUCHET, ...) chips by its besiegePower, lighter ranged units
+     *  (archers) by RANGED_BOMBARD_FORT_DAMAGE. Melee attacks never chip —
+     *  walls only yield to shot and shell. Shared by the player
+     *  (handleAttack) and AI attack paths. */
+    _applyCityFortChip(attacker, defenderTile) {
+        if (!defenderTile || defenderTile.terrain !== 'CITY') return;
+        if (defenderTile.owner === attacker.owner) return; // don't chip own city
+        const atkDef = UNIT_TYPE[attacker.type];
+        if (!atkDef || !atkDef.ranged) return;
+        if ((defenderTile.fortification || 0) <= 0) return; // already breached
+        const chip = HEAVY_SIEGE_FORT_CHIP_TYPES.includes(attacker.type)
+            ? (atkDef.besiegePower || RANGED_BOMBARD_FORT_DAMAGE)
+            : RANGED_BOMBARD_FORT_DAMAGE;
+        defenderTile.fortification = Math.max(0, defenderTile.fortification - chip);
+        defenderTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (defenderTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
+        this.log(`${atkDef.name} chips the walls of city [${defenderTile.x}, ${defenderTile.z}] — fortification ${defenderTile.fortification}/${defenderTile.fortMax}.`);
+        if (defenderTile.fortification <= 0) {
+            if (!defenderTile.breachedTurn) defenderTile.breachedTurn = (this.gameState.turn || 0) + 1;
+            this.log(`City at [${defenderTile.x}, ${defenderTile.z}] is BREACHED — it can now be captured!`);
+        }
+    }
+
     handleAttack(attacker, defender) {
         if (attacker.hasAttackedThisTurn) return;
         if (!canAttack(this.gameState.diplomacy, attacker.owner, defender.owner)) {
@@ -1233,6 +1258,9 @@ export class Game {
             !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+
+        // Ranged fire vs an unbreached enemy city also chips its fortification.
+        this._applyCityFortChip(attacker, defenderTile);
 
         this._playAttackAnimation(attacker, defender);
         attacker.hasAttackedThisTurn = true;
@@ -1990,6 +2018,9 @@ export class Game {
         const fort = cityTile.fortification || 0;
         if (fort <= 0) { this.log('That city is already breached.'); return; }
         cityTile.fortification = Math.max(0, fort - RANGED_BOMBARD_FORT_DAMAGE);
+        // Bombardment wears the city's recovery down (siege pressure), so a
+        // breached city stays at 0 through the next turn.
+        cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
         if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
             cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
         }
@@ -4714,6 +4745,8 @@ export class Game {
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
                             !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                         result.messages.forEach(m => this.log(m));
+                        // Ranged fire vs an unbreached enemy city also chips its fortification.
+                        this._applyCityFortChip(attacker, defenderTile);
                         attacker.hasAttackedThisTurn = true;
                         this._playAttackAnimation(attacker, defender);
                         if (result.defenderDied) {
@@ -4735,15 +4768,32 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     // Ownership re-checked: another unit may have taken the city
                     // earlier in this same action loop.
-                    if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction && pool.gold >= CAPTURE_COST) {
-                        pool.gold -= CAPTURE_COST;
-                        const prevOwner = tile.owner;
-                        const wasNeutral = !prevOwner;
-                        captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
-                        this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
-                        // Garrison the capturing unit on the city tile.
-                        unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
-                        this.renderer.updateTileTerrain(tile);
+                    if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction) {
+                        // The defender must be killed first: refuse to capture a
+                        // city tile still occupied by any unit or living lord —
+                        // no teleporting onto an occupied city.
+                        let occupied = false;
+                        for (const u of this.gameState.units.values()) {
+                            if (u.id !== unit.id && u.x === tile.x && u.z === tile.z) { occupied = true; break; }
+                        }
+                        if (!occupied && this.gameState.lords) {
+                            for (const l of this.gameState.lords) {
+                                if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) { occupied = true; break; }
+                            }
+                        }
+                        // Go through canCaptureTile: fort at 0, breach delay
+                        // passed, and enough gold (siege-tower assault bypasses).
+                        if (!occupied &&
+                            (canCaptureTile(faction, tile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(tile, faction))) {
+                            pool.gold -= CAPTURE_COST;
+                            const prevOwner = tile.owner;
+                            const wasNeutral = !prevOwner;
+                            captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
+                            this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
+                            // Garrison the capturing unit on the city tile.
+                            unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
+                            this.renderer.updateTileTerrain(tile);
+                        }
                     }
                     break;
                 }

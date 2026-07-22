@@ -364,7 +364,9 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         }
         // Reset lord per-turn flags (lords/kings can move and attack once per
         // turn, like units) and slowly regenerate their HP between battles.
-        // Kings resting inside one of their own cities recover faster.
+        // Kings resting inside one of their own cities recover faster — but no
+        // lord recovers inside a breached or besieged city (walls down or an
+        // enemy unit at the gates): no safe rest while under assault.
         if (gameState.lords) {
             for (const lord of gameState.lords) {
                 lord.hasMovedThisTurn = false;
@@ -374,7 +376,20 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp > 0 && lord.hp < lord.maxHp) {
                     const tile = gameState.tiles && gameState.tiles.get(`${lord.x},${lord.z}`);
                     const inOwnCity = tile && tile.terrain === 'CITY' && tile.owner === lord.owner;
-                    const heal = (lord.isKing && inOwnCity) ? 5 : 2;
+                    // Breached (fort 0) or besieged (enemy unit orthogonally
+                    // adjacent) city: no healing — kings can't camp unbreakably
+                    // inside a city under assault.
+                    let cityUnderAssault = false;
+                    if (tile && tile.terrain === 'CITY') {
+                        cityUnderAssault = (tile.fortification || 0) <= 0;
+                        if (!cityUnderAssault && gameState.units) {
+                            for (const u of gameState.units.values()) {
+                                if (u.owner === lord.owner) continue;
+                                if (Math.abs(u.x - tile.x) + Math.abs(u.z - tile.z) === 1) { cityUnderAssault = true; break; }
+                            }
+                        }
+                    }
+                    const heal = cityUnderAssault ? 0 : ((lord.isKing && inOwnCity) ? 5 : 2);
                     lord.hp = Math.min(lord.maxHp, lord.hp + heal);
                 }
             }

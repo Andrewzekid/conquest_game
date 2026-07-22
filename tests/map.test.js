@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { setGridDimensions } from '../src/config.js';
+import { setGridDimensions, SIEGE_PRESSURE_MAX } from '../src/config.js';
 
 // We need to import map functions after setting grid dimensions
 import {
@@ -222,6 +222,42 @@ describe('map', () => {
       tiles.set('10,10', { ...makeTile(10, 10, 'CITY', 'player'), fortification: 5, fortMax: 5 });
       regenFortification(tiles);
       expect(tiles.get('10,10').fortification).toBe(5);
+    });
+
+    it('a city with siege pressure does not regen — pressure decays instead, then regen resumes', () => {
+      setGridDimensions(20, 20);
+      const tiles = new Map();
+      tiles.set('10,10', { ...makeTile(10, 10, 'CITY', 'player'), fortification: 2, fortMax: 5, siegePressure: 2 });
+      regenFortification(tiles);
+      expect(tiles.get('10,10').fortification).toBe(2); // no regen while pressured
+      expect(tiles.get('10,10').siegePressure).toBe(1); // decays by 1 per rest turn
+      regenFortification(tiles);
+      expect(tiles.get('10,10').fortification).toBe(2);
+      expect(tiles.get('10,10').siegePressure).toBe(0);
+      regenFortification(tiles);
+      expect(tiles.get('10,10').fortification).toBe(3); // normal +1 regen resumes
+    });
+
+    it('a freshly breached city stays at 0 through the next regen tick (capture window)', () => {
+      setGridDimensions(20, 20);
+      const tiles = new Map();
+      const city = { ...makeTile(10, 10, 'CITY', 'ai1'), fortification: 1, fortMax: 5 };
+      tiles.set('10,10', city);
+      besiegeCity({ type: 'SIEGE', owner: 'player' }, city); // fort 1 -> 0
+      expect(city.fortification).toBe(0);
+      expect(city.siegePressure).toBeGreaterThan(0);
+      regenFortification(tiles); // next turn: must NOT pop back to 1
+      expect(city.fortification).toBe(0);
+    });
+
+    it('besiegeCity builds siege pressure, capped at SIEGE_PRESSURE_MAX', () => {
+      setGridDimensions(20, 20);
+      const city = { ...makeTile(10, 10, 'CITY', 'ai1'), fortification: 20, fortMax: 20 };
+      const siege = { type: 'SIEGE', owner: 'player' };
+      besiegeCity(siege, city);
+      expect(city.siegePressure).toBe(1);
+      for (let i = 0; i < 6; i++) besiegeCity(siege, city);
+      expect(city.siegePressure).toBe(SIEGE_PRESSURE_MAX);
     });
   });
 });
