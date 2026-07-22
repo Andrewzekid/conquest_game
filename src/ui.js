@@ -15,6 +15,7 @@ import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
 import { getUnlockedUnits, isUnitUnlocked, TECHS } from './tech.js';
+import { applyObsolescence } from './unit_obsolescence.js';
 
 // Map building types to their icon names in src/icons.js.
 const BUILDING_ICON = {
@@ -855,6 +856,13 @@ export function bindUI(gameState, callbacks) {
                     });
                     fullRoster.length = 0;
                     for (const u of filtered) fullRoster.push(u);
+                    // Obsolescence: hide units whose modern replacement's tech
+                    // is researched (fully hidden from the player's build menu).
+                    const obsoleted = applyObsolescence(fullRoster, ts.researched);
+                    if (obsoleted.length > 0) {
+                        fullRoster.length = 0;
+                        for (const u of obsoleted) fullRoster.push(u);
+                    }
                 }
                 // Ships require a Harbor in this city's influence AND the unlocking tech.
                 const ts2 = gameState.techState;

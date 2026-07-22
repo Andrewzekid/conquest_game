@@ -60,6 +60,7 @@ import { createTechState, serializeTechState, deserializeTechState,
          TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
          ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES } from './config.js';
+import { isObsolete } from './unit_obsolescence.js';
 
 const DRAG_THRESHOLD = 6; // px; under this a press→release is a click
 
@@ -2595,6 +2596,13 @@ export class Game {
                 t.unlocks.some(ul => ul.type === 'unit' && ul.id === unitType));
             if (hasTechUnlock && !unlocked.has(unitType)) {
                 this.log('That unit requires a tech you have not yet researched.');
+                return;
+            }
+            // Obsolescence: a unit whose modern replacement's tech is researched
+            // can no longer be trained (it's obsolete). Catches stale UI actions
+            // and save-games with an obsolete unit queued.
+            if (isObsolete(unitType, ts.researched)) {
+                this.log('That unit is obsolete — a modern replacement is available.');
                 return;
             }
         }

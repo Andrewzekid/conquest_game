@@ -80,11 +80,11 @@ export function getUnitStats(unit) {
 export function canAfford(type, resources, costOverride = null) {
     const cost = costOverride || UNIT_COST[type];
     if (!cost) return false;
-    return (resources.gold >= (cost.gold || 0)) &&
-           (resources.food >= (cost.food || 0)) &&
-           (resources.wood >= (cost.wood || 0)) &&
-           (resources.iron >= (cost.iron || 0)) &&
-           (resources.production >= (cost.production || 0));
+    return ((resources.gold || 0) >= (cost.gold || 0)) &&
+           ((resources.food || 0) >= (cost.food || 0)) &&
+           ((resources.wood || 0) >= (cost.wood || 0)) &&
+           ((resources.iron || 0) >= (cost.iron || 0)) &&
+           ((resources.production || 0) >= (cost.production || 0));
 }
 
 /** Deduct cost and return remaining resources. */

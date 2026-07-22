@@ -16,7 +16,7 @@
 import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
          WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
          WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
-         WAR_OBJECTIVE_MIN_CITIES } from './config.js';
+         WAR_OBJECTIVE_MIN_CITIES, GRID_SIZE } from './config.js';
 
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
@@ -149,8 +149,27 @@ function ensureProgress(aiState) {
  *            hasChokepoints:boolean, unexploredTiles:number } */
 function goalValid(goal, ctx) {
     switch (goal.kind) {
-        case 'conquest':
-            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : ctx.enemies.size > 0;
+        case 'conquest': {
+            if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            // Re-check reachability for LAND conquest goals: if the target became
+            // unreachable by land (e.g. a bridge was destroyed), force a replan.
+            // NAVAL conquest goals stay valid while at war even without a
+            // transport — the transport/harbor is what the AI is trying to build,
+            // so dropping the goal before the infrastructure exists would prevent
+            // it from ever being built.
+            if (goal.targetTileKey && ctx.tiles && ctx.ownCities.length) {
+                const [tx, tz] = goal.targetTileKey.split(',').map(Number);
+                const tier = (goal.meta && goal.meta.reachability) || 'land';
+                if (tier === 'land') {
+                    let ok = false;
+                    for (const o of ctx.ownCities) {
+                        if (isReachableByLand(ctx.tiles, o.x, o.z, tx, tz)) { ok = true; break; }
+                    }
+                    if (!ok) return false;
+                }
+            }
+            return true;
+        }
         case 'defense':
             return !!ctx.defensive;
         case 'settle':
@@ -218,6 +237,64 @@ export function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
     return false;
 }
 
+/** Real land-path reachability via bounded BFS. Returns true if a land unit
+ *  can walk from (fromX,fromZ) to (toX,toZ) without crossing WATER or an
+ *  unbridged RIVER, within `maxSteps` (default GRID_SIZE*4). This replaces the
+ *  naive line-trace `pathCrossesWater` for final reachability decisions: the
+ *  line trace mis-classifies curving coastlines (reachable flagged unreachable)
+ *  and narrow straits (unreachable flagged reachable). The BFS uses the same
+ *  passability rules as src/path.js.
+ *
+ *  Pure: operates only on the passed tiles Map. Returns false if either
+ *  endpoint is missing or the goal is unreachable within the cap. */
+export function isReachableByLand(tiles, fromX, fromZ, toX, toZ, maxSteps) {
+    if (!tiles) return false;
+    const startKey = `${fromX},${fromZ}`;
+    const goalKey = `${toX},${toZ}`;
+    if (startKey === goalKey) return true;
+    if (!tiles.has(startKey) || !tiles.has(goalKey)) return false;
+    const cap = maxSteps || (GRID_SIZE * 4);
+    const visited = new Set([startKey]);
+    // head-indexed queue (O(1) dequeue) — mirrors path.js's BFS pattern.
+    const queue = [[fromX, fromZ]];
+    let head = 0;
+    let steps = 0;
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    while (head < queue.length && steps++ < cap) {
+        const [cx, cz] = queue[head++];
+        for (const [dx, dz] of dirs) {
+            const nx = cx + dx, nz = cz + dz;
+            const k = `${nx},${nz}`;
+            if (visited.has(k)) continue;
+            const t = tiles.get(k);
+            if (!t) continue;
+            // Land passability: WATER and unbridged RIVER are impassable.
+            if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) {
+                visited.add(k);
+                continue;
+            }
+            if (k === goalKey) return true;
+            visited.add(k);
+            queue.push([nx, nz]);
+        }
+    }
+    return false;
+}
+
+/** Classify a conquest candidate's reachability tier from a given origin.
+ *  Returns 'land' (walkable), 'naval' (different landmass / across water, but
+ *  reachable with transports), or 'unreachable' (no land path and no naval
+ *  capability). Uses isReachableByLand for the land check and falls back to
+ *  pathCrossesWater as a fast pre-filter. Pure. */
+export function classifyReachability(tiles, fromX, fromZ, c, hasTransport) {
+    if (isReachableByLand(tiles, fromX, fromZ, c.x, c.z)) return 'land';
+    // Across a water barrier. Always classified 'naval' — the AI can always
+    // build a harbor + transports to reach it, so 'unreachable' is never the
+    // right classification. The `hasTransport` arg is retained for API compat
+    // but no longer changes the result.
+    return 'naval';
+}
+
 /**
  * Select (or reconfirm) this faction's ordered goal sequence.
  *
@@ -258,11 +335,13 @@ export function selectGoals(input) {
     } = input;
 
     const enemySet = new Set(enemies || []);
+    const hasTransportNow = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
     const ctx = {
         enemies: enemySet, defensive: !!activeObjectives.defensive,
         myCityCount, settlerTarget, scarcityTriggered,
         needsNavalExpansion, isIslandFaction, foreignMassWithoutCity,
         neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
+        tiles: tiles || null, ownCities: ownCities || [], hasTransport: hasTransportNow,
     };
 
     // Stability: keep the existing plan if it's still locked and every goal is
@@ -277,7 +356,7 @@ export function selectGoals(input) {
     const weights = PERSONALITY_WEIGHTS[personality] || PERSONALITY_WEIGHTS.BALANCED;
 
     const candidates = [];
-    const push = (kind, score, targetTileKey, targetFaction, horizon, meta) => {
+    const push = (kind, score, targetTileKey, targetFaction, horizon, meta, plan = null) => {
         candidates.push({
             kind,
             priority: 0,            // normalized after sorting
@@ -285,25 +364,78 @@ export function selectGoals(input) {
             targetTileKey: targetTileKey || null,
             targetFaction: targetFaction || null,
             meta: meta || {},
+            plan: plan || null,     // ordered infrastructure steps (Part B)
             stabilityTurns: AI_GOAL_MIN_STABILITY_TURNS,
             born: turn,
             _score: score,           // raw weighted score (stripped before return)
         });
     };
 
-    // Conquest: at least one at-war enemy. Target nearest enemy city.
-    // Skip cities across water if we have no transport (lords can't walk there).
+    // Conquest: at least one at-war enemy. Pick the nearest REACHABLE enemy
+    // city — reachable by land, or by naval if we have transports/a harbor.
+    // Never target an unreachable city (the old code fell back to water-
+    // separated cities when all were unreachable, leaving the army stuck at the
+    // shore forever). If no reachable conquest target exists, skip the conquest
+    // goal this cycle; the expand-islands / naval-prep goals handle building
+    // the infrastructure to reach foreign landmasses.
     if (enemySet.size > 0) {
         const hasTransport = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
-        const landCities = hasTransport ? enemyCities : enemyCities.filter(c =>
-            !pathCrossesWater(tiles, homeAnchor ? homeAnchor.x : 0, homeAnchor ? homeAnchor.z : 0, c.x, c.z));
-        const tgt = nearestEnemyCity(landCities.length ? landCities : enemyCities, homeAnchor);
-        push('conquest',
-            BASE_SCORE.conquest * weights.conquest,
-            tgt ? `${tgt.x},${tgt.z}` : null,
-            tgt ? tgt.owner : (enemySet.values().next().value || null),
-            'short',
-            { cityX: tgt ? tgt.x : null, cityZ: tgt ? tgt.z : null });
+        // Compute reachability from the nearest owned city to each candidate,
+        // not just homeAnchor — a forward city on the target's landmass makes
+        // it land-reachable even if the capital is on a different mass. When
+        // `tiles` is not available (abstract/test contexts without a map), fall
+        // back to legacy behavior and treat all candidates as land-reachable.
+        // Cross-water targets are classified 'naval' (reachable once a harbor +
+        // transports are built) rather than 'unreachable' — the AI can always
+        // build the infrastructure, so the goal stays to drive that building.
+        const origins = (ownCities && ownCities.length) ? ownCities : (homeAnchor ? [homeAnchor] : []);
+        const hasTiles = !!tiles;
+        const classify = (c) => {
+            if (!hasTiles) return 'land';
+            if (!origins.length) return 'naval';
+            for (const o of origins) {
+                if (isReachableByLand(tiles, o.x, o.z, c.x, c.z)) return 'land';
+            }
+            return 'naval';
+        };
+        const land = [], naval = [];
+        for (const c of enemyCities) {
+            const tier = classify(c);
+            if (tier === 'land') land.push(c);
+            else if (tier === 'naval') naval.push(c);
+        }
+        let tgt = null, tier = null;
+        if (land.length) { tgt = nearestEnemyCity(land, homeAnchor); tier = 'land'; }
+        else if (naval.length) { tgt = nearestEnemyCity(naval, homeAnchor); tier = 'naval'; }
+        // If tgt is null (all unreachable AND no transports), no conquest goal
+        // is pushed — the expand-islands goal handles building the infrastructure
+        // to reach foreign landmasses first.
+        if (tgt) {
+            // Naval conquest objectives are real but can't be pressed until
+            // infrastructure (harbor + transports) is built. Score them lower so
+            // they don't dominate over the expand-islands/naval-prep goals that
+            // build that infrastructure, but keep the goal so the AI knows what
+            // it's building toward (and so harbor/transport logic can key off
+            // `conquestAcrossWater` / `meta.requiresNaval`).
+            const scoreScale = tier === 'naval' ? 0.6 : 1.0;
+            // Long-term infrastructure plan for naval conquest: build a harbor,
+            // train transports, board the army, sail to the target. The ai.js
+            // spending blocks read this plan to prioritize harbor/transport
+            // production and the embarkation coordinator boards the army.
+            const navalPlan = tier === 'naval' ? [
+                { kind: 'buildHarbor' },
+                { kind: 'trainTransport', count: 2 },
+                { kind: 'boardArmy' },
+                { kind: 'sailTo', targetTileKey: `${tgt.x},${tgt.z}` },
+            ] : null;
+            push('conquest',
+                BASE_SCORE.conquest * weights.conquest * scoreScale,
+                `${tgt.x},${tgt.z}`,
+                tgt.owner,
+                'short',
+                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval' },
+                navalPlan);
+        }
     }
 
     // War Objectives: targeted strategic goals that make wars more meaningful

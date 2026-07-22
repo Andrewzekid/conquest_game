@@ -22,8 +22,10 @@ import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
-import { selectGoals, pathCrossesWater } from './ai_goals.js';
+import { selectGoals, pathCrossesWater, isReachableByLand } from './ai_goals.js';
 import { getUnlockedUnits, TECHS } from './tech.js';
+import { applyObsolescence } from './unit_obsolescence.js';
+import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
  *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
@@ -136,6 +138,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (filtered.length > 0) {
             fullRoster.length = 0;
             for (const u of filtered) fullRoster.push(u);
+        }
+        // Obsolescence: remove units whose modern replacement's tech is
+        // researched (e.g. ARCHER disappears once RIFLED_MUSKET is done). This
+        // stops the AI from training obsolete units even when they're cheaper.
+        const obsoleted = applyObsolescence(fullRoster, aiTs.researched);
+        if (obsoleted.length > 0) {
+            fullRoster.length = 0;
+            for (const u of obsoleted) fullRoster.push(u);
         }
     }
     // Whether the faction can train a direct siege unit (roster SIEGE/ARTILLERY
@@ -344,10 +354,24 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             if (hasChokepoints) break;
         }
     }
-    // Unexplored tiles: tiles not owned by anyone (likely unexplored frontier).
+    // Unexplored tiles: unowned land tiles NOT adjacent to any owned or
+    // visible-enemy tile (a proxy for the fog-of-war frontier). Counting every
+    // unowned tile inflated this counter and kept the scout goal running
+    // pointlessly in the late game; excluding tiles next to known territory
+    // restricts scouting to genuinely unexplored regions.
     let unexploredTiles = 0;
     for (const t of tiles.values()) {
-        if (!t.owner && t.terrain !== 'WATER' && t.terrain !== 'MOUNTAIN') unexploredTiles++;
+        if (t.owner) continue;
+        if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN') continue;
+        let known = false;
+        for (let dx = -1; dx <= 1 && !known; dx++) {
+            for (let dz = -1; dz <= 1 && !known; dz++) {
+                if (dx === 0 && dz === 0) continue;
+                const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+                if (nt && nt.owner) known = true;
+            }
+        }
+        if (!known) unexploredTiles++;
     }
     // Spy target: nearest enemy city tile key (for spy goal).
     let spyTargetKey = null;
@@ -640,10 +664,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 1af. UNIVERSITY — critical for science victory and always useful for
-    //      tech advancement. Build one in each city when pursuing science
-    //      victory; otherwise build a single one for general research.
-    if (vt === 'science') {
-        // Science victory: build universities in every city that doesn't have one
+    //      tech advancement. Build a university in EVERY city (one per turn),
+    //      not just for science victory. A non-science faction with 4 cities
+    //      and 1 university has ~1/4 the research throughput, which is why the
+    //      AI never reaches Enlightenment/Modern techs and keeps fielding
+    //      medieval rosters. Building universities everywhere lets every faction
+    //      actually climb the tech tree.
+    {
         for (const t of owned) {
             if (t.terrain !== 'CITY') continue;
             const list = buildings.get(`${t.x},${t.z}`) || [];
@@ -653,16 +680,6 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 actions.push({ type: 'build', buildingType: 'UNIVERSITY', tileKey: `${site.x},${site.z}` });
                 res = payBuilding('UNIVERSITY', res);
                 break; // one per turn
-            }
-        }
-    } else {
-        // Non-science: build one university for general research benefit
-        const hasUni = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('UNIVERSITY'));
-        if (!hasUni && myCityCount >= 1) {
-            const site = findBuildSite('UNIVERSITY', owned, buildings, tiles);
-            if (site && canAffordBuilding('UNIVERSITY', res)) {
-                actions.push({ type: 'build', buildingType: 'UNIVERSITY', tileKey: `${site.x},${site.z}` });
-                res = payBuilding('UNIVERSITY', res);
             }
         }
     }
@@ -913,11 +930,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor) {
-            // Check if conquest target is across water — need a harbor for transports.
+            // Check if conquest target is across water — need a harbor for
+            // transports. Prefer the goal's reachability metadata (set by the
+            // new BFS-based classifier) over the naive line-trace.
             const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
                 topGoal.targetFaction && topGoal.targetTileKey &&
-                pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
-                    ...topGoal.targetTileKey.split(',').map(Number));
+                ((topGoal.meta && topGoal.meta.requiresNaval) ||
+                 pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
+                    ...topGoal.targetTileKey.split(',').map(Number)));
             const coastal = findBuildSite('HARBOR', owned, buildings, tiles);
             if (coastal && canAffordBuilding('HARBOR', res) &&
                 (isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands' ||
@@ -939,9 +959,20 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     floor. `settlerUrgency`/`settlerTarget`/`scarcityTriggered` are computed
     //     once before the spending blocks (the goal selector also uses them).
     //     A `settle` goal in the sequence additionally nudges target/cap up.
+    //     Under an active conquest goal, settler production is halved so the
+    //     treasury and unit cap go to the army instead of sprawl. Resource
+    //     scarcity overrides this (expansion is still the durable fix for a
+    //     bleeding economy), and a naval conquest goal doesn't suppress settler
+    //     production as hard (the faction still needs cities to grow its economy
+    //     while the invasion fleet is being built).
+    const conquestCampaigning = goalKind === 'conquest' || goalKind === 'take-key-city' || goalKind === 'attack-king';
+    const navalConquest = goalKind === 'conquest' && topGoal && topGoal.meta && topGoal.meta.requiresNaval;
+    const conquestSettlerScale = conquestCampaigning && !navalConquest ? 0.5 : 1.0;
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
-    const settlerCap = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency)) + hardCapBonus + settleGoalBoost;
+    let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale));
+    let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale))) + hardCapBonus + settleGoalBoost;
+    const settlerCap = settlerCapEff;
     // Stop training settlers entirely when no valid found spot exists on our
     // home landmass — the AI cannot found a city, so training more settlers
     // just wastes resources. Also disband idle settlers that can't found.
@@ -954,10 +985,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         : 0;
     const expandIslandsExtras = expandIslandsMode && liveTransports > 0 ? Math.min(3, liveTransports + 1) : 0;
     const hardCapBonusExtra = hardCapBonus + expandIslandsExtras;
-    const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION * (scarcityTriggered ? 2 : settlerUrgency > 1 ? 1.5 : 1)));
+    // Settlers-per-turn is halved under a (non-naval) conquest goal so the AI
+    // doesn't sprawl while campaigning. Scarcity overrides this.
+    const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION *
+        (scarcityTriggered ? 2 : (settlerUrgency > 1 ? 1.5 : 1)) *
+        (conquestCampaigning && !navalConquest && !scarcityTriggered ? 0.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
-    while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTarget + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
+    while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTargetEff + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
         // If there's no valid found spot on our landmass and we have no
         // transport-based expansion opportunity, stop immediately.
         if (!hasFoundSpot && !expandIslandsExtras) break;
@@ -1024,18 +1059,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 // Also build a fleet when conquest target is across water.
                 const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
                     topGoal.targetFaction && topGoal.targetTileKey &&
-                    pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
-                        ...topGoal.targetTileKey.split(',').map(Number));
+                    ((topGoal.meta && topGoal.meta.requiresNaval) ||
+                     pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
+                        ...topGoal.targetTileKey.split(',').map(Number)));
                 const navalCap = (needsExpansionFleet || conquestAcrossWater) ? 10 : 2;
             if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
-                const transportCount = myUnits.filter(u => u.type === 'TRANSPORT').length +
-                    actions.filter(a => a.type === 'train' && a.unitType === 'TRANSPORT').length;
+                // Count transports including the modern STEAM_TRANSPORT.
+                const transportCount = myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length +
+                    actions.filter(a => a.type === 'train' && (a.unitType === 'TRANSPORT' || a.unitType === 'STEAM_TRANSPORT')).length;
                 const waitingSettlers = myUnits.filter(u => u.type === 'SETTLER' &&
                     !findFoundSpot(u, tiles, owner, land, land.idOf.get(`${u.x},${u.z}`), units)).length;
                 const needsMoreTransports = needsExpansionFleet && transportCount < 2 + waitingSettlers;
+                // A conquest target across water needs transports to ferry the
+                // army — even for a continental faction that isn't otherwise in
+                // "expansion fleet" mode. Without this the AI builds a harbor
+                // (via conquestAcrossWater) but only trains warships, never the
+                // transport the army needs to cross.
+                const needsConquestTransport = conquestAcrossWater && transportCount < 2;
+                // Prefer the modern STEAM_TRANSPORT when STEAM_ENGINE is
+                // researched (TRANSPORT is obsolete once STEAM_TRANSPORT is
+                // available). Fall back to TRANSPORT for pre-steam factions.
+                const modernTransport = aiUnlocked.has('STEAM_TRANSPORT') ? 'STEAM_TRANSPORT' : 'TRANSPORT';
                 let pick = 'GALLEY';
-                if (needsExpansionFleet && transportCount === 0) pick = 'TRANSPORT';
-                else if (needsMoreTransports && Math.random() < 0.7) pick = 'TRANSPORT';
+                if ((needsExpansionFleet || needsConquestTransport) && transportCount === 0) pick = modernTransport;
+                else if (needsMoreTransports && Math.random() < 0.7) pick = modernTransport;
+                else if (needsConquestTransport && Math.random() < 0.7) pick = modernTransport;
                 // Tech gate: don't train a ship whose tech hasn't been researched.
                 if (!aiUnlocked.has(pick)) {
                     // Fall back to GALLEY (always available via NAVAL_ENGINEERING) if possible.
@@ -1174,7 +1222,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
             const myMass = land.idOf.get(`${unit.x},${unit.z}`);
             const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+            // When the faction needs to expand by sea but owns NO coastal city
+            // (so can't build a Harbor), founding a coastal city is the only way
+            // to unlock naval expansion — boost the coastal preference strongly.
+            const hasCoastalCity = owned.some(t => t.terrain === 'CITY' && isCoastalCity(t, tiles));
             const preferCoastal = (isIslandFaction || needsNavalExpansion) && !hasHarbor;
+            const coastalDesperate = (needsNavalExpansion || isIslandFaction) && !hasCoastalCity;
             // If the faction needs to expand by sea and a friendly Transport is
             // right here, board it immediately rather than founding on the last
             // marginal home tile — ferrying should begin before the home island
@@ -1188,7 +1241,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
-            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units, factionDef, res, preferCoastal, drainingResource);
+            // preferCoastal may be a boolean or a numeric bonus; when the
+            // faction has no coastal city at all, pass a large bonus so founding
+            // a coastal city wins over inland resource tiles (without this a
+            // harborless island faction can never unlock naval expansion).
+            const coastalBonus = coastalDesperate ? 400 : (preferCoastal ? 150 : 0);
+            const spot = findFoundSpot(unit, tiles, owner, land, myMass, units, factionDef, res, coastalBonus, drainingResource, atWar);
             if (spot) {
                 // Settler escort: if a non-settler military unit is within 5
                 // tiles and idle, make it follow the settler toward the spot.
@@ -1244,28 +1302,85 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             continue;
         }
 
-        // a1b) Workers build terrain improvements. If standing on an owned,
-        //      unimproved, in-influence resource tile, build the matching
-        //      improvement; otherwise step toward the nearest such tile.
+        // a1b) Workers capture breached cities first, then build terrain
+        //      improvements. Any unit walking into a breached city should
+        //      capture it — workers included. Check adjacent first (explicit
+        //      capture action), then route toward nearby breached cities so
+        //      the worker walks in next turn (the game engine's move handler
+        //      auto-captures on arrival). Only fall through to improvements
+        //      if no capture opportunity exists.
         if (unit.type === 'WORKER') {
-            const here = tiles.get(`${unit.x},${unit.z}`);
-            const hereBldg = here ? improvementForTerrain(here.terrain) : null;
-            const hereHas = hereBldg && (buildings.get(`${here.x},${here.z}`) || []).includes(hereBldg);
-            if (here && here.owner === owner && hereBldg && !hereHas &&
-                (!influence || influence.has(`${here.x},${here.z}`)) &&
-                canAffordBuilding(hereBldg, res) && !unit.hasAttackedThisTurn) {
-                actions.push({ type: 'workerBuild', unitId: unit.id, buildingType: hereBldg });
-                res = payBuilding(hereBldg, res);
-                acted.add(unit.id);
-                continue;
-            }
-            const spot = findImprovementSpot(unit, tiles, owner, buildings, influence, res);
-            if (spot) {
-                const step = stepToward(unit, spot, tiles, owner, units, moved, isAtWar);
-                if (step) {
-                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
-                    moved.add(`${step.x},${step.z}`);
+            // 1) Adjacent breached city: capture immediately.
+            if (!unit.hasMovedThisTurn && !acted.has(unit.id)) {
+                const cap = findAdjacentCapturable(unit, tiles, owner, res, isAtWar);
+                if (cap) {
+                    actions.push({ type: 'capture', unitId: unit.id, tileKey: `${cap.x},${cap.z}` });
+                    res = subtractCost(res, { gold: CAPTURE_COST });
                     acted.add(unit.id);
+                    continue;
+                }
+            }
+            // 2) Nearby breached city (within 4 tiles): move toward it so we
+            //    can capture next turn. Only when idle (no improvement to build
+            //    on current tile) and the city is reachable.
+            if (!unit.hasMovedThisTurn && !acted.has(unit.id)) {
+                const here = tiles.get(`${unit.x},${unit.z}`);
+                const hereBldg = here ? improvementForTerrain(here.terrain) : null;
+                const hereHas = hereBldg && (buildings.get(`${here.x},${here.z}`) || []).includes(hereBldg);
+                const needsImprovement = here && here.owner === owner && hereBldg && !hereHas &&
+                    (!influence || influence.has(`${here.x},${here.z}`)) &&
+                    canAffordBuilding(hereBldg, res);
+                if (!needsImprovement) {
+                    let bestCity = null, bestDist = Infinity;
+                    for (let dx = -4; dx <= 4; dx++) {
+                        for (let dz = -4; dz <= 4; dz++) {
+                            if (Math.abs(dx) + Math.abs(dz) > 4) continue;
+                            const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+                            if (!t || t.terrain !== 'CITY') continue;
+                            if (t.owner === owner) continue;
+                            if ((t.fortification || 0) > 0) continue;
+                            if (t.owner && isAtWar && !isAtWar(t.owner)) continue;
+                            const d = Math.abs(dx) + Math.abs(dz);
+                            if (d < bestDist) { bestDist = d; bestCity = t; }
+                        }
+                    }
+                    if (bestCity) {
+                        const step = stepToward(unit, bestCity, tiles, owner, units, moved, isAtWar);
+                        if (step && (step.x !== bestCity.x || step.z !== bestCity.z)) {
+                            actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                            acted.add(unit.id);
+                        } else if (step) {
+                            //一步到位: move directly onto the city (game engine captures on arrival).
+                            actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                            acted.add(unit.id);
+                        }
+                    }
+                }
+            }
+            // 3) No capture opportunity: build improvements as normal.
+            if (!acted.has(unit.id)) {
+                const here = tiles.get(`${unit.x},${unit.z}`);
+                const hereBldg = here ? improvementForTerrain(here.terrain) : null;
+                const hereHas = hereBldg && (buildings.get(`${here.x},${here.z}`) || []).includes(hereBldg);
+                if (here && here.owner === owner && hereBldg && !hereHas &&
+                    (!influence || influence.has(`${here.x},${here.z}`)) &&
+                    canAffordBuilding(hereBldg, res) && !unit.hasAttackedThisTurn) {
+                    actions.push({ type: 'workerBuild', unitId: unit.id, buildingType: hereBldg });
+                    res = payBuilding(hereBldg, res);
+                    acted.add(unit.id);
+                }
+            }
+            if (!acted.has(unit.id)) {
+                const spot = findImprovementSpot(unit, tiles, owner, buildings, influence, res);
+                if (spot) {
+                    const step = stepToward(unit, spot, tiles, owner, units, moved, isAtWar);
+                    if (step) {
+                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                        moved.add(`${step.x},${step.z}`);
+                        acted.add(unit.id);
+                    }
                 }
             }
             acted.add(unit.id);
@@ -1484,12 +1599,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         // a3b) Spies. When a spy goal is active, move toward the target enemy
         //      city and execute the designated spy action when adjacent.
         if (unit.type === 'SPY' && !acted.has(unit.id) && goalKind === 'spy' && topGoal) {
-            const spyAction = (topGoal.params && topGoal.params.spyAction) || 'GATHER_INTEL';
+            const spyAction = (topGoal.meta && topGoal.meta.spyAction) || 'GATHER_INTEL';
             const targetFaction = topGoal.targetFaction;
-            // Parse spyTargetKey to get target coordinates.
+            // Parse targetTileKey to get target coordinates.
             let tx, tz;
-            if (topGoal.targetKey) {
-                const parts = String(topGoal.targetKey).split(',');
+            if (topGoal.targetTileKey) {
+                const parts = String(topGoal.targetTileKey).split(',');
                 tx = parseInt(parts[0], 10);
                 tz = parseInt(parts[1], 10);
             }
@@ -1500,7 +1615,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     actions.push({
                         type: 'spyAction', unitId: unit.id,
                         action: spyAction, targetFaction,
-                        targetTileKey: topGoal.targetKey
+                        targetTileKey: topGoal.targetTileKey
                     });
                     acted.add(unit.id);
                     continue;
@@ -1773,24 +1888,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     const assignedFronts = new Set();
-    for (let i = 0; i < ranked.length && conquest.size < conquestCount && (fronts.length === 0 || assignedFronts.size < fronts.length); i++) {
+    // Pass 1: assign one group to each front (round-robin by power) so every
+    // front is covered before any front gets a second group. The old power-
+    // based fallback could stack 2 groups on front A while front B stayed empty.
+    for (let i = 0; i < ranked.length && conquest.size < conquestCount; i++) {
         if (fronts.length === 0) {
             conquest.add(ranked[i].g);
-        } else {
-            // Assign group to a different front than already-assigned groups
-            for (let fi = 0; fi < fronts.length; fi++) {
-                if (!assignedFronts.has(fi)) {
-                    conquest.add(ranked[i].g);
-                    assignedFronts.add(fi);
-                    break;
-                }
-            }
-            // If all fronts assigned but we still have strong groups, add them too
-            if (!conquest.has(ranked[i].g) && conquest.size < conquestCount && ranked[i].power > ranked[Math.min(ranked.length - 1, conquestCount)].power * 1.5) {
+            continue;
+        }
+        if (assignedFronts.size >= fronts.length) break; // all fronts have a group
+        for (let fi = 0; fi < fronts.length; fi++) {
+            if (!assignedFronts.has(fi)) {
                 conquest.add(ranked[i].g);
+                assignedFronts.add(fi);
+                break;
             }
         }
     }
+    // Pass 2: if we still have conquest slots free and all fronts are covered,
+    // assign remaining strong groups to reinforce (no front left uncovered).
+    for (let i = 0; i < ranked.length && conquest.size < conquestCount; i++) {
+        if (conquest.has(ranked[i].g)) continue;
+        if (fronts.length > 0 && assignedFronts.size < fronts.length) break;
+        conquest.add(ranked[i].g);
+    }
+
     // 5b. Inter-group reinforcement. A group whose king is wounded or that is
     //     locally outnumbered gets help from the nearest friendly group that is
     //     NOT itself in trouble and is within reinforcing range. The reinforcing
@@ -1799,6 +1921,24 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     troubled group plus every available helper still can't match the foe),
     //     the troubled group is told to RETREAT instead — reinforcing into a lost
     //     cause just feeds the enemy.
+    //
+    // Strategic concentration of force (from ai_army_plan.js): when 2+ conquest
+    // groups exist, compute a shared strategic target so they converge on the
+    // same city instead of each picking a different one. Also detect flanking
+    // opportunities so a second group approaches from the opposite side.
+    const conquestGroups = [...conquest];
+    let strategicTarget = null;
+    let flankAssignments = [];
+    if (conquestGroups.length > 0) {
+        const goalTargetKey = topGoal && topGoal.targetTileKey ? topGoal.targetTileKey : null;
+        strategicTarget = computeStrategicTarget(conquestGroups, tiles, units, owner, isAtWar, aiState, goalTargetKey);
+        if (strategicTarget && conquestGroups.length >= 2) {
+            flankAssignments = detectFlankingOpportunity(conquestGroups, { x: strategicTarget.x, z: strategicTarget.z }, units, owner);
+        }
+    }
+    const flankMap = new Map(); // group -> flank role
+    for (const fa of flankAssignments) flankMap.set(fa.group, fa);
+
     const REINFORCE_RANGE = 12;
     const groupObjectives = new Map();   // group -> objective tile
     const groupStances = new Map();      // group -> stance
@@ -1806,7 +1946,20 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         let objective, stance;
         if (conquest.has(g)) {
             stance = computeStance(g, units, owner, atWar, isAtWar);
-            objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal);
+            // Use the shared strategic target when available (concentration of
+            // force). Fall back to per-group pickGroupObjective if no strategic
+            // target was computed (e.g. no enemy cities in range).
+            if (strategicTarget) {
+                objective = { x: strategicTarget.x, z: strategicTarget.z };
+                // Flank group approaches from the opposite side.
+                const fa = flankMap.get(g);
+                if (fa && fa.role === 'flank') {
+                    const flankObj = computeFlankObjective({ x: strategicTarget.x, z: strategicTarget.z }, fa.approachAngle, tiles, owner);
+                    if (flankObj) objective = flankObj;
+                }
+            } else {
+                objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal);
+            }
         } else {
             const c = groupCentroid(g);
             objective = (g === kingGuardGroup && king)
@@ -1857,6 +2010,52 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         }
     }
+    // 5c. Naval embarkation: when the conquest goal requires naval transport
+    //     (meta.requiresNaval) and the plan has a 'boardArmy' step, order the
+    //     conquest group's land units to move toward and board friendly
+    //     transports. Without this the army walks to the shore and mills forever
+    //     — the transports never get loaded because the default transport logic
+    //     only ferries settlers. This coordinator explicitly boards the army.
+    if (topGoal && topGoal.kind === 'conquest' && topGoal.meta && topGoal.meta.requiresNaval &&
+        topGoal.plan && topGoal.plan.some(s => s.kind === 'boardArmy')) {
+        const transports = myUnits.filter(u => (u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT') && !u.boarded);
+        if (transports.length > 0) {
+            for (const g of conquestGroups) {
+                for (const u of g.units) {
+                    if (acted.has(u.id) || u.hasMovedThisTurn) continue;
+                    if (u.type === 'SETTLER' || u.type === 'WORKER' || isNaval(u)) continue;
+                    // Already adjacent to a transport — board now.
+                    const adjTr = transports.find(tr =>
+                        Math.abs(tr.x - u.x) + Math.abs(tr.z - u.z) === 1);
+                    if (adjTr) {
+                        const cap = (UNIT_TYPE[adjTr.type] && UNIT_TYPE[adjTr.type].capacity) || 2;
+                        if (((adjTr.cargo || []).length) < cap) {
+                            actions.push({ type: 'board', unitId: u.id, transportId: adjTr.id });
+                            acted.add(u.id);
+                            continue;
+                        }
+                    }
+                    // Otherwise move toward the nearest transport.
+                    let nearest = null, nearestDist = Infinity;
+                    for (const tr of transports) {
+                        const cap = (UNIT_TYPE[tr.type] && UNIT_TYPE[tr.type].capacity) || 2;
+                        if (((tr.cargo || []).length) >= cap) continue;
+                        const d = manhattan(u.x, u.z, tr.x, tr.z);
+                        if (d < nearestDist) { nearestDist = d; nearest = tr; }
+                    }
+                    if (nearest) {
+                        const step = stepToward(u, nearest, tiles, owner, units, moved, isAtWar);
+                        if (step && !moved.has(`${step.x},${step.z}`)) {
+                            actions.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                            acted.add(u.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for (const g of groups) {
         const objective = groupObjectives.get(g);
         const stance = groupStances.get(g);
@@ -2152,7 +2351,8 @@ export function resourceNeedWeights(factionDef, resources, drainingResource = nu
  *  - Safety (fewer nearby enemies is better)
  *  This makes the AI prioritize settling in resource-rich frontier areas,
  *  spreading into different map regions instead of clustering near home. */
-function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null, factionDef = null, resources = null, preferCoastal = false, drainingResource = null) {
+function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = null, factionDef = null, resources = null, preferCoastal = false, drainingResource = null, atWar = false) {
+    // `preferCoastal` may be a boolean (true → default +150) or a numeric bonus.
     // Find the nearest friendly city distance for frontier scoring
     let nearestFriendlyCityDist = Infinity;
     for (const t of tiles.values()) {
@@ -2246,10 +2446,13 @@ function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = n
         score -= enemyNear * 5;                 // Avoid enemy clusters
         
         // FRONTIER BONUS: strongly prefer tiles far from existing friendly cities
-        // This is the key change — rewards expansion into new regions
-        if (nearestCityDist > 8) score += AI_FRONTIER_BONUS_CLOSE;   // Very far from any city — great frontier
-        else if (nearestCityDist > 5) score += AI_FRONTIER_BONUS_MID; // Moderately far — good expansion
-        else if (nearestCityDist > 3) score += AI_FRONTIER_BONUS_FAR; // Somewhat far — acceptable
+        // This is the key change — rewards expansion into new regions. Capped at
+        // 12 tiles so settlers don't chase infinite-distance frontier into enemy
+        // territory, and halved while at war (a settler deep in enemy lands dies).
+        const frontierScale = atWar ? 0.5 : 1.0;
+        if (nearestCityDist > 8) score += Math.round(AI_FRONTIER_BONUS_CLOSE * frontierScale);   // Very far — great frontier
+        else if (nearestCityDist > 5) score += Math.round(AI_FRONTIER_BONUS_MID * frontierScale); // Moderately far
+        else if (nearestCityDist > 3) score += Math.round(AI_FRONTIER_BONUS_FAR * frontierScale); // Somewhat far
         else score -= 20;                       // Too close to existing city — penalize
         
         // Enemy proximity penalty: founding near a strong enemy city is dangerous
@@ -2269,14 +2472,17 @@ function findFoundSpot(unit, tiles, owner, land = null, massId = null, units = n
         // Coastal preference: an island / naval-expanding faction should found
         // on a coast so it can build a Harbor and keep expanding by sea instead
         // of stranding itself inland on a tiny islet. Strong bonus when the
-        // faction needs a harbor and doesn't have one yet.
-        if (preferCoastal) {
+        // faction needs a harbor and doesn't have one yet. `preferCoastal` may
+        // be a boolean or a numeric bonus amount (coastal-desperate case).
+        const coastalBonusAmt = preferCoastal === true ? 150
+            : (typeof preferCoastal === 'number' ? preferCoastal : 0);
+        if (coastalBonusAmt > 0) {
             let coastal = false;
             for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
                 const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
                 if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) { coastal = true; break; }
             }
-            if (coastal) score += 150;
+            if (coastal) score += coastalBonusAmt;
         }
         
         if (score > bestScore) { bestScore = score; best = t; }
@@ -2306,6 +2512,7 @@ function pickEconomyBuilding(tile, existing, resources) {
         PLAINS: 'FARM',
         FOREST: 'LUMBERMILL',
         MOUNTAIN: 'MINE',
+        HILLS: 'MINE',
         CITY: 'MARKET'
     };
     const type = candidates[tile.terrain];
@@ -2467,7 +2674,11 @@ function detectActiveObjectives(units, tiles, owner, isAtWar) {
 
 function countByRole(units, actions, owner) {
     const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0, naval: 0 };
-    for (const u of units) {
+    // `units` may be a Map (keyed by id) or an array of unit objects. Handle
+    // both so unit tests passing a Map work the same as the real pipeline
+    // (which passes an array from [...units.values()]).
+    const iter = (units && units.values) ? units.values() : (units || []);
+    for (const u of iter) {
         if (u.owner !== owner) continue;
         const r = unitRole(u.type);
         if (counts[r] !== undefined) counts[r]++;
@@ -2627,6 +2838,38 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
                         return null;
                     }
                 }
+            }
+        }
+    }
+
+    // Modern-unit savings: when a high-era unit (RIFLEMAN, SIEGE_CANNON, etc.)
+    // is in the roster but not yet affordable, and we're close to affording it,
+    // skip training this turn so the gold/iron carries forward. Without this the
+    // AI spends every turn's surplus on cheap medieval units and never
+    // accumulates enough for a modern unit, even after its tech is researched.
+    // Only fires past the defense floor (total >= 4) so the early army isn't
+    // starved. The check is per-role: only save when the modern unit's role is
+    // actually in deficit (don't save for a ranged unit if we already have
+    // enough ranged).
+    if (aiState && total >= 4) {
+        const modernUnits = ['RIFLEMAN', 'SHARPSHOOTER', 'LINE_INFANTRY', 'DRAGOON',
+            'SIEGE_CANNON', 'FIELD_GUN', 'RAILGUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD',
+            'IRONCLAD', 'STEAM_TRANSPORT', 'IRONCLAD_FRIGATE', 'MONITOR', 'SUBMARINE'];
+        for (const mType of modernUnits) {
+            if (!roster.includes(mType)) continue;
+            const mRole = unitRole(mType);
+            const mCost = getUnitCostFor(mType, factionDef);
+            if (canAfford(mType, resources, mCost)) continue; // already affordable — no need to save
+            const desired = total * (target[mRole] || 0);
+            const roleDeficit = desired - (counts[mRole] || 0);
+            if (roleDeficit < 0.5) continue; // role already filled
+            // Within ~30% of affording the modern unit — save up rather than
+            // buy another cheap unit that delays the modern one.
+            const goldDeficit = (mCost.gold || 0) - (resources.gold || 0);
+            const ironDeficit = (mCost.iron || 0) - (resources.iron || 0);
+            if (goldDeficit > 0 && goldDeficit <= Math.ceil((mCost.gold || 0) * 0.30) &&
+                ironDeficit <= Math.ceil((mCost.iron || 0) * 0.30)) {
+                return null;
             }
         }
     }
@@ -3121,6 +3364,11 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal
         for (const t of tiles.values()) {
             if (t.terrain !== 'CITY') continue;
             if (t.owner === owner) continue;
+            // Reachability filter: a land army group (no transports) can't walk
+            // to a water-separated city. Skip unreachable cities so the group
+            // doesn't pick a target it can only stare at across the shore.
+            // (The goal-level planner handles naval objectives via transports.)
+            if (!isReachableByLand(tiles, c.x, c.z, t.x, t.z)) continue;
             const d = manhattan(c.x, c.z, t.x, t.z);
             const fort = t.fortification || 0;
             const garrison = cityGarrison(t, units);
@@ -3958,7 +4206,7 @@ function homeMassHasFoundSpot(tiles, owner, land, massId) {
     if (massId == null) return false;
     for (const t of tiles.values()) {
         if (land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
-        if (canFoundOn(t, owner)) return true;
+        if (canFoundOn(t, owner, tiles)) return true;
     }
     return false;
 }
