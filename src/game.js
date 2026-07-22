@@ -192,6 +192,9 @@ export class Game {
                 return;
             }
             this._rebuildDiploCache();
+            // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+            // regeneration never resurrects a dead unit/lord.
+            this._sweepDeadCombatants();
             this.gameState.turnManager.endPlayerTurn();
             if (this.ui) this.ui.updateAll();
             if (this.renderer) this.renderAll();
@@ -217,6 +220,9 @@ export class Game {
     _autoFFLoop() {
         if (!this._autoFF || this.gameState.gameOver || this.gameState.paused) return;
         this._rebuildDiploCache();
+        // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+        // regeneration never resurrects a dead unit/lord.
+        this._sweepDeadCombatants();
         this.gameState.turnManager.endPlayerTurn();
         if (this.ui) this.ui.updateAll();
         if (this.renderer) this.renderAll();
@@ -996,7 +1002,8 @@ export class Game {
             if (!(udef && udef.siegeOnly)) {
                 for (const l of (this.gameState.lords || [])) {
                     if (!l || l.owner === unit.owner) continue;
-                    if ((l.hp || 0) <= 0) continue;
+                    // 0-hp lords ARE valid targets: a 0-hp combatant is dead and
+                    // must be finishable (skipping them made 0-hp kings unkillable).
                     if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
                     const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
                     if (dist > range) continue;
@@ -1124,7 +1131,8 @@ export class Game {
             }
             for (const other of (this.gameState.lords || [])) {
                 if (!other || other === lord || other.owner === lord.owner) continue;
-                if ((other.hp || 0) <= 0) continue;
+                // 0-hp lords ARE valid targets: a 0-hp combatant is dead and
+                // must be finishable (skipping them made 0-hp kings unkillable).
                 if (!canAttack(this.gameState.diplomacy, lord.owner, other.owner)) continue;
                 if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
                 const guarded = [...this.gameState.units.values()].some(
@@ -1222,7 +1230,7 @@ export class Game {
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
 
@@ -1241,6 +1249,7 @@ export class Game {
             this.log(`${nameOf(attacker)} destroyed!`);
             this.gameState.selectedUnit = null;
         }
+        this._sweepDeadCombatants(); // finish off any other 0-hp stragglers
 
         // Long-range siege engines (CATAPULT, TREBUCHET): AOE splash damage to
         // enemy units adjacent to the target, and a burn DoT on survivors.
@@ -1306,7 +1315,7 @@ export class Game {
         const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
         const result = resolveCombat(atk, def, terrain, null, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
         this._playAttackAnimation(atk, def);
@@ -1323,6 +1332,7 @@ export class Game {
             this.log(`${nameOf(atk)} fell in battle!`);
             this.gameState.selectedLord = null;
         }
+        this._sweepDeadCombatants(); // finish off any other 0-hp stragglers
         this.gameState.moveTargets.clear();
         this.gameState.attackTargets = [];
         this.renderer.clearHighlights();
@@ -1337,6 +1347,21 @@ export class Game {
         if (!c) return;
         if (c._isLord) this._onLordDeath(c._lord);
         else this._onUnitDeath(c);
+    }
+
+    /** Death sweep: any combatant at hp <= 0 is dead, even when the damage
+     *  source (a king ability, starvation attrition, a mispredicted combat,
+     *  a dodged finishing blow) never routed its death. Removes such units and
+     *  lords — a dead king still eliminates his faction via _onKingDeath. Runs
+     *  after battles and at end of turn so corpses never linger (or regen back
+     *  to life) between turns. */
+    _sweepDeadCombatants() {
+        for (const u of [...this.gameState.units.values()]) {
+            if (typeof u.hp === 'number' && u.hp <= 0) this._onUnitDeath(u);
+        }
+        for (const l of [...(this.gameState.lords || [])]) {
+            if (l && typeof l.hp === 'number' && l.hp <= 0) this._onLordDeath(l);
+        }
     }
 
     /** A lord/king has fallen. Removes the lord, frees its army, and �?if it was
@@ -1455,7 +1480,7 @@ export class Game {
         const defenderLord = findCommandingLord(this.gameState.lords, defender);
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         // Restore original attack
         attacker.attack = originalAttack;
@@ -1569,7 +1594,7 @@ export class Game {
             const result = resolveCombat(attacker, defender, terrain, atkLord, defLord,
                 this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses,
                 false, this.gameState.structures,
-                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true);
+                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true, this.gameState.units);
             result.messages.forEach(m => this.log(m));
             attacker.attack = originalAttack;
             if (result.defenderDied) {
@@ -3237,11 +3262,11 @@ export class Game {
                         citiesUpgraded++;
                     }
                 }
-                // Heal all friendly units to full HP.
+                // Heal all friendly units to full HP (the dead stay dead — no resurrection).
                 let healed = 0;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner !== faction) continue;
-                    if (u.hp < (u.maxHp || 10)) {
+                    if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
                         u.hp = u.maxHp || 10;
                         healed++;
                     }
@@ -4687,7 +4712,7 @@ export class Game {
                         const defenderLord = findCommandingLord(this.gameState.lords, defender);
                         const result = resolveCombat(attacker, defender, terrain,
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                         result.messages.forEach(m => this.log(m));
                         attacker.hasAttackedThisTurn = true;
                         this._playAttackAnimation(attacker, defender);
@@ -4963,7 +4988,7 @@ export class Game {
                     const defenderLord = findCommandingLord(this.gameState.lords, defender);
                     const result = resolveCombat(attacker, defender, terrain,
                         attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                     attacker.attack = originalAttack;
                     result.messages.forEach(m => this.log(m));
                     attacker.hasAttackedThisTurn = true;
@@ -5000,6 +5025,7 @@ export class Game {
         // enemy lord is fair game). Runs after the main action loop so it never
         // pre-empts a unit's planned move/attack.
         this._aiUnitAttackLords(faction);
+        this._sweepDeadCombatants(); // bury 0-hp combatants before the next faction acts
         this.updateFog();
         this.checkVictory();
         // Feature 6: record a turn-summary event so the event log captures AI
@@ -5112,6 +5138,9 @@ export class Game {
             // Rebuild the diplomacy cache once per round so the AI diplomacy
             // phase (power/distance scoring) is O(cities²) instead of O(tiles²).
             this._rebuildDiploCache();
+            // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+            // regeneration never resurrects a dead unit/lord.
+            this._sweepDeadCombatants();
             this.gameState.turnManager.endPlayerTurn();
             this.ui.updateAll();
         } finally {

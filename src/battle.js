@@ -84,9 +84,11 @@ export function isEncircled(defender, units, tiles) {
  * @param defenderCityBreached - true when the defender stands on a CITY tile
  *   whose fortification is 0: the city's terrain and building (walls) defense
  *   bonuses no longer apply — the defenses are down.
+ * @param units - optional full units Map (for adjacency-based passives like
+ *   MUSKETEER volley fire and LINE_INFANTRY formation).
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false, units = null) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
@@ -164,6 +166,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // per-unit blocks that reference it) avoids a temporal-dead-zone
     // ReferenceError ("Cannot access 'isCity' before initialization").
     const isCity = terrain === 'CITY';
+    // Defender's tile key — precomputed here (with isCity) because per-unit
+    // bonus blocks below (e.g. DEMOLITION_SQUAD) reference it BEFORE the
+    // defender-defense section where it used to be declared (same TDZ
+    // ReferenceError class as isCity above).
+    const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
 
     // CANNON siege bonus: additional +4 vs cities (stacks with base siegeBonus).
     if (attackerUnit.type === 'CANNON' && isCity) {
@@ -172,11 +179,6 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
     // MORTAR AOE: splash damage handled separately in AOE section.
 
-    // RIFLEMAN accurate: ignores 50% of target defense.
-    if (attackerUnit.type === 'RIFLEMAN') {
-        effectiveDefense *= 0.5;
-        messages.push(`${combatName(attackerUnit)} rifled accuracy: target defense halved!`);
-    }
     // SHARPSHOOTER sniper: +3 vs lords, settlers, engineers.
     if (attackerUnit.type === 'SHARPSHOOTER' && defenderUnit) {
         if (defenderUnit.lordId || defenderUnit._isLord || defenderUnit.type === 'SETTLER' || defenderUnit.type === 'ENGINEER') {
@@ -229,7 +231,7 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     // Defender defense: terrain + buildings + structures + lord stats + class + adjacent auras.
-    const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
+    // (tileKey was precomputed above, next to isCity.)
     // Walls/buildings only protect while the city stands — a breached city's
     // building defense bonus is gone too.
     const buildingDef = (buildings && !defenderCityBreached) ? getBuildingDefenseBonus(tileKey, buildings) : 0;
@@ -247,6 +249,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense;
+    // RIFLEMAN accurate: ignores 50% of target defense. Must run AFTER the
+    // effectiveDefense declaration above — before this fix it referenced the
+    // binding in its temporal dead zone (ReferenceError on every attack).
+    if (attackerUnit.type === 'RIFLEMAN') {
+        effectiveDefense *= 0.5;
+        messages.push(`${combatName(attackerUnit)} rifled accuracy: target defense halved!`);
+    }
     if (structureDef > 0) {
         messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
     }
@@ -514,6 +523,12 @@ export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord
     const cloneLord = (l) => l
         ? { ...l, stats: { ...(l.stats || {}) }, abilities: [...(l.abilities || [])], army: [...(l.army || [])] }
         : null;
+    // Sever the combatants' `_lord` back-references as well: a shallow clone of
+    // a lordCombatant keeps `_lord` pointing at the REAL lord, so resolveCombat's
+    // syncLordHp/awardXP would write simulated (often lethal) hp and XP onto the
+    // real lord with no death routing — the "0 HP king never dies" bug.
+    if (aClone._lord) aClone._lord = cloneLord(aClone._lord);
+    if (dClone._lord) dClone._lord = cloneLord(dClone._lord);
     const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled, structures, defenderCityBreached);
     return {
         defenderDied: result.defenderDied,

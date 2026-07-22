@@ -23,7 +23,8 @@ function processMedicHeal(units) {
             // BERSERKERS fight beyond the aid of medics (noMedic flag).
             if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].noMedic) continue;
             if (Math.abs(u.x - medic.x) > 1 || Math.abs(u.z - medic.z) > 1) continue;
-            if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
+            // Dead units (hp <= 0) are beyond healing — medics can't resurrect.
+            if (u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
         }
     }
 }
@@ -368,7 +369,9 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             for (const lord of gameState.lords) {
                 lord.hasMovedThisTurn = false;
                 lord.hasAttackedThisTurn = false;
-                if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp < lord.maxHp) {
+                // A dead lord (hp <= 0) does not regenerate — regen is for the
+                // living; the dead are swept by Game._sweepDeadCombatants.
+                if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp > 0 && lord.hp < lord.maxHp) {
                     const tile = gameState.tiles && gameState.tiles.get(`${lord.x},${lord.z}`);
                     const inOwnCity = tile && tile.terrain === 'CITY' && tile.owner === lord.owner;
                     const heal = (lord.isKing && inOwnCity) ? 5 : 2;

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { resolveCombat, isEncircled, canCaptureTile, captureTile, processLoyalty, simulateCombat } from '../src/battle.js';
+import { lordCombatant } from '../src/lords.js';
 
 function makeUnit(type, owner, x, z, overrides = {}) {
   const defaults = {
@@ -154,6 +155,139 @@ describe('battle', () => {
       const result = simulateCombat(null, null, 'PLAINS');
       expect(result.damageToDefender).toBe(0);
       expect(result.damageToAttacker).toBe(0);
+    });
+
+    it('predicting a kill on a lord combatant does NOT damage the real lord', () => {
+      // Regression: simulateCombat shallow-cloned the combatant, so the clone's
+      // `_lord` still pointed at the real lord — resolveCombat's syncLordHp then
+      // wrote the simulated (often lethal) hp onto the real lord with no death
+      // routing. This is how kings ended up at 0 HP while still alive.
+      const king = {
+        id: 'k1', owner: 'b', x: 1, z: 0, hp: 20, maxHp: 20, isKing: true,
+        name: 'Spymaster Nyx', xp: 0, level: 1,
+        stats: { command: 2, combat: 2, governance: 1 }, abilities: [], army: [],
+      };
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { attack: 200 }); // guaranteed predicted kill
+      const result = simulateCombat(atk, lordCombatant(king), 'PLAINS');
+      expect(result.defenderDied).toBe(true);  // the prediction says the king dies
+      expect(king.hp).toBe(20);                // but the real king is untouched
+      expect(king.xp).toBe(0);
+    });
+  });
+
+  describe('resolveCombat — era-unit crash regressions', () => {
+    it('RIFLEMAN attacking a city defender does not crash and halves defense', () => {
+      // Regression: `effectiveDefense *= 0.5` ran before the `let effectiveDefense`
+      // declaration (TDZ ReferenceError on every Rifleman attack).
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { type: 'RIFLEMAN', attack: 11 });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { hp: 40, maxHp: 40 });
+      let result;
+      expect(() => { result = resolveCombat(atk, def, 'CITY'); }).not.toThrow();
+      expect(result.messages.some(m => m.includes('rifled accuracy'))).toBe(true);
+    });
+
+    it('MUSKETEER attacking does not crash (units was not in scope)', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { type: 'MUSKETEER', attack: 8 });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { hp: 40, maxHp: 40 });
+      expect(() => resolveCombat(atk, def, 'CITY')).not.toThrow();
+    });
+
+    it('MUSKETEER volley fire: +1 attack per adjacent friendly musketeer', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { id: 1, type: 'MUSKETEER', attack: 8 });
+      const friend = makeUnit('INFANTRY', 'a', 1, 0, { id: 2, type: 'MUSKETEER' });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { id: 3, hp: 40, maxHp: 40 });
+      const units = new Map([[1, atk], [2, friend], [3, def]]);
+      const result = resolveCombat(atk, def, 'CITY', null, null, null, null, null, false, null, false, false, units);
+      expect(result.messages.some(m => m.includes('volley fire: +1'))).toBe(true);
+    });
+
+    it('MUSKETEER volley fire: no adjacent musketeers, no bonus', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { id: 1, type: 'MUSKETEER', attack: 8 });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { id: 3, hp: 40, maxHp: 40 });
+      const units = new Map([[1, atk], [3, def]]);
+      const result = resolveCombat(atk, def, 'CITY', null, null, null, null, null, false, null, false, false, units);
+      expect(result.messages.some(m => m.includes('volley fire'))).toBe(false);
+    });
+
+    it('LINE_INFANTRY defender does not crash (units was not in scope)', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 1, 0, { type: 'LINE_INFANTRY', hp: 60, maxHp: 60 });
+      expect(() => resolveCombat(atk, def, 'PLAINS')).not.toThrow();
+    });
+
+    it('LINE_INFANTRY formation: +2 def with 2 adjacent friendly infantry', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 2, 0, { id: 10, type: 'LINE_INFANTRY', hp: 60, maxHp: 60 });
+      const f1 = makeUnit('INFANTRY', 'b', 2, 1, { id: 11 });
+      const f2 = makeUnit('INFANTRY', 'b', 3, 0, { id: 12 });
+      const units = new Map([[10, def], [11, f1], [12, f2]]);
+      const result = resolveCombat(atk, def, 'PLAINS', null, null, null, null, null, false, null, false, false, units);
+      expect(result.messages.some(m => m.includes('formation discipline'))).toBe(true);
+    });
+
+    it('DEMOLITION_SQUAD attacking a city does not crash and gets +5', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { type: 'DEMOLITION_SQUAD', attack: 8 });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { hp: 40, maxHp: 40 });
+      let result;
+      expect(() => { result = resolveCombat(atk, def, 'CITY'); }).not.toThrow();
+      expect(result.messages.some(m => m.includes('demolition charge'))).toBe(true);
+    });
+
+    it('DEMOLITION_SQUAD attacking outside a city does not crash (tileKey TDZ)', () => {
+      // Regression: the block read `tileKey` before its `const` declaration.
+      // The `isCity ||` short-circuit hides this vs cities, but on open ground
+      // (with a buildings map passed, as the game always does) it threw a TDZ
+      // ReferenceError on every Demolition Squad attack.
+      const atk = makeUnit('INFANTRY', 'a', 0, 0, { type: 'DEMOLITION_SQUAD', attack: 8 });
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { hp: 40, maxHp: 40 });
+      const buildings = new Map([['5,5', ['WALLS']]]);
+      expect(() => resolveCombat(atk, def, 'PLAINS', null, null, buildings)).not.toThrow();
+    });
+  });
+
+  describe('resolveCombat — 0-HP defenders are dead', () => {
+    it('a melee attack on a 0-hp unit kills it', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 1, 0, { hp: 0, maxHp: 10 });
+      const result = resolveCombat(atk, def, 'PLAINS');
+      expect(result.defenderDied).toBe(true);
+      expect(result.messages.some(m => m.includes('destroyed'))).toBe(true);
+    });
+
+    it('a ranged attack on a 0-hp unit kills it', () => {
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 2, 0, { hp: 0, maxHp: 10 });
+      const spy = vi.spyOn(Math, 'random').mockReturnValue(0.99); // never dodge
+      try {
+        const result = resolveCombat(atk, def, 'PLAINS');
+        expect(result.defenderDied).toBe(true);
+      } finally { spy.mockRestore(); }
+    });
+
+    it('even a DODGED ranged attack on a 0-hp unit still kills it', () => {
+      // A 0-hp combatant is already dead — dodging the shot must not save it.
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 2, 0, { hp: 0, maxHp: 10 });
+      const spy = vi.spyOn(Math, 'random').mockReturnValue(0); // force the dodge
+      try {
+        const result = resolveCombat(atk, def, 'PLAINS');
+        expect(result.damageToDefender).toBe(0);
+        expect(result.messages.some(m => m.includes('dodges'))).toBe(true);
+        expect(result.defenderDied).toBe(true);
+      } finally { spy.mockRestore(); }
+    });
+
+    it('a 0-hp lord combatant attacked in a city dies (king scenario)', () => {
+      const king = {
+        id: 'k1', owner: 'b', x: 0, z: 1, hp: 0, maxHp: 20, isKing: true,
+        name: 'Spymaster Nyx', xp: 0, level: 1,
+        stats: { command: 2, combat: 2, governance: 1 }, abilities: [], army: [],
+      };
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const combatant = lordCombatant(king);
+      const result = resolveCombat(atk, combatant, 'CITY');
+      expect(result.defenderDied).toBe(true);
+      expect(king.hp).toBeLessThanOrEqual(0); // synced back: still dead
     });
   });
 });
