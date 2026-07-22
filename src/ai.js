@@ -3459,6 +3459,10 @@ function chooseGroupTarget(group, units, owner, atWar, isAtWar, lords = []) {
         if (group.units.some(m => typeMatch(m.type, e.type))) score += 6;  // we can counter it
         // Penalize targets that counter one of our members (dangerous to engage).
         if (group.units.some(m => TYPE_ADVANTAGE[e.type] && TYPE_ADVANTAGE[e.type].strongAgainst === m.type)) score -= 4;
+        // Artillery/siege priority: these are the highest-threat enemy units
+        // (high attack, long range, 0-1 defense). The group should focus-fire
+        // them to eliminate the biggest damage source first.
+        if (SIEGE_TYPES.has(e.type)) score += 40;
         if (score > bestScore) { bestScore = score; best = e; }
     }
     // Also consider at-war enemy lords/kings as focus targets. Kings are the
@@ -3871,6 +3875,9 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 let score = unitValue(e);
                 if (groupTarget && e.id === groupTarget.id) score += 20;
                 if (typeMatch(u.type, e.type)) score += 10;
+                // Siege hunter bonus: ranged units prioritize killing enemy
+                // artillery/siege to eliminate the highest damage source.
+                if (SIEGE_TYPES.has(e.type)) score += 15;
                 // AOE splash bonus: siege engines prefer clustered enemies
                 if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].aoe) {
                     let splashCount = 0;

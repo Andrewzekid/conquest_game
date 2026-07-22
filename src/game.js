@@ -1431,7 +1431,9 @@ export class Game {
         // extra charge damage on top of the base charge bonus.
         const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
         const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
-        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef);
+        const wingedBonus = (this.gameState.tempBonuses[attacker.owner] &&
+            this.gameState.tempBonuses[attacker.owner].cavalryCharge) || 0;
+        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef) + wingedBonus;
         // Execute combat
         const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
@@ -3194,6 +3196,55 @@ export class Game {
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
                 this.log(`${name}: King ${king.name} casts Winter's Grasp! +2 defense this turn.`);
                 break;
+            case 'discipline':
+                this.gameState.tempBonuses[faction] = { attack: 3, defense: 2 };
+                this.log(`${name}: King ${king.name} invokes Discipline! +3 attack, +2 defense this turn.`);
+                break;
+            case 'berserker_rage':
+                this.gameState.tempBonuses[faction] = { attack: 4, lifesteal: 0.5, lifestealTypes: ['BERSERKER', 'INFANTRY'] };
+                this.log(`${name}: King ${king.name} enters Berserker Rage! BERSERKER/INFANTRY +4 attack, lifesteal 50%.`);
+                break;
+            case 'golden_gate': {
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0 };
+                // +5 fortification to all owned cities.
+                let citiesUpgraded = 0;
+                for (const t of this.tiles.values()) {
+                    if (t.terrain === 'CITY' && t.owner === faction) {
+                        const max = t.fortMax || (t.fortification || 0) + 5;
+                        t.fortification = Math.min(max, (t.fortification || 0) + 5);
+                        citiesUpgraded++;
+                    }
+                }
+                // Heal all friendly units to full HP.
+                let healed = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner !== faction) continue;
+                    if (u.hp < (u.maxHp || 10)) {
+                        u.hp = u.maxHp || 10;
+                        healed++;
+                    }
+                }
+                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +5 fort, ${healed} units healed to full.`);
+                break;
+            }
+            case 'manifest_destiny': {
+                this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
+                // Free Settler if fewer than 3 cities.
+                const ownedCities = getOwnedCities(this.tiles, faction);
+                let settlerMsg = '';
+                if (ownedCities.length < 3 && ownedCities.length > 0) {
+                    const cap = ownedCities[0];
+                    const settler = createUnit('SETTLER', faction, cap.x, cap.z, { factionDef: def });
+                    this.gameState.units.set(settler.id, settler);
+                    settlerMsg = ' Free Settler spawned!';
+                }
+                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${settlerMsg}`);
+                break;
+            }
+            case 'winged_charge':
+                this.gameState.tempBonuses[faction] = { cavalryCharge: 3 };
+                this.log(`${name}: King ${king.name} leads a Winged Charge! Cavalry free charge attacks +3 bonus damage.`);
+                break;
         }
         this.gameState.kingCooldowns[faction] = cd;
         if (faction === PLAYER_FACTION) {
@@ -4034,13 +4085,46 @@ export class Game {
             return;
         }
 
-        // 2) Retreat when locally outmatched (power-ratio based, not a fixed count).
-        // Also retreat if king's HP is critically low (< 40%) to preserve the king.
+        // 2) Retreat when locally outmatched. The HP threshold scales with
+        //    danger level: more enemies, nearby artillery/siege, or superior
+        //    foe attack power all raise the bar so the king retreats earlier
+        //    when the situation is more dire.
         const kingHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
-        if (kingHpFrac < 0.4) {
+        // Count enemy military units within Chebyshev 4.
+        let foeCount = 0;
+        let foeAttackPower = 0;
+        let hasArtilleryThreat = false;
+        const SIEGE_SET = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON',
+            'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN']);
+        for (const eu of enemyUnits) {
+            const dist = Math.max(Math.abs(eu.x - lord.x), Math.abs(eu.z - lord.z));
+            if (dist > 4) continue;
+            foeCount++;
+            foeAttackPower += (eu.attack ?? 0) + ((UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attack) || 0);
+            // Artillery/siege within their attack range of the king = lethal threat.
+            if (!hasArtilleryThreat && SIEGE_SET.has(eu.type)) {
+                const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
+                if (dist <= atkRange) hasArtilleryThreat = true;
+            }
+        }
+        let friendAttackPower = 0;
+        for (const fu of this.gameState.units.values()) {
+            if (fu.owner !== faction) continue;
+            if (Math.max(Math.abs(fu.x - lord.x), Math.abs(fu.z - lord.z)) > 3) continue;
+            friendAttackPower += (fu.attack ?? 0) + ((UNIT_TYPE[fu.type] && UNIT_TYPE[fu.type].attack) || 0);
+        }
+        // Dynamic retreat threshold: base 0.50, scales up with danger.
+        let retreatThreshold = 0.50;
+        retreatThreshold += Math.min(0.15, foeCount * 0.05);         // +0.05 per foe (cap +0.15)
+        if (hasArtilleryThreat) retreatThreshold += 0.10;             // artillery nearby = deadly
+        if (foeAttackPower > friendAttackPower) retreatThreshold += 0.05;  // foe outguns us
+        retreatThreshold = Math.min(0.70, retreatThreshold);          // cap at 70%
+
+        if (kingHpFrac < retreatThreshold) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
+        // Also retreat when power-ratio is bad (subsumes the old 1.3x check).
         if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
@@ -4323,6 +4407,15 @@ export class Game {
                 return this.gameState.graveyard.some(g => g.owner === faction);
             case 'scry':
                 return false; // AI already has full map knowledge; don't pollute player fog
+            case 'discipline':
+            case 'berserker_rage':
+                return enemyCityNear || enemyUnits.length >= 3;
+            case 'golden_gate':
+                return threatened || enemyNearKing;
+            case 'manifest_destiny':
+                return enemyCityNear || ownCities.length < 3;
+            case 'winged_charge':
+                return enemyNearKing || enemyUnits.length >= 2;
         }
         return false;
     }
@@ -4790,7 +4883,9 @@ export class Game {
                     if (!this._applySpikesOnCharge(attacker)) break;   // impaled on spikes
                     const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
                     const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
-                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef);
+                    const wingedBonus = (this.gameState.tempBonuses[attacker.owner] &&
+                        this.gameState.tempBonuses[attacker.owner].cavalryCharge) || 0;
+                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef) + wingedBonus;
                     const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
                     const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
                     const attackerLord = findCommandingLord(this.gameState.lords, attacker);

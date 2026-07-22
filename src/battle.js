@@ -308,6 +308,23 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     defenderUnit.hp -= damageToDefender;
     messages.push(`${combatName(attackerUnit)} attacks ${combatName(defenderUnit)} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);
 
+    // Lifesteal: attacker heals a fraction of damage dealt (Viking Berserker
+    // Rage ability). Only applies when the attacker's faction has a lifesteal
+    // tempBonus and the attacker's type is in the lifestealTypes whitelist.
+    if (atkTemp && atkTemp.lifesteal && atkTemp.lifesteal > 0) {
+        const allowedTypes = atkTemp.lifestealTypes;
+        if (!allowedTypes || allowedTypes.includes(attackerUnit.type)) {
+            const healAmount = Math.floor(damageToDefender * atkTemp.lifesteal);
+            if (healAmount > 0 && attackerUnit.hp > 0) {
+                const before = attackerUnit.hp;
+                attackerUnit.hp = Math.min(attackerUnit.maxHp || before, before + healAmount);
+                if (attackerUnit.hp > before) {
+                    messages.push(`${combatName(attackerUnit)} drains ${attackerUnit.hp - before} HP via lifesteal`);
+                }
+            }
+        }
+    }
+
     // Keep a lord combatant's hp synced onto its lord object as it changes.
     const sync = () => { syncLordHp(attackerUnit); syncLordHp(defenderUnit); };
 
