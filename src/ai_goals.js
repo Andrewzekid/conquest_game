@@ -150,7 +150,17 @@ function ensureProgress(aiState) {
 function goalValid(goal, ctx) {
     switch (goal.kind) {
         case 'conquest': {
-            if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            // Neutral city goals (meta.neutral) are valid even when not at war
+            // — the AI can capture unowned cities without a war declaration.
+            const isNeutralGoal = goal.meta && goal.meta.neutral;
+            if (!isNeutralGoal) {
+                if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            }
+            // Neutral city captured by someone else: invalidate the goal.
+            if (isNeutralGoal && goal.targetTileKey && ctx.tiles) {
+                const tt = ctx.tiles.get(goal.targetTileKey);
+                if (!tt || tt.owner) return false; // tile gone or now owned
+            }
             // Re-check reachability for LAND conquest goals: if the target became
             // unreachable by land (e.g. a bridge was destroyed), force a replan.
             // NAVAL conquest goals stay valid while at war even without a
@@ -371,57 +381,71 @@ export function selectGoals(input) {
         });
     };
 
-    // Conquest: at least one at-war enemy. Pick the nearest REACHABLE enemy
-    // city — reachable by land, or by naval if we have transports/a harbor.
-    // Never target an unreachable city (the old code fell back to water-
-    // separated cities when all were unreachable, leaving the army stuck at the
-    // shore forever). If no reachable conquest target exists, skip the conquest
-    // goal this cycle; the expand-islands / naval-prep goals handle building
-    // the infrastructure to reach foreign landmasses.
-    if (enemySet.size > 0) {
+    // Conquest: pick the best target city — scored by accessibility, distance,
+    // and whether it's neutral (no diplomacy needed). Neutral cities are valid
+    // conquest targets even when not at war; at-war enemy cities are always valid.
+    // Scoring: neutral bonus, same-landmass bonus, distance penalty, naval
+    // penalty. This ensures the AI picks nearby accessible targets instead of
+    // chasing far-away cities across water.
+    {
         const hasTransport = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
-        // Compute reachability from the nearest owned city to each candidate,
-        // not just homeAnchor — a forward city on the target's landmass makes
-        // it land-reachable even if the capital is on a different mass. When
-        // `tiles` is not available (abstract/test contexts without a map), fall
-        // back to legacy behavior and treat all candidates as land-reachable.
-        // Cross-water targets are classified 'naval' (reachable once a harbor +
-        // transports are built) rather than 'unreachable' — the AI can always
-        // build the infrastructure, so the goal stays to drive that building.
         const origins = (ownCities && ownCities.length) ? ownCities : (homeAnchor ? [homeAnchor] : []);
         const hasTiles = !!tiles;
-        const classify = (c) => {
-            if (!hasTiles) return 'land';
-            if (!origins.length) return 'naval';
-            for (const o of origins) {
-                if (isReachableByLand(tiles, o.x, o.z, c.x, c.z)) return 'land';
-            }
-            return 'naval';
-        };
-        const land = [], naval = [];
+
+        // Score each candidate city and pick the best.
+        const scored = [];
         for (const c of enemyCities) {
-            const tier = classify(c);
-            if (tier === 'land') land.push(c);
-            else if (tier === 'naval') naval.push(c);
+            // Skip cities owned by factions we're not at war with (only neutral
+            // and at-war cities are valid targets).
+            if (c.owner && !enemySet.has(c.owner)) continue;
+
+            let score = 0;
+
+            // Neutral bonus: no diplomacy needed, no war grievance from former
+            // owner, just walk up and capture. Strongly prefer these.
+            if (c.neutral) score += 50;
+
+            // Distance from nearest own city + reachability check.
+            let minDist = Infinity;
+            let reachableByLand = false;
+            if (hasTiles && origins.length) {
+                for (const o of origins) {
+                    const d = manhattan(o.x, o.z, c.x, c.z);
+                    if (d < minDist) minDist = d;
+                    if (!reachableByLand && isReachableByLand(tiles, o.x, o.z, c.x, c.z)) {
+                        reachableByLand = true;
+                    }
+                }
+            } else {
+                minDist = homeAnchor ? manhattan(homeAnchor.x, homeAnchor.z, c.x, c.z) : 0;
+                reachableByLand = true; // assume reachable in abstract/test mode
+            }
+
+            // Distance penalty: closer targets are better. Halved for neutral
+            // cities since they're free to capture (no army buildup needed).
+            const distPenalty = c.neutral ? minDist * 0.3 : minDist * 0.5;
+            score -= distPenalty;
+
+            // Land reachability bonus: can walk there without transports.
+            if (reachableByLand) score += 30;
+
+            // Naval penalty: needs harbor + transports (slow, expensive).
+            if (!reachableByLand) score -= 30;
+
+            scored.push({ ...c, _score: score, _reachableByLand: reachableByLand, _dist: minDist });
         }
-        let tgt = null, tier = null;
-        if (land.length) { tgt = nearestEnemyCity(land, homeAnchor); tier = 'land'; }
-        else if (naval.length) { tgt = nearestEnemyCity(naval, homeAnchor); tier = 'naval'; }
-        // If tgt is null (all unreachable AND no transports), no conquest goal
-        // is pushed — the expand-islands goal handles building the infrastructure
-        // to reach foreign landmasses first.
-        if (tgt) {
+
+        // Sort by score descending (best target first).
+        scored.sort((a, b) => b._score - a._score);
+
+        if (scored.length > 0) {
+            const tgt = scored[0];
+            const tier = tgt._reachableByLand ? 'land' : 'naval';
             // Naval conquest objectives are real but can't be pressed until
-            // infrastructure (harbor + transports) is built. Score them lower so
-            // they don't dominate over the expand-islands/naval-prep goals that
-            // build that infrastructure, but keep the goal so the AI knows what
-            // it's building toward (and so harbor/transport logic can key off
-            // `conquestAcrossWater` / `meta.requiresNaval`).
+            // infrastructure (harbor + transports) is built. Score them lower
+            // so they don't dominate over expand-islands/naval-prep goals.
             const scoreScale = tier === 'naval' ? 0.6 : 1.0;
-            // Long-term infrastructure plan for naval conquest: build a harbor,
-            // train transports, board the army, sail to the target. The ai.js
-            // spending blocks read this plan to prioritize harbor/transport
-            // production and the embarkation coordinator boards the army.
+            // Long-term infrastructure plan for naval conquest.
             const navalPlan = tier === 'naval' ? [
                 { kind: 'buildHarbor' },
                 { kind: 'trainTransport', count: 2 },
@@ -429,11 +453,11 @@ export function selectGoals(input) {
                 { kind: 'sailTo', targetTileKey: `${tgt.x},${tgt.z}` },
             ] : null;
             push('conquest',
-                BASE_SCORE.conquest * weights.conquest * scoreScale,
+                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale,
                 `${tgt.x},${tgt.z}`,
                 tgt.owner,
                 'short',
-                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval' },
+                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval', neutral: !!tgt.neutral },
                 navalPlan);
         }
     }

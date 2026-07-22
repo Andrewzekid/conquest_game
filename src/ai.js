@@ -298,8 +298,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const ownCitiesArr = owned.filter(t => t.terrain === 'CITY').map(t => ({ x: t.x, z: t.z }));
     const enemyCitiesArr = [];
     for (const t of tiles.values()) {
-        if (t.terrain === 'CITY' && t.owner && t.owner !== owner && isAtWar(t.owner)) {
-            enemyCitiesArr.push({ x: t.x, z: t.z, owner: t.owner });
+        if (t.terrain === 'CITY' && t.owner !== owner) {
+            // Include at-war enemy cities AND neutral (unclaimed) cities.
+            // Neutral cities are always valid conquest targets — no diplomacy
+            // needed, just walk up and capture.
+            if (!t.owner || isAtWar(t.owner)) {
+                enemyCitiesArr.push({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner });
+            }
         }
     }
     const homeAnchor = firstCity ? { x: firstCity.x, z: firstCity.z } :

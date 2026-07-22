@@ -591,3 +591,503 @@ describe('E. Secondary bug fixes', () => {
         });
     });
 });
+
+// ===========================================================================
+// PART F: Conquest objective prioritization (unclaimed > nearby > same-landmass)
+// ===========================================================================
+describe('F. Conquest objective prioritization', () => {
+    // Helper: create a simple map with owned tiles + various city targets.
+    function conquestSetup(cityDescriptors, opts = {}) {
+        // Base map: AI city at 5,5, plains connecting outward.
+        const entries = [
+            [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+            [6, 5, 'PLAINS', 'ai1'],
+            [7, 5, 'PLAINS', 'ai1'],
+        ];
+        for (const c of cityDescriptors) {
+            entries.push([c.x, c.z, 'CITY', c.owner || null,
+                { cityName: c.name || 'City', cityLevel: c.level || 3, fortification: c.fort || 0, fortMax: c.fortMax || 3, ...c.overrides }]);
+        }
+        // Add water between landmasses if needed
+        if (opts.waterBetween) {
+            for (const w of opts.waterBetween) {
+                entries.push([w[0], w[1], 'WATER', null]);
+            }
+        }
+        // Add connecting plains
+        if (opts.plains) {
+            for (const p of opts.plains) {
+                entries.push([p[0], p[1], 'PLAINS', p[2] || null]);
+            }
+        }
+        const tiles = makeTileMap(entries);
+        const units = new Map();
+        units.set(1, makeUnit('INFANTRY', 'ai1', 6, 5, { factionId: opts.faction || 'crimson' }));
+        units.set(2, makeUnit('INFANTRY', 'ai1', 7, 5, { factionId: opts.faction || 'crimson' }));
+        const diplo = opts.peace ? peaceDiplo() : warDiplo('ai1', 'enemy');
+        // Add war relations for any owned enemy cities
+        for (const c of cityDescriptors) {
+            if (c.owner && c.owner !== 'ai1' && !opts.peace) {
+                diplo.relations[`ai1:${c.owner}`] = {
+                    state: DIPLOMACY_STATES.WAR, turnsAllied: 0, turnsAtWar: 3,
+                    relationship: -50, warsDeclared: 1, peaceTreaties: 0,
+                    tradesMade: 0, brokenTreaties: 0, grievances: 0,
+                    grievanceLog: [], expiresOn: null, formalWar: true,
+                    lastWarDeclaredTurn: 1, grudges: {}, trust: 0.1,
+                };
+                diplo.relations[`${c.owner}:ai1`] = { ...diplo.relations[`ai1:${c.owner}`] };
+            }
+        }
+        return {
+            tiles, units,
+            resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 },
+            owner: 'ai1',
+            buildings: new Map([['5,5', ['BARRACKS']]]),
+            influence: null,
+            factionDef: FACTION_DEFS[opts.faction || 'crimson'],
+            diploState: diplo,
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: opts.aiState || createAIState(),
+            aiTechStates: { ai1: opts.ts || createTechState() },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: opts.turn || 35,
+        };
+    }
+
+    // --- F1: Neutral city preferred over distant enemy city ---
+    describe('neutral city prioritization', () => {
+        it('picks a nearby neutral city over a far enemy city', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: null, name: 'Neutral Close' },     // 3 tiles away, neutral
+                { x: 20, z: 20, owner: 'enemy', name: 'Enemy Far' },    // far away, at war
+            ]);
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: ['enemy'],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Should pick the neutral city (3 tiles) not the far enemy city (40 tiles)
+            expect(conquest.targetTileKey).toBe('8,5');
+            expect(conquest.meta.neutral).toBe(true);
+        });
+
+        it('picks the closer neutral when multiple exist', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: null, name: 'Neutral Close' },     // 3 tiles
+                { x: 12, z: 5, owner: null, name: 'Neutral Mid' },      // 7 tiles
+                { x: 20, z: 20, owner: null, name: 'Neutral Far' },     // very far
+            ]);
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: [],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Closest neutral (8,5) should be picked
+            expect(conquest.targetTileKey).toBe('8,5');
+        });
+    });
+
+    // --- F2: Same-landmass preferred over cross-water ---
+    describe('landmass accessibility', () => {
+        it('picks same-landmass city over cross-water city', () => {
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [6, 5, 'PLAINS', 'ai1'],
+                [7, 5, 'PLAINS', 'ai1'],
+                [8, 5, 'PLAINS', null],
+                [9, 5, 'CITY', null, { cityName: 'Same Land Neutral', cityLevel: 3 }],
+                // Water barrier
+                [10, 5, 'WATER', null], [11, 5, 'WATER', null],
+                // Other landmass
+                [15, 5, 'PLAINS', null],
+                [16, 5, 'CITY', null, { cityName: 'Other Land Neutral', cityLevel: 3 }],
+            ]);
+            const units = new Map();
+            units.set(1, makeUnit('INFANTRY', 'ai1', 6, 5, { factionId: 'crimson' }));
+            const aiState = createAIState();
+            const goals = selectGoals({
+                aiState, turn: 35,
+                factionDef: FACTION_DEFS.crimson,
+                enemies: [],
+                enemyCities: [...tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles, myUnits: [...units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Same landmass neutral (9,5) should win over cross-water (16,5)
+            expect(conquest.targetTileKey).toBe('9,5');
+            expect(conquest.meta.neutral).toBe(true);
+        });
+
+        it('picks naval target when no same-landmass target exists', () => {
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [6, 5, 'PLAINS', 'ai1'],
+                // Water barrier
+                [7, 5, 'WATER', null], [8, 5, 'WATER', null],
+                // Other landmass
+                [10, 5, 'PLAINS', null],
+                [11, 5, 'CITY', null, { cityName: 'Island Neutral', cityLevel: 3 }],
+            ]);
+            const units = new Map();
+            units.set(1, makeUnit('INFANTRY', 'ai1', 6, 5, { factionId: 'crimson' }));
+            const aiState = createAIState();
+            const goals = selectGoals({
+                aiState, turn: 35,
+                factionDef: FACTION_DEFS.crimson,
+                enemies: [],
+                enemyCities: [...tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles, myUnits: [...units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Only cross-water target available
+            expect(conquest.targetTileKey).toBe('11,5');
+            expect(conquest.meta.reachability).toBe('naval');
+            expect(conquest.meta.neutral).toBe(true);
+            // Should have a naval plan
+            expect(conquest.plan).toBeTruthy();
+            expect(conquest.plan.some(p => p.kind === 'buildHarbor')).toBe(true);
+        });
+    });
+
+    // --- F3: Neutral city goal valid even at peace ---
+    describe('neutral goal validity at peace', () => {
+        it('generates a conquest goal for neutral cities even with no enemies', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: null, name: 'Neutral' },
+            ], { peace: true });
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: [],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            expect(conquest.targetTileKey).toBe('8,5');
+            expect(conquest.meta.neutral).toBe(true);
+        });
+    });
+
+    // --- F4: Neutral city captured invalidates goal ---
+    describe('neutral city capture invalidation', () => {
+        it('conquest goal for neutral city becomes invalid when city is captured', () => {
+            const aiState = createAIState();
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [8, 5, 'CITY', null, { cityName: 'Neutral', cityLevel: 3 }],
+            ]);
+            // First call: creates the conquest goal for neutral city
+            selectGoals({
+                aiState, turn: 10,
+                factionDef: FACTION_DEFS.crimson,
+                enemies: [],
+                enemyCities: [{ x: 8, z: 5, owner: null, neutral: true }],
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles, myUnits: [],
+            });
+            expect(aiState.goals[0].kind).toBe('conquest');
+            expect(aiState.goals[0].targetTileKey).toBe('8,5');
+
+            // Now someone captures the neutral city (set owner to 'enemy3')
+            tiles.get('8,5').owner = 'enemy3';
+            // Within the lock window, but the goal should be invalidated
+            const goals2 = selectGoals({
+                aiState, turn: 11,
+                factionDef: FACTION_DEFS.crimson,
+                enemies: [], // not at war with enemy3
+                enemyCities: [],
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles, myUnits: [],
+            });
+            // Goal should be replanned (neutral city gone, no more conquest targets)
+            const conquest = goals2.find(g => g.kind === 'conquest');
+            expect(conquest).toBeFalsy();
+        });
+    });
+
+    // --- F5: Mix of neutral and enemy cities ---
+    describe('mixed neutral and enemy targets', () => {
+        it('picks neutral close over enemy medium-distance', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: null, name: 'Neutral Close' },     // 3 tiles
+                { x: 12, z: 5, owner: 'enemy', name: 'Enemy Mid' },     // 7 tiles, at war
+            ]);
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: ['enemy'],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Neutral close (3 tiles away) should beat enemy mid (7 tiles away)
+            expect(conquest.targetTileKey).toBe('8,5');
+            expect(conquest.meta.neutral).toBe(true);
+        });
+
+        it('picks close enemy over far neutral', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: 'enemy', name: 'Enemy Close' },    // 3 tiles, at war
+                { x: 25, z: 25, owner: null, name: 'Neutral Far' },     // very far
+            ]);
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: ['enemy'],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Enemy close (3 tiles) should beat neutral far (45 tiles)
+            expect(conquest.targetTileKey).toBe('8,5');
+            expect(conquest.meta.neutral).toBeFalsy();
+        });
+    });
+
+    // --- F6: Full integration — computeAIActions picks correct target ---
+    describe('full AI integration', () => {
+        it('AI targets nearby neutral city, not far cross-water city', () => {
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [6, 5, 'PLAINS', 'ai1'],
+                [7, 5, 'PLAINS', null],
+                [8, 5, 'CITY', null, { cityName: 'Neutral Close', cityLevel: 3, fortification: 0, fortMax: 3 }],
+                // Water barrier far away
+                [20, 20, 'WATER', null], [21, 20, 'WATER', null],
+                [25, 20, 'CITY', null, { cityName: 'Neutral Far', cityLevel: 3 }],
+            ]);
+            const units = new Map();
+            units.set(1, makeUnit('INFANTRY', 'ai1', 7, 5, { factionId: 'crimson' }));
+            units.set(2, makeUnit('INFANTRY', 'ai1', 6, 5, { factionId: 'crimson' }));
+            const aiState = createAIState();
+            const actions = runAI({
+                tiles, units,
+                resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 },
+                owner: 'ai1',
+                buildings: new Map([['5,5', ['BARRACKS']]]),
+                influence: null,
+                factionDef: FACTION_DEFS.crimson,
+                diploState: peaceDiplo(),
+                lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+                aiState,
+                aiTechStates: { ai1: createTechState() },
+                victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+                currentTurn: 35,
+            });
+            // The AI should produce actions — most importantly, the goal should
+            // target the nearby neutral (8,5), not the far one.
+            expect(actions.length).toBeGreaterThan(0);
+            // Verify the conquest goal was set correctly
+            const conquestGoal = aiState.goals.find(g => g.kind === 'conquest');
+            if (conquestGoal) {
+                expect(conquestGoal.targetTileKey).toBe('8,5');
+                expect(conquestGoal.meta.neutral).toBe(true);
+            }
+        });
+
+        it('AI targets nearby neutral on same landmass, not cross-water neutral', () => {
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [6, 5, 'PLAINS', 'ai1'],
+                [7, 5, 'PLAINS', null],
+                [8, 5, 'CITY', null, { cityName: 'Same Mass', cityLevel: 3, fortification: 0, fortMax: 3 }],
+                [9, 5, 'PLAINS', null],
+                // Water
+                [10, 5, 'WATER', null], [11, 5, 'WATER', null],
+                // Other island
+                [14, 5, 'PLAINS', null],
+                [15, 5, 'CITY', null, { cityName: 'Other Mass', cityLevel: 3, fortification: 0, fortMax: 3 }],
+            ]);
+            const units = new Map();
+            units.set(1, makeUnit('INFANTRY', 'ai1', 7, 5, { factionId: 'crimson' }));
+            const aiState = createAIState();
+            runAI({
+                tiles, units,
+                resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 },
+                owner: 'ai1',
+                buildings: new Map([['5,5', ['BARRACKS']]]),
+                influence: null,
+                factionDef: FACTION_DEFS.crimson,
+                diploState: peaceDiplo(),
+                lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+                aiState,
+                aiTechStates: { ai1: createTechState() },
+                victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+                currentTurn: 35,
+            });
+            const conquestGoal = aiState.goals.find(g => g.kind === 'conquest');
+            if (conquestGoal) {
+                // Same landmass (8,5) should beat cross-water (15,5)
+                expect(conquestGoal.targetTileKey).toBe('8,5');
+            }
+        });
+
+        it('AI does not target cities owned by non-enemy factions', () => {
+            const input = conquestSetup([
+                { x: 8, z: 5, owner: null, name: 'Neutral' },
+                { x: 10, z: 5, owner: 'friendly', name: 'Friendly City' },
+            ], { peace: true });
+            // friendly is not at war
+            const goals = selectGoals({
+                aiState: input.aiState, turn: input.currentTurn,
+                factionDef: input.factionDef,
+                enemies: [],
+                enemyCities: [...input.tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(['friendly']), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles: input.tiles, myUnits: [...input.units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            // Should only target neutral, not friendly
+            expect(conquest.targetTileKey).toBe('8,5');
+        });
+    });
+
+    // --- F7: Naval plan correctness ---
+    describe('naval conquest plan', () => {
+        it('naval conquest goal includes buildHarbor + trainTransport plan', () => {
+            const tiles = makeTileMap([
+                [5, 5, 'CITY', 'ai1', { cityName: 'AI Cap', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+                [6, 5, 'PLAINS', 'ai1'],
+                [7, 5, 'WATER', null], [8, 5, 'WATER', null],
+                [10, 5, 'PLAINS', null],
+                [11, 5, 'CITY', null, { cityName: 'Island City', cityLevel: 3 }],
+            ]);
+            const units = new Map();
+            units.set(1, makeUnit('INFANTRY', 'ai1', 6, 5, { factionId: 'crimson' }));
+            const aiState = createAIState();
+            const goals = selectGoals({
+                aiState, turn: 35,
+                factionDef: FACTION_DEFS.crimson,
+                enemies: [],
+                enemyCities: [...tiles.values()]
+                    .filter(t => t.terrain === 'CITY' && t.owner !== 'ai1')
+                    .map(t => ({ x: t.x, z: t.z, owner: t.owner, neutral: !t.owner })),
+                ownCities: [{ x: 5, z: 5 }], homeAnchor: { x: 5, z: 5 },
+                activeObjectives: {}, threatenedOwnCity: null,
+                isIslandFaction: false, needsNavalExpansion: false,
+                foreignMassWithoutCity: false, myCityCount: 1, settlerTarget: 8,
+                scarcityTriggered: false, bestFoundSpotKey: null,
+                foreignShoreKey: null, bestEconTileKey: null,
+                neutralFactions: new Set(), hasSpies: false, hasChokepoints: false,
+                unexploredTiles: 0, spyTargetKey: null, chokepointKey: null,
+                enemyKings: [], tiles, myUnits: [...units.values()],
+            });
+            const conquest = goals.find(g => g.kind === 'conquest');
+            expect(conquest).toBeTruthy();
+            expect(conquest.meta.reachability).toBe('naval');
+            expect(conquest.plan).toBeTruthy();
+            const planKinds = conquest.plan.map(p => p.kind);
+            expect(planKinds).toContain('buildHarbor');
+            expect(planKinds).toContain('trainTransport');
+            expect(planKinds).toContain('boardArmy');
+            expect(planKinds).toContain('sailTo');
+        });
+    });
+});
