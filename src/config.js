@@ -183,7 +183,7 @@ export const TERRAIN_BONUS = {
     TUNDRA:   { defense: 1,  attack: 0 },      // Cold, sparse cover
     WATER:    { defense: -2, attack: 0 },      // No cover, exposed crossing
     RIVER:    { defense: -2, attack: 0 },      // Crossing a river — exposed
-    CITY:     { defense: 2,  attack: 1 }       // Fortifications + organized militia
+    CITY:     { defense: 5,  attack: 1 }       // Fortifications + organized militia
 };
 
 export const UNIT_COST = {
@@ -480,6 +480,10 @@ export const MILITARY_BUILDING_LEVELS = {
         { veteranLevel: 3, goldMult: 0.65, upgradeCost: { gold: 90, iron: 20 } }
     ],
     HARBOR: [
+        { veteranLevel: 2, goldMult: 0.85, upgradeCost: null },
+        { veteranLevel: 3, goldMult: 0.75, upgradeCost: { gold: 90, iron: 20 } }
+    ],
+    SIEGE_WORKSHOP: [
         { veteranLevel: 2, goldMult: 0.85, upgradeCost: null },
         { veteranLevel: 3, goldMult: 0.75, upgradeCost: { gold: 90, iron: 20 } }
     ]

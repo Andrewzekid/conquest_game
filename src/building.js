@@ -268,11 +268,11 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
                 reason = 'Tile occupied';
             }
         }
-        // Tech gate: building requires a tech that hasn't been researched yet
-        if (canBuild && bData.techRequired && techState) {
+        // Tech gate: building requires a tech that hasn't been researched yet.
+        // Hide it entirely from the menu (don't even show a disabled button).
+        if (bData.techRequired && techState) {
             if (!techState.researched.has(bData.techRequired)) {
-                canBuild = false;
-                reason = `Requires ${bData.techRequired.replace(/_/g, ' ').toLowerCase()} tech`;
+                continue;
             }
         }
         if (canBuild) {

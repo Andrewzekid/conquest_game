@@ -8,12 +8,13 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel, getRelation } from './diplomacy.js';
 import { buildAIGoalsHTML } from './ai_goals.js';
+import { cityRadius } from './map.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAvailableSkills, getSkillEffects } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
-import { getUnlockedUnits, TECHS } from './tech.js';
+import { getUnlockedUnits, isUnitUnlocked, TECHS } from './tech.js';
 
 // Map building types to their icon names in src/icons.js.
 const BUILDING_ICON = {
@@ -21,6 +22,22 @@ const BUILDING_ICON = {
     BARRACKS: 'barracks', WALLS: 'walls', HARBOR: 'harbor', SIEGE_WORKSHOP: 'siege_workshop'
 };
 const RES_ORDER = [['gold', 'g'], ['food', 'f'], ['wood', 'w'], ['iron', 'i'], ['production', 'pr']];
+
+/** Check whether a given building type exists on any tile within the city's
+ *  influence radius (Chebyshev). Mirrors bestMilitaryLevel's scan in game.js. */
+function hasBuildingInInfluence(gameState, cityTile, buildingType) {
+    if (!cityTile || !gameState || !gameState.buildings) return false;
+    const radius = cityRadius(cityTile);
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            const k = `${cityTile.x + dx},${cityTile.z + dz}`;
+            const list = gameState.buildings.get(k) || [];
+            if (list.includes(buildingType)) return true;
+        }
+    }
+    return false;
+}
+
 // Renders a cost object as small colored chips (green if affordable, red if not).
 function costChips(cost, res) {
     const parts = [];
@@ -444,11 +461,17 @@ export function bindUI(gameState, callbacks) {
                         html += `<span style="font-size:10px; color:#9ab;">Siege target: city at [${tgt.x}, ${tgt.z}]</span><br>`;
                     }
                     // Siege Engine build buttons (CATAPULT/TREBUCHET) — field
-                    // construction, no workshop required. Gives factions without
-                    // a Siege Workshop a path to long-range siege engines.
-                    html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
-                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="CATAPULT" style="display:block; width:100%; margin:2px 0;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">${svgIcon('CATAPULT', { size: 13 })} Build Catapult (2t)</button>`;
-                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="TREBUCHET" style="display:block; width:100%; margin:2px 0;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">${svgIcon('TREBUCHET', { size: 13 })} Build Trebuchet (2t)</button>`;
+                    // construction, no workshop required. Only show for siege
+                    // engines whose tech has been researched.
+                    const ts = gameState.techState;
+                    const siegeBuildable = SIEGE_ENGINES.filter(e => isUnitUnlocked(e, ts));
+                    if (siegeBuildable.length) {
+                        html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
+                        for (const engine of siegeBuildable) {
+                            const def = UNIT_TYPE[engine];
+                            html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="${engine}" style="display:block; width:100%; margin:2px 0;" title="Build a ${def.name} (2 turns). Long-range AOE siege with fire.">${svgIcon(engine, { size: 13 })} Build ${def.name} (2t)</button>`;
+                        }
+                    }
                     // Defensive structures (traps/fortifications) on the
                     // engineer's current tile: must be owned land within a
                     // city's influence, free of an existing structure.
@@ -764,12 +787,12 @@ export function bindUI(gameState, callbacks) {
                 els.buildMenu.appendChild(note);
             }
             for (const b of buildable) {
+                if (!b.canBuild) continue;
                 const btn = document.createElement('button');
                 btn.textContent = `${b.name} (${formatCost(b.cost)})`;
-                btn.disabled = !b.canBuild;
                 btn.title = (BUILDING_TYPE[b.type] && BUILDING_TYPE[b.type].desc) ? BUILDING_TYPE[b.type].desc : (b.reason || '');
                 btn.style.cssText = 'display:block; margin:2px; padding:4px; width:100%;';
-                btn.onmouseenter = () => setDesc(describeBuilding(b.type) + (b.reason && !b.canBuild ? ` <span style="color:#ff8866;">(${b.reason})</span>` : ''));
+                btn.onmouseenter = () => setDesc(describeBuilding(b.type));
                 btn.onmouseleave = () => setDesc('');
                 btn.onclick = () => {
                     if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
@@ -833,18 +856,20 @@ export function bindUI(gameState, callbacks) {
                     fullRoster.length = 0;
                     for (const u of filtered) fullRoster.push(u);
                 }
-                // Ships are unlocked per-city by a Harbor (coastal cities only).
-                const hasHarbor = (gameState.buildings.get(cityKey) || []).includes('HARBOR');
+                // Ships require a Harbor in this city's influence AND the unlocking tech.
+                const ts2 = gameState.techState;
+                const unlockedUnits = (ts2 && ts2.researched) ? getUnlockedUnits(ts2) : new Set();
+                const hasHarbor = hasBuildingInInfluence(gameState, tile, 'HARBOR');
                 if (hasHarbor) {
                     for (const ship of NAVAL_UNITS) {
-                        if (!fullRoster.includes(ship)) fullRoster.push(ship);
+                        if (unlockedUnits.has(ship) && !fullRoster.includes(ship)) fullRoster.push(ship);
                     }
                 }
-                // Siege engines are unlocked per-city by a Siege Workshop.
-                const hasWorkshop = (gameState.buildings.get(cityKey) || []).includes('SIEGE_WORKSHOP');
+                // Siege engines require a Siege Workshop in this city's influence AND the tech.
+                const hasWorkshop = hasBuildingInInfluence(gameState, tile, 'SIEGE_WORKSHOP');
                 if (hasWorkshop) {
                     for (const engine of SIEGE_ENGINES) {
-                        if (!fullRoster.includes(engine)) fullRoster.push(engine);
+                        if (unlockedUnits.has(engine) && !fullRoster.includes(engine)) fullRoster.push(engine);
                     }
                 }
 

@@ -75,11 +75,19 @@ export function nextStepToward(tiles, units, unit, goal, maxRange = 200, owner =
     }
 
     if (!found) {
-        // If the exact goal is blocked/unreachable, aim for the nearest visited
-        // tile adjacent to the goal.
+        // If the exact goal is blocked/unreachable, aim for the nearest
+        // REACHABLE visited tile closest to the goal. Water/unbridged-river
+        // tiles are added to visited during expansion (to avoid revisiting)
+        // but must never be returned as a step — land units cannot walk on
+        // water. This prevents the king (and all lords) water-walking bug.
+        const naval = isNaval(unit);
         let best = null, bestDist = Infinity;
         for (const k of visited) {
             const [x, z] = k.split(',').map(Number);
+            if (!naval) {
+                const tk = tiles.get(k);
+                if (tk && (tk.terrain === 'WATER' || (tk.terrain === 'RIVER' && !tk.bridge))) continue;
+            }
             const d = Math.abs(x - goal.x) + Math.abs(z - goal.z);
             if (d < bestDist && !(x === unit.x && z === unit.z)) { bestDist = d; best = { x, z }; }
         }

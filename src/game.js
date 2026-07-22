@@ -56,6 +56,7 @@ import { nextStepToward, goalValid } from './path.js';
 import { createTechState, serializeTechState, deserializeTechState,
          addResearch, selectResearch, getResearchProgress, calculateResearchOutput,
          getUnlockedUnits, getUnlockedBuildings, getTechBonuses, getCurrentEra,
+         isUnitUnlocked,
          TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
          ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES } from './config.js';
@@ -2074,6 +2075,10 @@ export class Game {
     handleBuildSiegeEngine(unit, engineType) {
         if (!unit || unit.type !== 'ENGINEER' || unit.owner !== PLAYER_FACTION) return;
         if (!SIEGE_ENGINES.includes(engineType)) { this.log('Invalid siege engine type.'); return; }
+        // Tech gate: Catapult requires MATHEMATICS, Trebuchet requires SIEGE_CRAFT.
+        if (!isUnitUnlocked(engineType, this.gameState.techState)) {
+            this.log('That siege engine requires a tech you have not yet researched.'); return;
+        }
         if (unit.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
         if (this.gameState.construction && this.gameState.construction.has(unit.id)) {
             this.log('This engineer is already building something.'); return;
@@ -2597,7 +2602,10 @@ export class Game {
         if (NAVAL_UNITS.includes(unitType)) {
             const harborInfo = this.bestMilitaryLevel(tile, 'HARBOR');
             if (!harborInfo) { this.log('Ships require a Harbor in this city (or its influence).'); return; }
-            // 6c �?Enemy warship blockade: an adjacent enemy ship blocks ship production.
+            if (!isUnitUnlocked(unitType, this.gameState.techState)) {
+                this.log('That ship requires a tech you have not yet researched.'); return;
+            }
+            // 6c Enemy warship blockade: an adjacent enemy ship blocks ship production.
             const blocked = this._isHarborBlockaded(tile.x, tile.z);
             if (blocked) { this.log('The harbor is blockaded by enemy ships!'); return; }
         }
@@ -2605,6 +2613,9 @@ export class Game {
         if (SIEGE_ENGINES.includes(unitType)) {
             const workshop = this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP');
             if (!workshop) { this.log('Siege engines require a Siege Workshop in this city (or its influence).'); return; }
+            if (!isUnitUnlocked(unitType, this.gameState.techState)) {
+                this.log('That siege engine requires a tech you have not yet researched.'); return;
+            }
         }
         // A city already busy with multi-turn production can't start another.
         if (this.gameState.production && this.gameState.production.has(cityKey)) {
@@ -3144,7 +3155,8 @@ export class Game {
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
                 for (const t of this.tiles.values()) {
                     if (t.terrain === 'CITY' && t.owner === faction) {
-                        t.fortification = (t.fortification || 0) + 3;
+                        const max = t.fortMax || (t.fortification || 0);
+                        t.fortification = Math.min(max, (t.fortification || 0) + 3);
                     }
                 }
                 this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification to all cities.`);
@@ -3950,6 +3962,8 @@ export class Game {
                 const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
                 if (!step || (step.x === lord.x && step.z === lord.z)) break;
                 const destTile = this.tiles.get(`${step.x},${step.z}`);
+                // Lords cannot walk on water or unbridged rivers.
+                if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) break;
                 // Lords may enter a capturable city (breached / siege-tower adjacent).
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
                     !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
@@ -4108,20 +4122,20 @@ export class Game {
             }
         }
 
-        // 3c) Proactive king hunting. When an "attack-king" goal is active and
-        //     an exposed enemy king is within reach, advance our king toward
-        //     it — but only when we're locally stronger (friendLocal > foeLocal
-        //     * 0.8), so we don't feed our own king into a losing fight. The
-        //     king's ability to end a war by killing the enemy king is the
-        //     single highest-value action available to it.
+        // 3c) Proactive king hunting. When an "attack-king" goal is the top
+        //     goal (i.e., conquest/defense are NOT higher priority) and an
+        //     exposed enemy king is within reach, advance our king toward it.
+        //     The king should NOT chase enemy kings when a conquest objective
+        //     exists — it should join the conquest group instead.
         const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
-        if (atWar && aiSt && aiSt.goals && aiSt.goals.some(g => g.kind === 'attack-king')) {
+        const topGoalKind = aiSt && aiSt.goals && aiSt.goals[0] ? aiSt.goals[0].kind : null;
+        if (atWar && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
             const enemyKing = enemyLords.find(l => l.isKing);
             if (enemyKing) {
                 const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
                 const guarded = [...this.gameState.units.values()]
                     .some(u => u.owner === enemyKing.owner && u.x === enemyKing.x && u.z === enemyKing.z);
-                if (!guarded && d > 1 && friendLocal > foeLocal * 0.8) {
+                if (!guarded && d > 1 && d <= 10 && friendLocal > foeLocal * 0.8) {
                     this._aiStepLord(lord, enemyKing.x, enemyKing.z, faction, pool, factionName);
                     return;
                 }
@@ -4186,6 +4200,12 @@ export class Game {
         const step = nextStepToward(this.tiles, this.gameState.units, lord, { x: targetX, z: targetZ }, 200, faction);
         if (step && (step.x !== lord.x || step.z !== lord.z)) {
             const destTile = this.tiles.get(`${step.x},${step.z}`);
+            // HARD STOP: never let a lord/king walk onto water or unbridged
+            // river, even if a stale BFS slipped through.
+            if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) {
+                lord.hasMovedThisTurn = true;
+                return;
+            }
             // Block entry into enemy city that is not yet capturable.
             if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
                 !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) {

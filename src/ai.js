@@ -22,7 +22,7 @@ import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
-import { selectGoals } from './ai_goals.js';
+import { selectGoals, pathCrossesWater } from './ai_goals.js';
 import { getUnlockedUnits, TECHS } from './tech.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
@@ -98,13 +98,23 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // CATAPULT/TREBUCHET). Computed early so fullRoster can include them and
     // the composition logic can treat siege as trainable.
     let hasSiegeWorkshop = false;
-    for (const bs of buildings.values()) {
-        if (bs && bs.includes('SIEGE_WORKSHOP')) { hasSiegeWorkshop = true; break; }
+    for (const [k, bs] of buildings) {
+        if (bs && bs.includes('SIEGE_WORKSHOP')) {
+            const [bx, bz] = k.split(',').map(Number);
+            const tile = tiles.get(k);
+            if (tile && tile.owner === owner) { hasSiegeWorkshop = true; break; }
+        }
     }
+    // Siege engines require both a Siege Workshop AND the unlocking tech.
+    const aiTsForRoster = aiTechStates && aiTechStates[owner];
+    const aiUnlocked = (aiTsForRoster && aiTsForRoster.researched) ? getUnlockedUnits(aiTsForRoster) : new Set();
+    const siegeAvailable = hasSiegeWorkshop
+        ? ['CATAPULT', 'TREBUCHET'].filter(u => !roster.includes(u) && aiUnlocked.has(u))
+        : [];
     // Every faction can also train the shared EXTRA_UNITS (cavalry, longbowmen,
     // medics, …) — without them most factions never field any cavalry.
     const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u)),
-        ...(hasSiegeWorkshop ? ['CATAPULT', 'TREBUCHET'].filter(u => !roster.includes(u)) : [])];
+        ...siegeAvailable];
     // Filter roster by the faction's tech state: only train units unlocked by
     // researched techs. Faction-roster units are always available (they don't
     // need tech gating). Naval/harbor units are gated by the HARBOR building,
@@ -372,6 +382,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         neutralFactions, hasSpies, hasChokepoints,
         unexploredTiles, spyTargetKey, chokepointKey,
         enemyKings,
+        tiles, myUnits,
     });
     if (aiState) aiState.goals = goals;
     const topGoal = goals[0] || null;
@@ -732,7 +743,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const siegeOptions = roster.filter(t => t === 'SIEGE' || t === 'ARTILLERY' ||
         t === 'CANNON' || t === 'MORTAR' || t === 'FIELD_GUN' ||
         t === 'HORSE_ARTILLERY' || t === 'SIEGE_CANNON' || t === 'RAILGUN');
-    if (hasSiegeWorkshop) siegeOptions.push('CATAPULT', 'TREBUCHET');
+    if (hasSiegeWorkshop) {
+        if (aiUnlocked.has('CATAPULT')) siegeOptions.push('CATAPULT');
+        if (aiUnlocked.has('TREBUCHET')) siegeOptions.push('TREBUCHET');
+    }
     // Composition-aware siege cap: the siege ratio depends on the army's
     // current objective. A faction actively besieging an enemy city fields far
     // more siege (~40%); a decisive field battle or home defense wants fewer
@@ -852,9 +866,16 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                                    : Math.max(2, Math.ceil(myCityCount / 2))),
             2);
         if (goalKind === 'conquest') engCap += 2;
-        // Raise the engineer cap when unbridged rivers block our expansion —
-        // a faction hemmed in by rivers needs more engineers to bridge them
-        // or its armies never reach objectives across the water.
+        // Raise the engineer cap when unbridged rivers or water block our
+        // conquest path — a faction that needs to bridge rivers or cross water
+        // needs more engineers (bridges) and the ability to build siege
+        // structures on the far shore.
+        if (goalKind === 'conquest' && topGoal && topGoal.targetTileKey) {
+            const [tx, tz] = topGoal.targetTileKey.split(',').map(Number);
+            if (pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z, tx, tz)) {
+                engCap += 2;
+            }
+        }
         const hasEngineer = myUnits.some(u => u.type === 'ENGINEER');
         if (hasEngineer) {
             const needsBridges = [...tiles.values()].some(t =>
@@ -887,12 +908,20 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     case: a faction with a couple of cities or a Barracks that can afford a
     //     harbor for coastal defense / future naval use. Also covers
     //     needsNavalExpansion if 0h couldn't find a coastal city at the time.
+    //     When a conquest target is across water, build a harbor proactively so
+    //     transports can ferry the army.
     {
         const hasHarbor = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
         if (!hasHarbor) {
+            // Check if conquest target is across water — need a harbor for transports.
+            const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
+                topGoal.targetFaction && topGoal.targetTileKey &&
+                pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
+                    ...topGoal.targetTileKey.split(',').map(Number));
             const coastal = findBuildSite('HARBOR', owned, buildings, tiles);
             if (coastal && canAffordBuilding('HARBOR', res) &&
                 (isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands' ||
+                 conquestAcrossWater ||
                  myCityCount >= 2 || hasBarracks)) {
                 actions.push({ type: 'build', buildingType: 'HARBOR', tileKey: `${coastal.x},${coastal.z}` });
                 res = payBuilding('HARBOR', res);
@@ -991,8 +1020,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
-            const needsExpansionFleet = isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands';
-            const navalCap = needsExpansionFleet ? 10 : 2;
+                const needsExpansionFleet = isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands';
+                // Also build a fleet when conquest target is across water.
+                const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
+                    topGoal.targetFaction && topGoal.targetTileKey &&
+                    pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
+                        ...topGoal.targetTileKey.split(',').map(Number));
+                const navalCap = (needsExpansionFleet || conquestAcrossWater) ? 10 : 2;
             if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
                 const transportCount = myUnits.filter(u => u.type === 'TRANSPORT').length +
                     actions.filter(a => a.type === 'train' && a.unitType === 'TRANSPORT').length;
@@ -1002,10 +1036,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 let pick = 'GALLEY';
                 if (needsExpansionFleet && transportCount === 0) pick = 'TRANSPORT';
                 else if (needsMoreTransports && Math.random() < 0.7) pick = 'TRANSPORT';
-                const pc = getUnitCostFor(pick, factionDef);
-                if (canAfford(pick, res, pc)) {
-                    actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
-                    res = spendCost(pick, res, pc);
+                // Tech gate: don't train a ship whose tech hasn't been researched.
+                if (!aiUnlocked.has(pick)) {
+                    // Fall back to GALLEY (always available via NAVAL_ENGINEERING) if possible.
+                    pick = aiUnlocked.has('GALLEY') ? 'GALLEY' : null;
+                }
+                if (pick) {
+                    const pc = getUnitCostFor(pick, factionDef);
+                    if (canAfford(pick, res, pc)) {
+                        actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
+                        res = spendCost(pick, res, pc);
+                    }
                 }
             }
         }

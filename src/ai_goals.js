@@ -198,11 +198,13 @@ function nearestEnemyCity(enemyCities, homeAnchor) {
     return best;
 }
 
-/** Check if a path between two tiles crosses water (for goal water-barrier
- *  filtering). Uses a simple line-of-sight check: if any tile along the
- *  Chebyshev-1 path is WATER, the target is considered water-separated.
- *  This prevents lords from trying to walk to targets across the sea. */
-function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
+/** Check if a path between two tiles crosses water or an unbridged river (for
+ *  goal water-barrier filtering). Uses a simple line-of-sight check: if any
+ *  tile along the Chebyshev-1 path is WATER or an unbridged RIVER, the target
+ *  is considered barrier-separated. This prevents lords from trying to walk to
+ *  targets across the sea or an unbridged river, and lets the AI plan to build
+ *  engineers (bridges) or harbors (transports). */
+export function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
     if (!tiles) return false;
     const dx = Math.sign(toX - fromX);
     const dz = Math.sign(toZ - fromZ);
@@ -211,7 +213,7 @@ function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
         if (x !== toX) x += dx;
         else if (z !== toZ) z += dz;
         const t = tiles.get(`${x},${z}`);
-        if (t && t.terrain === 'WATER') return true;
+        if (t && (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge))) return true;
     }
     return false;
 }
@@ -411,20 +413,17 @@ export function selectGoals(input) {
     }
 
     // Attack Enemy King: when an at-war enemy king is exposed (no bodyguard
-    // unit on its tile), prioritize assassinating it — a faction whose king
-    // dies is eliminated, the single highest-value action in the game. The
-    // goal targets the king's current tile and stores the king id in meta.
+    // unit on its tile), consider assassinating it. Uses a low base score (40)
+    // so conquest/defense goals always win when both exist — the king should
+    // join the conquest group, not chase the enemy king across the map.
     {
         const exposedKing = enemyKings.find(king =>
             king.owner !== factionDef.id &&
             enemySet.has(king.owner) &&
             king.isKing && !king.guarded);
         if (exposedKing) {
-            const d = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
-            // Closer exposed kings score higher; the base (85) puts it just
-            // below conquest so a live conquest still wins when the king is
-            // far away but a nearby exposed king jumps to the top.
-            const score = (BASE_SCORE['attack-king'] - d * 0.5) * weights['attack-king'];
+            const dKing = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
+            const score = (40 - dKing * 0.3) * weights['attack-king'];
             push('attack-king',
                 score,
                 `${exposedKing.x},${exposedKing.z}`,
