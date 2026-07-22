@@ -43,7 +43,7 @@ export function setGridDimensions(width, height) {
 // Terrain types. `key` is the string identifier used in tile.terrain (fixes map/renderer mismatch).
 export const TERRAIN = {
     PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 1,  defense: 0 },
-    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 2,  defense: 1 },
+    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 3,  defense: 1 },
     MOUNTAIN: { key: 'MOUNTAIN', color: 0x7d6b58, name: 'Mountain', resource: 'iron',  amount: 2,  defense: 3 },
     HILLS:    { key: 'HILLS',    color: 0x9aaa55, name: 'Hills',    resource: 'iron',  amount: 1,  defense: 1 },
     DESERT:   { key: 'DESERT',   color: 0xe6d08a, name: 'Desert',   resource: 'gold',  amount: 1,  defense: 0 },
@@ -439,8 +439,8 @@ export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 // surrounding region. Military buildings (and economic ones with HP) can be
 // attacked, damaged, and pillaged. FARM/LUMBERMILL/MINE remain terrain-matched.
 export const BUILDING_TYPE = {
-    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 3 },   terrain: 'PLAINS', desc: '+3 food/turn.' },
-    LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 5 },   terrain: 'FOREST', desc: '+5 wood/turn.' },
+    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 2 },   terrain: 'PLAINS', desc: '+2 food/turn.' },
+    LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 6 },   terrain: 'FOREST', desc: '+6 wood/turn.' },
     MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'MATHEMATICS' },

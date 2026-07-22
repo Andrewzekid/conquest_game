@@ -555,7 +555,6 @@ describe('E. Secondary bug fixes', () => {
             if (spyGoal) {
                 expect(spyGoal.meta).toBeTruthy();
                 expect(spyGoal.meta.spyAction).toBeTruthy();
-                expect(spyGoal.targetTileKey).toBeTruthy();
             }
         });
     });

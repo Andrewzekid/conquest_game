@@ -1334,6 +1334,7 @@ export function bindUI(gameState, callbacks) {
             if (e.key !== 't' && e.key !== 'T') return;
             const tag = (e.target && e.target.tagName) || '';
             if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (gameState && gameState.spectateMode) return;
             e.preventDefault();
             const wrap = els.techPanelWrap;
             const open = wrap.style.display === 'block';

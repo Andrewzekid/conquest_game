@@ -154,6 +154,11 @@ export class Game {
         }
         const aiGoalsPanel = document.getElementById('ai-goals-panel');
         if (aiGoalsPanel) aiGoalsPanel.style.display = 'block';
+        // Hide player-facing panels that are meaningless in spectate mode.
+        for (const id of ['tech-panel', 'diplomacy-panel', 'build-menu']) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        }
         // gameState.spectateMode is set authoritatively in initState (which runs
         // after this in the constructor); don't touch it here — gameState isn't
         // built yet when _initSpectateUI is called.
@@ -298,7 +303,7 @@ export class Game {
         // Per-faction AI tech states (player uses the global techState).
         this.gameState.aiTechStates = {};
         for (const f of FACTIONS) {
-            if (f === PLAYER_FACTION) continue;
+            if (f === PLAYER_FACTION && !this.spectateMode) continue;
             this.gameState.aiTechStates[f] = createTechState();
         }
 
@@ -2435,7 +2440,7 @@ export class Game {
 
     handleBuild(buildingType, tile) {
         const influence = getInfluencedTiles(this.tiles, PLAYER_FACTION, CITY_INFLUENCE_RADIUS);
-        const messages = constructBuilding(buildingType, tile, this.gameState.resources.player, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+        const messages = constructBuilding(buildingType, tile, this.gameState.resources.player, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, this.gameState.techState);
         messages.forEach(m => this.log(m));
         sfx.click();
         this.ui.showBuildMenu(tile);
@@ -2454,7 +2459,7 @@ export class Game {
         if (tile.owner !== PLAYER_FACTION) { this.log('Workers can only build on your own tiles.'); return; }
         const influence = getInfluencedTiles(this.tiles, PLAYER_FACTION, CITY_INFLUENCE_RADIUS);
         const messages = constructBuilding(buildingType, tile, this.gameState.resources.player,
-            this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+            this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, this.gameState.techState);
         if (messages.length && messages[0].startsWith('Built')) {
             worker.hasAttackedThisTurn = true; // building uses the worker's action
             sfx.click();
@@ -3775,8 +3780,8 @@ export class Game {
                 if (strategy.seekDistantAllies && isDistant) allianceScore += 40;
                 // Weak factions seek alliances against strong threats
                 if (ratio < 0.9) allianceScore += 30;
-                // Shared enemy bonus
-                if (sharedEnemy) allianceScore += 50;
+                // Shared enemy bonus — co-belligerents strongly prefer alliances
+                if (sharedEnemy) allianceScore += 80;
                 // "Attack close, ally far" (BALANCED): ally with distant factions
                 if (strategy.preferNeighbors && isDistant) allianceScore += 25;
                 // Don't ally with neighbors we're stronger than (likely war targets)
@@ -3788,6 +3793,9 @@ export class Game {
                 if (rel.state === DIPLOMACY_STATES.PEACE) allianceScore += 10;
                 // No alliance if vastly stronger (no need)
                 if (ratio > strategy.allyThreshold * 2) allianceScore -= 40;
+                // Shared enemy weakens the "too strong" penalty — even a strong
+                // faction benefits from coordinating against a common foe.
+                if (sharedEnemy && ratio > strategy.allyThreshold * 2) allianceScore += 30;
             }
 
             // --- TRADE scoring ---
@@ -4537,7 +4545,8 @@ export class Game {
                 case 'build': {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
-                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+                        const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
+                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, aiTs);
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                     }
                     break;
@@ -4548,7 +4557,8 @@ export class Game {
                     const tile = unit ? this.tiles.get(`${unit.x},${unit.z}`) : null;
                     if (unit && tile && unit.type === 'WORKER' && tile.owner === faction &&
                         !unit.hasAttackedThisTurn && influence && influence.has(`${tile.x},${tile.z}`)) {
-                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+                        const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
+                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, aiTs);
                         if (msgs.length && msgs[0].startsWith('Built')) {
                             unit.hasAttackedThisTurn = true;
                             msgs.forEach(m => this.log(`${factionName}: ${m}`));

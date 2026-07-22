@@ -183,6 +183,10 @@ function goalValid(goal, ctx) {
         case 'defense':
             return !!ctx.defensive;
         case 'settle':
+            // Valid only when a found spot exists (or scarcity is driving
+            // expansion despite limited land). Without a spot, training
+            // settlers produces idle units that can't found.
+            if (!goal.targetTileKey) return false;
             return ctx.myCityCount < ctx.settlerTarget || ctx.scarcityTriggered;
         case 'expand-islands':
             return ctx.needsNavalExpansion || (ctx.isIslandFaction && ctx.foreignMassWithoutCity);
@@ -523,8 +527,10 @@ export function selectGoals(input) {
             `${threatenedOwnCity.x},${threatenedOwnCity.z}`,
             null, 'immediate', {});
     }
-    // Settle: below target city count, or scarce on resources.
-    if (myCityCount < settlerTarget || scarcityTriggered) {
+    // Settle: below target city count, or scarce on resources. Only push
+    // when a valid found spot exists — training settlers without a spot
+    // wastes resources and creates idle units.
+    if ((myCityCount < settlerTarget || scarcityTriggered) && bestFoundSpotKey) {
         push('settle',
             (BASE_SCORE.settle + (scarcityTriggered ? 40 : 0)) * weights.settle,
             bestFoundSpotKey, null, 'long', { scarcityTriggered });

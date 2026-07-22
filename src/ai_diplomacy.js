@@ -85,16 +85,18 @@ export function adjustDiplomacyByGoal(goals, diploState, owner, personality, tur
 }
 
 /** Decide whether to declare war on a target faction.
- *  Factors in the current goal, power ratio, and strategic context.
+ *  Factors in the current goal, power ratio, strategic context, and
+ *  landmass/distance to avoid unreasonable wars against far-away factions.
  *
  *  @param {object} aiState - persistent AI state with goals
  *  @param {object} diploState - current diplomacy state
  *  @param {string} owner - this faction's id
  *  @param {string} targetFaction - potential war target
  *  @param {number} powerRatio - our power / their power (>1 means we're stronger)
+ *  @param {object} opts - optional: { sameLandmass:boolean, distance:number }
  *  @returns {{ declare: boolean, reason: string }}
  */
-export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powerRatio) {
+export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powerRatio, opts = {}) {
     const goals = aiState && aiState.goals;
     const topGoal = goals && goals.length ? goals[0] : null;
 
@@ -103,6 +105,16 @@ export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powe
     const rel = diploState && diploState.relations && diploState.relations[relKey];
     if (rel && rel.state === DIPLOMACY_STATES.WAR) {
         return { declare: false, reason: 'already_at_war' };
+    }
+
+    // Landmass / distance guard: don't declare war on factions on a different
+    // landmass and far away (distance > 20) unless we have a strong strategic
+    // reason (conquest goal targeting them specifically).
+    if (opts.sameLandmass === false && (opts.distance || 0) > 20) {
+        const warGoalKinds = new Set(['conquest', 'take-key-city', 'disrupt-victory', 'resource-war']);
+        if (!(topGoal && warGoalKinds.has(topGoal.kind) && topGoal.targetFaction === targetFaction)) {
+            return { declare: false, reason: 'too_far_away' };
+        }
     }
 
     // Conquest / war objective goals targeting this faction: declare if we're
@@ -128,7 +140,8 @@ export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powe
 }
 
 /** Decide whether to accept a peace offer.
- *  Factors in war weariness, army losses, goal status, and strategic position.
+ *  Factors in war weariness, army losses, goal status, strategic position,
+ *  and whether the AI is losing the war.
  *
  *  @param {object} aiState - persistent AI state with goals
  *  @param {object} diploState - current diplomacy state
@@ -136,11 +149,21 @@ export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powe
  *  @param {string} attackerFaction - faction offering peace
  *  @param {number} warTurns - how many turns the war has lasted
  *  @param {number} armyLossFraction - fraction of army lost (0-1)
+ *  @param {object} opts - optional: { powerRatio:number, sharedBorder:boolean }
  *  @returns {{ accept: boolean, reason: string }}
  */
-export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, warTurns, armyLossFraction = 0) {
+export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, warTurns, armyLossFraction = 0, opts = {}) {
     const goals = aiState && aiState.goals;
     const topGoal = goals && goals.length ? goals[0] : null;
+
+    // Losing badly: accept peace when power ratio drops below 0.5 (we're
+    // being overwhelmed) or army losses exceed 30%.
+    if ((opts.powerRatio || 1) < 0.5) {
+        return { accept: true, reason: 'losing_war' };
+    }
+    if (armyLossFraction >= 0.3) {
+        return { accept: true, reason: 'heavy_army_losses' };
+    }
 
     // If the conquest goal targets this faction and we're winning, reject peace.
     if (topGoal && topGoal.kind === 'conquest' && topGoal.targetFaction === attackerFaction) {
@@ -157,11 +180,6 @@ export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, w
         }
     }
 
-    // High army losses: accept peace regardless of goals.
-    if (armyLossFraction >= 0.4) {
-        return { accept: true, reason: 'heavy_army_losses' };
-    }
-
     // Long war: accept peace after enough turns even with a conquest goal.
     // Wars that drag on past 12 turns are costly for both sides.
     if (warTurns >= 12) {
@@ -171,6 +189,12 @@ export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, w
     // Medium war with no clear objective: accept peace.
     if (warTurns >= 8 && (!topGoal || topGoal.kind !== 'conquest')) {
         return { accept: true, reason: 'war_weary' };
+    }
+
+    // Far away (no shared border): accept peace more readily — the war is
+    // costly to maintain across water or long distances.
+    if (opts.sharedBorder === false && warTurns >= 5) {
+        return { accept: true, reason: 'distant_war' };
     }
 
     // Spy goal: maintain tension to gather intel, but accept peace once enough

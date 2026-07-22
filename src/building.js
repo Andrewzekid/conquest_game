@@ -55,11 +55,17 @@ export function isCoastal(tile, tiles) {
  * @param tiles - optional full tile Map (for the Harbor coastal check)
  * @returns messages array
  */
-export function constructBuilding(buildingType, tile, resources, buildings, influence, tiles, buildingState) {
+export function constructBuilding(buildingType, tile, resources, buildings, influence, tiles, buildingState, techState) {
     const messages = [];
     const bData = BUILDING_TYPE[buildingType];
     if (!bData) {
         messages.push(`Unknown building: ${buildingType}`);
+        return messages;
+    }
+
+    // Tech gate: reject buildings whose prerequisite tech hasn't been researched.
+    if (bData.techRequired && techState && !techState.researched.has(bData.techRequired)) {
+        messages.push(`Cannot build ${bData.name}: requires ${bData.techRequired} tech.`);
         return messages;
     }
 
