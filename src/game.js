@@ -2,7 +2,7 @@
 import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
          DIPLOMACY_STATES, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
-         SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
+         SIEGE_ENGINES, SIEGE_ENGINE_BUILD_COST, SIEGE_ENGINE_BUILD_TURNS, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
          CONCEAL_TERRAINS, CONCEAL_TURNS_MOUNTAIN, CONCEAL_TURNS_FOREST, CONCEAL_MAX_PER_TILE,
          CONCEAL_MAX_TURNS, CONCEAL_REVEAL_COOLDOWN,
@@ -154,8 +154,11 @@ export class Game {
         }
         const aiGoalsPanel = document.getElementById('ai-goals-panel');
         if (aiGoalsPanel) aiGoalsPanel.style.display = 'block';
+        const aiDebugPanel = document.getElementById('ai-debug-panel');
+        if (aiDebugPanel) aiDebugPanel.style.display = 'block';
         // Hide player-facing panels that are meaningless in spectate mode.
-        for (const id of ['tech-panel', 'diplomacy-panel', 'build-menu']) {
+        // Diplomacy panel is kept visible so the viewer can inspect AI relations.
+        for (const id of ['tech-panel', 'build-menu']) {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
         }
@@ -1143,7 +1146,7 @@ export class Game {
         lord.hasMovedThisTurn = true;
         const pool = this.gameState.resources[lord.owner];
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner &&
-            (canCaptureTile(lord.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
+            (canCaptureTile(lord.owner, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
             pool.gold -= CAPTURE_COST;
             const prevOwner = destTile.owner;
             const wasNeutral = !prevOwner;
@@ -1173,7 +1176,7 @@ export class Game {
         // breached (fortification 0) OR stormed via an adjacent friendly Siege
         // Tower (canAssault bypasses the fortification gate).
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner &&
-            (canCaptureTile(unit.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
+            (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
             pool.gold -= CAPTURE_COST;
             const prevOwner = destTile.owner;
             const wasNeutral = !prevOwner;
@@ -1927,6 +1930,11 @@ export class Game {
     /** Player SIEGE/ARTILLERY besieges an adjacent enemy city (an action, no move). */
     handleBesiege(unit, cityTile) {
         const msgs = besiegeCity(unit, cityTile);
+        // Breach delay: record the turn the city was breached so it can't be
+        // captured immediately on the same turn.
+        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
+            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
+        }
         msgs.forEach(m => this.log(m));
         if (msgs.length) sfx.besiege();
         unit.hasAttackedThisTurn = true; // besieging uses the unit's action
@@ -1951,6 +1959,9 @@ export class Game {
         const fort = cityTile.fortification || 0;
         if (fort <= 0) { this.log('That city is already breached.'); return; }
         cityTile.fortification = Math.max(0, fort - RANGED_BOMBARD_FORT_DAMAGE);
+        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
+            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
+        }
         unit.hasAttackedThisTurn = true;
         sfx.attack();
         this.log(`🏹 ${UNIT_TYPE[unit.type].name} bombards city [${cityTile.x}, ${cityTile.z}] �?fortification ${cityTile.fortification}/${cityTile.fortMax}.`);
@@ -3167,14 +3178,14 @@ export class Game {
                 this.log(`${name}: King ${king.name} calls a Stampede! +2 attack this turn.`);
                 break;
             case 'ironwill': {
-                this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 3, siegeAttack: 4 };
                 for (const t of this.tiles.values()) {
                     if (t.terrain === 'CITY' && t.owner === faction) {
                         const max = t.fortMax || (t.fortification || 0);
                         t.fortification = Math.min(max, (t.fortification || 0) + 3);
                     }
                 }
-                this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification to all cities.`);
+                this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification, +4 siege attack this turn.`);
                 break;
             }
             case 'vanish':
@@ -3298,7 +3309,7 @@ export class Game {
                 if (!this.gameState.units.has(unit.id)) break; // the trap killed it
                 const pool = this.gameState.resources[PLAYER_FACTION];
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION &&
-                    (canCaptureTile(PLAYER_FACTION, dest, pool) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
+                    (canCaptureTile(PLAYER_FACTION, dest, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
                     pool.gold -= CAPTURE_COST;
                     captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
                     sfx.capture();
@@ -3350,7 +3361,7 @@ export class Game {
                 }
                 lord.x = step.x; lord.z = step.z; lord.hasMovedThisTurn = true; moved = true;
                 // Capture a breached enemy city on arrival (like units do).
-                if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION])) {
+                if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION], null, this.gameState.turn || 0)) {
                     this.gameState.resources[PLAYER_FACTION].gold -= CAPTURE_COST;
                     captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
                     sfx.capture();
@@ -4033,7 +4044,7 @@ export class Game {
                 if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) break;
                 // Lords may enter a capturable city (breached / siege-tower adjacent).
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
-                    !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
+                    !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
                 lord.x = step.x; lord.z = step.z;
             }
             lord.hasMovedThisTurn = true;
@@ -4052,10 +4063,15 @@ export class Game {
             u.owner === faction && !['SCOUT', 'SETTLER', 'WORKER'].includes(u.type));
         const ownCities = getOwnedCities(this.tiles, faction);
         const nearestOwnCity = () => {
-            let best = null, bestD = Infinity;
+            let best = null, bestScore = Infinity;
             for (const c of ownCities) {
                 const d = Math.abs(c.x - lord.x) + Math.abs(c.z - lord.z);
-                if (d < bestD) { bestD = d; best = c; }
+                let score = d;
+                for (const eu of enemyUnits) {
+                    const ed = Math.max(Math.abs(eu.x - c.x), Math.abs(eu.z - c.z));
+                    if (ed <= 4) score += (5 - ed) * 1.5;
+                }
+                if (score < bestScore) { bestScore = score; best = c; }
             }
             return best;
         };
@@ -4084,7 +4100,7 @@ export class Game {
         // 1) Capture a breached/unclaimed city that is within reach and empty.
         for (const t of this.tiles.values()) {
             if (t.terrain !== 'CITY' || t.owner === faction) continue;
-            if (!canCaptureTile(faction, t, pool) && !this.siegeTowerAdjacentTo(t, faction)) continue;
+            if (!canCaptureTile(faction, t, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(t, faction)) continue;
             const dist = Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z));
             if (dist > 2) continue;
             const enemyOnTile = enemyUnits.some(u => u.x === t.x && u.z === t.z);
@@ -4102,6 +4118,7 @@ export class Game {
         let foeCount = 0;
         let foeAttackPower = 0;
         let hasArtilleryThreat = false;
+        let hasRangedThreat = false;
         const SIEGE_SET = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON',
             'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN']);
         for (const eu of enemyUnits) {
@@ -4114,6 +4131,11 @@ export class Game {
                 const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
                 if (dist <= atkRange) hasArtilleryThreat = true;
             }
+            // Any ranged unit (attackRange >= 2) within range = ranged threat.
+            if (!hasRangedThreat && !SIEGE_SET.has(eu.type)) {
+                const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
+                if (atkRange >= 2 && dist <= atkRange) hasRangedThreat = true;
+            }
         }
         let friendAttackPower = 0;
         for (const fu of this.gameState.units.values()) {
@@ -4121,12 +4143,14 @@ export class Game {
             if (Math.max(Math.abs(fu.x - lord.x), Math.abs(fu.z - lord.z)) > 3) continue;
             friendAttackPower += (fu.attack ?? 0) + ((UNIT_TYPE[fu.type] && UNIT_TYPE[fu.type].attack) || 0);
         }
-        // Dynamic retreat threshold: base 0.50, scales up with danger.
-        let retreatThreshold = 0.50;
+        // Dynamic retreat threshold: base 0.55, scales up with danger.
+        // Raised from 0.50 so the king doesn't wait until too late.
+        let retreatThreshold = 0.55;
         retreatThreshold += Math.min(0.15, foeCount * 0.05);         // +0.05 per foe (cap +0.15)
         if (hasArtilleryThreat) retreatThreshold += 0.10;             // artillery nearby = deadly
+        if (hasRangedThreat) retreatThreshold += 0.10;                // ranged units chip away
         if (foeAttackPower > friendAttackPower) retreatThreshold += 0.05;  // foe outguns us
-        retreatThreshold = Math.min(0.70, retreatThreshold);          // cap at 70%
+        retreatThreshold = Math.min(0.75, retreatThreshold);          // cap at 75%
 
         if (kingHpFrac < retreatThreshold) {
             const home = nearestOwnCity();
@@ -4270,7 +4294,7 @@ export class Game {
         const adjacentEnemyCity = [...this.tiles.values()].find(t =>
             t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
             Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z)) <= 1);
-        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
+        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
             lord.campTurns = (lord.campTurns || 0) + 1;
             if (lord.campTurns >= 2) {
                 const home = nearestOwnCity();
@@ -4308,12 +4332,12 @@ export class Game {
             }
             // Block entry into enemy city that is not yet capturable.
             if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
-                !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) {
+                !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) {
                 // no step
             } else {
                 lord.x = step.x; lord.z = step.z;
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
-                    (canCaptureTile(faction, destTile, pool) || this.siegeTowerAdjacentTo(destTile, faction))) {
+                    (canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, faction))) {
                     pool.gold -= CAPTURE_COST;
                     const prevOwner = destTile.owner;
                     const wasNeutral = !prevOwner;
@@ -4632,7 +4656,7 @@ export class Game {
                         unit.x = action.tx; unit.z = action.tz; unit.hasMovedThisTurn = true;
                         const dest = this.tiles.get(`${action.tx},${action.tz}`);
                         if (dest && dest.terrain === 'CITY' && dest.owner !== faction &&
-                            (canCaptureTile(faction, dest, pool) || this.siegeTowerAdjacentTo(dest, faction))) {
+                            (canCaptureTile(faction, dest, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(dest, faction))) {
                             pool.gold -= CAPTURE_COST;
                             const prevOwner = dest.owner;
                             const wasNeutral = !prevOwner;
@@ -4695,6 +4719,9 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     if (unit && tile) {
                         const msgs = besiegeCity(unit, tile);
+                        if (tile.fortification <= 0 && !tile.breachedTurn) {
+                            tile.breachedTurn = (this.gameState.turn || 0) + 1;
+                        }
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                         if (msgs.length) sfx.besiege();
                     }
@@ -4771,6 +4798,32 @@ export class Game {
                     unit.hasAttackedThisTurn = true;
                     sfx.besiege();
                     this.log(`${factionName}: engineer started a Siege Tower near [${tile.x}, ${tile.z}].`);
+                    break;
+                }
+                case 'buildSiegeEngine': {
+                    // An AI engineer builds a CATAPULT/TREBUCHET in the field
+                    // for factions that lack roster siege or need field artillery.
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (!unit || unit.type !== 'ENGINEER' || unit.owner !== faction) break;
+                    if (unit.hasAttackedThisTurn) break;
+                    if (this.gameState.construction && this.gameState.construction.has(unit.id)) break;
+                    const engineType = action.engineType;
+                    if (!engineType || !UNIT_TYPE[engineType] || !SIEGE_ENGINES.includes(engineType)) break;
+                    const here = this.tiles.get(`${unit.x},${unit.z}`);
+                    if (!here || here.owner !== faction || here.terrain === 'WATER' || here.terrain === 'RIVER' || here.terrain === 'MOUNTAIN') break;
+                    let canPayE = true;
+                    for (const [res, amt] of Object.entries(SIEGE_ENGINE_BUILD_COST)) {
+                        if ((pool[res] || 0) < amt) { canPayE = false; break; }
+                    }
+                    if (!canPayE) break;
+                    for (const [res, amt] of Object.entries(SIEGE_ENGINE_BUILD_COST)) pool[res] = (pool[res] || 0) - amt;
+                    this.gameState.construction.set(unit.id, {
+                        type: 'SIEGE_ENGINE', engineType, turnsLeft: SIEGE_ENGINE_BUILD_TURNS,
+                        x: unit.x, z: unit.z, faction
+                    });
+                    unit.hasAttackedThisTurn = true;
+                    sfx.besiege();
+                    this.log(`${factionName}: engineer started building ${UNIT_TYPE[engineType].name} at [${unit.x}, ${unit.z}].`);
                     break;
                 }
                 case 'buildStructure': {
@@ -5059,11 +5112,9 @@ export class Game {
     }
 
     checkVictory() {
-        if (this.spectateMode) return; // no victory/defeat in spectate mode
         if (this.gameState.gameOver) return;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
-        // Elimination runs in spectate mode too — a faction that loses its
-        // last city (or its king) is out, even with no human player.
+        // Elimination: a faction that loses all cities is out (runs in all modes).
         for (const f of FACTIONS) {
             if (this.gameState.eliminated.has(f)) continue;
             if (countCities(this.tiles, f) === 0) {
@@ -5072,7 +5123,34 @@ export class Game {
                 this.log(`${name} has lost all cities and is eliminated!`);
             }
         }
-        if (this.spectateMode) return; // no victory/defeat screen in spectate mode
+
+        // --- Spectate mode: check AI-only victory conditions ---
+        if (this.spectateMode) {
+            const aiAlive = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
+            // Domination: only one AI faction remains.
+            if (aiAlive.length === 1) {
+                const winner = aiAlive[0];
+                const name = this.factionColors[winner] ? this.factionColors[winner].name : winner;
+                this.log(`${name} has conquered all rivals and WON!`);
+                this.endGame('victory', VICTORY_TYPES.DOMINATION);
+                return;
+            }
+            // Score victory: at turn 200, highest-scoring AI wins.
+            if (this.gameState.turn >= SCORE_VICTORY_TURN && aiAlive.length > 0) {
+                const scores = this._calculateScores();
+                let bestFaction = null, bestScore = -1;
+                for (const f of aiAlive) {
+                    if ((scores[f] || 0) > bestScore) { bestScore = scores[f] || 0; bestFaction = f; }
+                }
+                if (bestFaction) {
+                    const name = this.factionColors[bestFaction] ? this.factionColors[bestFaction].name : bestFaction;
+                    this.log(`${name} leads at turn ${SCORE_VICTORY_TURN} with score ${Math.floor(bestScore)} and WINS!`);
+                    this.endGame('victory', VICTORY_TYPES.SCORE);
+                }
+            }
+            return; // no human victory/defeat screen in spectate mode
+        }
+
         const playerAlive = !this.gameState.eliminated.has(PLAYER_FACTION);
 
         // Check multiple victory conditions for the player.

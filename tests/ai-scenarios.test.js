@@ -160,7 +160,7 @@ describe('Scenario: siege tech unlock triggers siege training', () => {
             currentTurn: 35,
         });
 
-        const siegeTrains = trainTypes(actions).filter(t => t === 'CATAPULT' || t === 'TREBUCHET');
+        const siegeTrains = trainTypes(actions).filter(t => t === 'CATAPULT' || t === 'TREBUCHET' || t === 'SIEGE');
         expect(siegeTrains.length).toBeGreaterThan(0);
     });
 

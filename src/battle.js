@@ -102,9 +102,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 
     // --- Attacker damage calculation ---
     let atkMultiplier = 1.0;
-    if (TYPE_ADVANTAGE[attackerUnit.type]?.strongAgainst === defenderUnit.type) {
-        atkMultiplier *= TYPE_ADVANTAGE[attackerUnit.type].multiplier;
-        messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
+    if (TYPE_ADVANTAGE[attackerUnit.type]) {
+        const adv = TYPE_ADVANTAGE[attackerUnit.type];
+        const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+        if (targets.includes(defenderUnit.type)) {
+            atkMultiplier *= adv.multiplier;
+            messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
+        }
     }
 
     // Attacker bonuses: own commanding lord's stats + class bonus + adjacent auras.
@@ -116,6 +120,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // atkClass.attack is now an AoE (radius 1) applied via atkAdj, not army-only.
     let effectiveAttack = atkPower * atkMultiplier + (terrainBonus.attack || 0)
         + atkLordBonus.attack + atkAdj.attack + atkTemp.attack;
+
+    // Siege-specific temp bonus: Iron Will gives +siegeAttack to siege units.
+    const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'SIEGE_TOWER']);
+    if (SIEGE_TYPES.has(attackerUnit.type) && atkTemp.siegeAttack) {
+        effectiveAttack += atkTemp.siegeAttack;
+    }
 
     // --- New European-faction/unit attacker bonuses (Phase G) ---
     const atkDef = getFactionDef(attackerUnit.factionId);
@@ -291,6 +301,26 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    // Ranged distance falloff: ranged attacks deal reduced damage at range.
+    // Distance 1 (adjacent) = no penalty; each additional tile = 25% less.
+    if (atkStats.ranged) {
+        const dist = Math.max(Math.abs(attackerUnit.x - defenderUnit.x), Math.abs(attackerUnit.z - defenderUnit.z));
+        if (dist > 1) {
+            const falloff = Math.pow(0.75, dist - 1);
+            damageToDefender = Math.max(1, Math.floor(damageToDefender * falloff));
+            messages.push(`${combatName(attackerUnit)} ranged attack at distance ${dist}: ×${falloff.toFixed(2)} damage`);
+        }
+    }
+    // Ranged dodge chance: defenders at range have a chance to dodge. 8% per
+    // tile of distance beyond 1, capped at 32% (distance 5+).
+    if (atkStats.ranged && !defStats.naval) {
+        const dist = Math.max(Math.abs(attackerUnit.x - defenderUnit.x), Math.abs(attackerUnit.z - defenderUnit.z));
+        const dodgeChance = Math.min(0.32, (dist - 1) * 0.08);
+        if (dodgeChance > 0 && Math.random() < dodgeChance) {
+            damageToDefender = 0;
+            messages.push(`${combatName(defenderUnit)} dodges the ranged attack!`);
+        }
+    }
     // WINGED_HUSSAR: devastating alpha strike — the first attack each turn deals
     // 2x damage (chargeMultiplier). Only the hussar's own first swing, not a
     // counter-attack (this branch is the attacker's strike).
@@ -359,9 +389,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // are surrounded). Counter-attacks are weaker than full attacks.
     if (!defStats.ranged && !atkStats.ranged && !encircled && !noCounter) {
         let defMultiplier = 1.0;
-        if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
-            defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;
-            messages.push(`${combatName(defenderUnit)} counter type advantage!`);
+        if (TYPE_ADVANTAGE[defenderUnit.type]) {
+            const adv = TYPE_ADVANTAGE[defenderUnit.type];
+            const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+            if (targets.includes(attackerUnit.type)) {
+                defMultiplier *= adv.multiplier;
+                messages.push(`${combatName(defenderUnit)} counter type advantage!`);
+            }
         }
 
         const effectiveAttackDef = (defenderUnit.attack ?? defStats.attack) * defMultiplier + defLordBonus.attack;
@@ -395,13 +429,15 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
  * Check if a unit can capture a tile.
  * Must be military unit, tile must be unowned or enemy-owned, and player has gold.
  */
-export function canCaptureTile(unitOwner, tile, resources, diploState = null) {
+export function canCaptureTile(unitOwner, tile, resources, diploState = null, currentTurn = null) {
     // Can't capture own tile
     if (tile.owner === unitOwner) return false;
     // Must have gold
     if (resources.gold < 20) return false;
     // A fortified city must be besieged (fortification reduced to 0) before capture.
     if (tile.terrain === 'CITY' && (tile.fortification || 0) > 0) return false;
+    // Breach delay: a freshly breached city can't be captured until the next turn.
+    if (tile.terrain === 'CITY' && tile.breachedTurn && currentTurn !== null && currentTurn < tile.breachedTurn) return false;
     return true;
 }
 

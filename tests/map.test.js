@@ -36,13 +36,13 @@ describe('map', () => {
   });
 
   describe('cityFortMax', () => {
-    it('formula 2 + level', () => {
-      expect(cityFortMax({ cityLevel: 1 })).toBe(3);
-      expect(cityFortMax({ cityLevel: 5 })).toBe(7);
+    it('formula 3 + round(level * 1.5)', () => {
+      expect(cityFortMax({ cityLevel: 1 })).toBe(5);
+      expect(cityFortMax({ cityLevel: 5 })).toBe(11);
     });
 
     it('null defaults to level 1', () => {
-      expect(cityFortMax(null)).toBe(3);
+      expect(cityFortMax(null)).toBe(5);
     });
   });
 

@@ -58,7 +58,7 @@ export const TERRAIN = {
 export const UNIT_TYPE = {
     INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
-    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 6, besiege: true, besiegePower: 2, ranged: true, attackRange: 3 },
+    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 5, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 6, besiege: true, besiegePower: 2, ranged: true, attackRange: 2 },
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
@@ -99,8 +99,8 @@ export const UNIT_TYPE = {
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
-    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
-    TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 9, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, canSetFire: true, buildTurns: 2 },
+    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 5, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
+    TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 7, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
     // Naval units (unlocked by a Harbor building in a coastal/river city).
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1, iron: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
@@ -125,9 +125,9 @@ export const UNIT_TYPE = {
     // DRAGOON: mounted ranged - hybrid cavalry that can charge or fire.
     DRAGOON:     { name: 'Dragoon', hp: 14, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
     // CANNON: heavy artillery with devastating siege power.
-    CANNON:      { name: 'Cannon', hp: 10, attack: 12, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 3, siegeBonus: 4 },
+    CANNON:      { name: 'Cannon', hp: 10, attack: 9, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
     // MORTAR: indirect fire with AOE splash damage.
-    MORTAR:      { name: 'Mortar', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 4, aoe: true, aoeRadius: 2 },
+    MORTAR:      { name: 'Mortar', hp: 8, attack: 8, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
     // ENLIGHTENMENT NAVAL: faster sailing warships.
     CORVETTE:    { name: 'Corvette', hp: 22, attack: 9, defense: 5, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 2, raider: true },
     FROLIC:      { name: 'Frolic', hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, broadside: true },
@@ -138,17 +138,17 @@ export const UNIT_TYPE = {
     // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
     SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
     // RAILGUN: devastating railway artillery with long reload.
-    RAILGUN:     { name: 'Railgun', hp: 12, attack: 15, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 4, devastating: true },
+    RAILGUN:     { name: 'Railgun', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true },
     // ARMORED_TRAIN: mobile railway fortress that can move and fire.
     ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 10, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
     // FIELD_GUN: rapid-fire artillery.
-    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 13, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 3, rapidFire: true },
+    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 9, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true },
     // HORSE_ARTILLERY: fast-deploy mobile cannon.
     HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 2, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true },
     // DEMOLITION_SQUAD: combat engineers with bonus vs cities.
     DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 8, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
     // SIEGE_CANNON: heavy siege gun that destroys fortifications.
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 14, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 4, fortBuster: true },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true },
     // MODERN NAVAL: steam-powered iron warships.
     IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
     STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
@@ -183,7 +183,7 @@ export const TERRAIN_BONUS = {
     TUNDRA:   { defense: 1,  attack: 0 },      // Cold, sparse cover
     WATER:    { defense: -2, attack: 0 },      // No cover, exposed crossing
     RIVER:    { defense: -2, attack: 0 },      // Crossing a river — exposed
-    CITY:     { defense: 5,  attack: 1 }       // Fortifications + organized militia
+    CITY:     { defense: 8,  attack: 1 }       // Fortifications + organized militia (buffed from 5)
 };
 
 export const UNIT_COST = {
@@ -258,7 +258,8 @@ export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Cheby
 
 // Engineers can only build Siege Towers (not CATAPULT/TREBUCHET).
 // Long-range siege engines require a Siege Workshop building in a city.
-// Removed SIEGE_ENGINE_BUILD_COST to restrict engineers to Siege Towers only.
+export const SIEGE_ENGINE_BUILD_COST = { gold: 35, wood: 10, iron: 0, production: 15 };
+export const SIEGE_ENGINE_BUILD_TURNS = 2;
 
 // Cost for an Engineer to construct Ladders (cheaper alternative to siege tower,
 // allows infantry to assault fortified cities). Requires wood, built in 1 turn.
@@ -268,7 +269,8 @@ export const LADDER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev 
 
 // Type advantage system (rock-paper-scissors bonus)
 export const TYPE_ADVANTAGE = {
-    INFANTRY:    { strongAgainst: 'ARCHER',    multiplier: 1.4 },
+    // Infantry: strong against archers (closing distance) and siege (melee overwhelm).
+    INFANTRY:    { strongAgainst: ['ARCHER', 'SIEGE'], multiplier: 1.6 },
     ARCHER:      { strongAgainst: 'ARTILLERY', multiplier: 1.4 },
     ARTILLERY:   { strongAgainst: 'CAVALRY',   multiplier: 1.4 },
     CAVALRY:     { strongAgainst: 'INFANTRY',  multiplier: 1.4 },
@@ -439,9 +441,9 @@ export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 // surrounding region. Military buildings (and economic ones with HP) can be
 // attacked, damaged, and pillaged. FARM/LUMBERMILL/MINE remain terrain-matched.
 export const BUILDING_TYPE = {
-    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 2 },   terrain: 'PLAINS', desc: '+2 food/turn.' },
-    LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 6 },   terrain: 'FOREST', desc: '+6 wood/turn.' },
-    MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', desc: '+5 iron/turn.' },
+    FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 2 },   terrain: 'PLAINS', maxPerCity: 2, desc: '+2 food/turn.' },
+    LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 6 },   terrain: 'FOREST', maxPerCity: 2, desc: '+6 wood/turn.' },
+    MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', maxPerCity: 2, desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'MATHEMATICS' },
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY', influenceBuildable: true, military: true,
@@ -457,7 +459,7 @@ export const BUILDING_TYPE = {
                   desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.', techRequired: 'BASTION_FORT' },
     // === ENLIGHTENMENT ERA BUILDINGS ===
     UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+5 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ACADEMY' },
+                  desc: '+5 research points per turn. Buildable in the city or its influence; pillageable by enemy units.' },
     BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'BANKING' },
     // === MODERN ERA BUILDINGS ===
@@ -823,8 +825,8 @@ export const AI_PERSONALITIES = {
 export const AI_GOAL_MIN_STABILITY_TURNS = 3;
 // Fraction of the unit cap reserved for long-range artillery (CATAPULT/TREBUCHET)
 // so basic siege (SIEGE/ARTILLERY) saturating the siege cap doesn't crowd them out.
-export const AI_ARTILLERY_RESERVE_DEFAULT = 0.18;
-export const AI_ARTILLERY_RESERVE_SIEGE = 0.40;
+export const AI_ARTILLERY_RESERVE_DEFAULT = 0.12;
+export const AI_ARTILLERY_RESERVE_SIEGE = 0.25;
 // Settler scarcity trigger: consecutive scarce turns before the AI aggressively
 // expands to acquire missing resources, and the cap/floor relaxation it grants.
 export const AI_SETTLER_SCARCITY_TURN_THRESHOLD = 2;

@@ -101,7 +101,7 @@ export const FACTION_DEFS = {
         passive: { siegePowerBonus: 2, desc: '+2 siege power for all siege units. Siege units cost 25% less.' },
         king: { name: 'Engineer-General Torvald', class: 'CONQUEROR',
                 active: { id: 'ironwill', name: 'Iron Will', cooldown: 5,
-                          desc: 'All your cities instantly gain +5 fortification.' } }
+                          desc: 'All your cities gain +3 fortification; siege units gain +4 attack this turn.' } }
     },
     shadow: {
         id: 'shadow', name: 'Shadow Court', emoji: '🌑',

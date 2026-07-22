@@ -960,8 +960,10 @@ describe('Integration: full AI pipeline with modern tech', () => {
         });
         const actions = runAI(input);
         const trains = trainTypes(actions);
-        // Should build basic units (INFANTRY, ARCHER, CAVALRY)
-        const basicTrains = trains.filter(t => ['INFANTRY', 'ARCHER', 'CAVALRY', 'PIKEMAN'].includes(t));
+        // Should build basic units (INFANTRY, CAVALRY, PIKEMAN) plus possibly
+        // SIEGE (crimson has it in roster, siege block fires at war) or
+        // LEGIONNAIRE (available as extra unit without tech gate).
+        const basicTrains = trains.filter(t => ['INFANTRY', 'ARCHER', 'CAVALRY', 'PIKEMAN', 'SIEGE', 'LEGIONNAIRE'].includes(t));
         expect(basicTrains.length).toBeGreaterThan(0);
     });
 

@@ -357,8 +357,8 @@ describe('Engineer bridge-building', () => {
 // 3. City Defense Bonus
 // ===========================================================================
 describe('City defense bonus', () => {
-    it('TERRAIN_BONUS.CITY defense is 5', () => {
-        expect(TERRAIN_BONUS.CITY.defense).toBe(5);
+    it('TERRAIN_BONUS.CITY defense is 8', () => {
+        expect(TERRAIN_BONUS.CITY.defense).toBe(8);
     });
 
     it('TERRAIN_BONUS.CITY attack is 1', () => {

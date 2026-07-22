@@ -35,7 +35,7 @@ export function cityRadius(tile) {
 /** A city's fortification max scales with its level. Besiege to reduce it to 0
  *  before the city can be captured. */
 export function cityFortMax(tile) {
-    return 2 + ((tile && tile.cityLevel) || 1);
+    return 3 + Math.round(((tile && tile.cityLevel) || 1) * 1.5);
 }
 
 /** Pick 2–4 continent centers spread across the map, each with its own radius:

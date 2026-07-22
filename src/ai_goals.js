@@ -436,6 +436,25 @@ export function selectGoals(input) {
             // Naval penalty: needs harbor + transports (slow, expensive).
             if (!reachableByLand) score -= 30;
 
+            // Nearby unclaimed cities bonus: if there are other neutral cities
+            // close to this one, capturing it opens up a cluster for expansion.
+            if (c.neutral && hasTiles) {
+                let nearbyNeutral = 0;
+                for (const other of enemyCities) {
+                    if (other === c || !other.neutral) continue;
+                    const d2 = manhattan(c.x, c.z, other.x, other.z);
+                    if (d2 <= 8) nearbyNeutral++;
+                }
+                score += nearbyNeutral * 15;
+            }
+
+            // Resource scarcity + accessibility bonus: when the faction is
+            // resource-scarce, a land-reachable target city is a high-value
+            // expansion opportunity (the new city provides fresh resource tiles).
+            if (scarcityTriggered && reachableByLand && minDist <= 15) {
+                score += 35;
+            }
+
             scored.push({ ...c, _score: score, _reachableByLand: reachableByLand, _dist: minDist });
         }
 
@@ -449,6 +468,10 @@ export function selectGoals(input) {
             // infrastructure (harbor + transports) is built. Score them lower
             // so they don't dominate over expand-islands/naval-prep goals.
             const scoreScale = tier === 'naval' ? 0.6 : 1.0;
+            // Resource scarcity amplifies conquest priority: when the faction
+            // is starving for resources, capturing a nearby accessible city
+            // provides fresh tiles and production. Boost by up to 40%.
+            const scarcityBoost = (scarcityTriggered && tgt._reachableByLand && tgt._dist <= 15) ? 1.4 : 1.0;
             // Long-term infrastructure plan for naval conquest.
             const navalPlan = tier === 'naval' ? [
                 { kind: 'buildHarbor' },
@@ -457,7 +480,7 @@ export function selectGoals(input) {
                 { kind: 'sailTo', targetTileKey: `${tgt.x},${tgt.z}` },
             ] : null;
             push('conquest',
-                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale,
+                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale * scarcityBoost,
                 `${tgt.x},${tgt.z}`,
                 tgt.owner,
                 'short',
