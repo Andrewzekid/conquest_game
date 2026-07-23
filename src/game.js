@@ -157,6 +157,8 @@ export class Game {
         if (aiGoalsPanel) aiGoalsPanel.style.display = 'block';
         const aiDebugPanel = document.getElementById('ai-debug-panel');
         if (aiDebugPanel) aiDebugPanel.style.display = 'block';
+        const armyGroupsPanel = document.getElementById('army-groups-panel');
+        if (armyGroupsPanel) armyGroupsPanel.style.display = 'block';
         // Hide player-facing panels that are meaningless in spectate mode.
         // Diplomacy panel is kept visible so the viewer can inspect AI relations.
         for (const id of ['tech-panel', 'build-menu']) {

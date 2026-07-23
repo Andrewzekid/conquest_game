@@ -53,22 +53,12 @@ describe('buildAIDebugHTML — resource income', () => {
     });
 });
 
-describe('buildAIDebugHTML — army groups', () => {
-    it('renders per-faction army groups with size, stance and objective', () => {
+describe('buildAIDebugHTML — army groups moved out', () => {
+    it('does NOT render army groups (they live in the separate Army Groups panel)', () => {
         const s = mkState();
         const html = buildAIDebugHTML(s.units, s.aiState, ['ai1'], s.factionDefs, s.factionColors,
             s.tiles, s.resources, s.buildings, s.lords);
-        expect(html).toContain('Army groups:');
-        expect(html).toContain('5u attack → 7,7');
-        expect(html).toContain('2u hold → 3,3');
-    });
-
-    it('omits the army-group section when none are recorded', () => {
-        const s = mkState();
-        delete s.aiState.ai1.armyGroups;
-        const html = buildAIDebugHTML(s.units, s.aiState, ['ai1'], s.factionDefs, s.factionColors,
-            s.tiles, s.resources, s.buildings, s.lords);
-        expect(html).not.toContain('Army groups:');
+        expect(html).not.toContain('Army groups');
     });
 });
 

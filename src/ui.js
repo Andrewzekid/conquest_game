@@ -8,7 +8,7 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
 import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel, getRelation } from './diplomacy.js';
 import { buildAIGoalsHTML } from './ai_goals.js';
-import { buildAIDebugHTML } from './ai.js';
+import { buildAIDebugHTML, buildArmyGroupsHTML } from './ai.js';
 import { cityRadius } from './map.js';
 import { getInfluencedTiles, isPassable } from './map.js';
 import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAvailableSkills, getSkillEffects } from './lords.js';
@@ -70,6 +70,8 @@ export function bindUI(gameState, callbacks) {
         aiGoalsPanelWrap: document.getElementById('ai-goals-panel'),
         aiDebugPanel: document.getElementById('ai-debug-panel-body'),
         aiDebugPanelWrap: document.getElementById('ai-debug-panel'),
+        armyGroupsPanel: document.getElementById('army-groups-panel-body'),
+        armyGroupsPanelWrap: document.getElementById('army-groups-panel'),
         victoryPanel: document.getElementById('victory-panel-body'),
         victoryPanelWrap: document.getElementById('victory-panel'),
         techPanel: document.getElementById('tech-panel-body'),
@@ -1363,6 +1365,7 @@ export function bindUI(gameState, callbacks) {
         showLordPanel();
         showAIGoalsPanel();
         showAIDebugPanel();
+        showArmyGroupsPanel();
         showVictoryPanel();
         showTechPanel();
     }
@@ -1388,6 +1391,16 @@ export function bindUI(gameState, callbacks) {
         els.aiDebugPanel.innerHTML = buildAIDebugHTML(
             gameState.units, gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors,
             gameState.tiles, gameState.resources, gameState.buildings, gameState.lords);
+    }
+
+    // Army Groups panel (separate from AI Debug): per-faction army groups with
+    // leader, stance, objective, power, and unit-type composition. Rendered
+    // from the pure buildArmyGroupsHTML helper. No-op when hidden.
+    function showArmyGroupsPanel() {
+        if (!els.armyGroupsPanel || !els.armyGroupsPanelWrap) return;
+        if (els.armyGroupsPanelWrap.style.display === 'none') return;
+        els.armyGroupsPanel.innerHTML = buildArmyGroupsHTML(
+            gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors);
     }
 
     // Victory Progress Tracker (Feature 5): a glanceable panel summarizing the

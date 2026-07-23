@@ -4915,25 +4915,56 @@ export function buildAIDebugHTML(units, aiState, factions, factionDefs, factionC
             incomeHtml = `<div style="font-size:10px;margin:2px 0;" class="muted">${parts.join(' · ')}</div>`;
         }
 
-        // Army groups (persisted each turn by computeAIActions).
-        let groupsHtml = '';
-        if (st && Array.isArray(st.armyGroups) && st.armyGroups.length) {
-            groupsHtml = '<div style="font-size:10px;margin:2px 0;"><strong>Army groups:</strong> ' +
-                st.armyGroups.map(g =>
-                    `<span style="margin-right:6px;">${g.size}u ${g.stance || 'hold'}${g.objective ? ` → ${g.objective}` : ''}</span>`
-                ).join('') + '</div>';
-        }
-
         html += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
   <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${total} units)</span></div>
   <div style="font-size:11px;margin:2px 0;">${compHtml || '<span class="muted">No units</span>'}</div>
   <div style="font-size:10px;margin:2px 0;" class="muted">Target: ${targetStr || 'N/A'}</div>
   ${incomeHtml}
-  ${groupsHtml}
   <div style="margin:3px 0;">${goalHtml}</div>
   ${ordersHtml}
 </div>`;
     }
     if (!html.includes('<div style=')) html += '<p class="muted">No AI factions</p>';
+    return html;
+}
+
+/** Army Groups panel (spectate/debug): per faction, one row per army group
+ *  showing leader, stance, objective, total power, and the unit-type
+ *  composition (e.g. "Siege Cannon ×1 · Infantry ×4"). Pure HTML builder —
+ *  kept separate from buildAIDebugHTML so the two panels stay independent.
+ *  Data source: aiState[slot].armyGroups, persisted each turn by
+ *  computeAIActions (block 5, after the 5c/5d passes). */
+export function buildArmyGroupsHTML(aiState, factions, factionDefs, factionColors) {
+    let html = '<h3>Army Groups</h3>';
+    let any = false;
+    for (const slot of factions) {
+        const st = aiState && aiState[slot];
+        const groups = (st && Array.isArray(st.armyGroups)) ? st.armyGroups : [];
+        if (!groups.length) continue;
+        any = true;
+        const def = factionDefs && factionDefs[slot];
+        const color = factionColors && factionColors[slot];
+        const colorHex = (color && typeof color.tile === 'number')
+            ? '#' + color.tile.toString(16).padStart(6, '0')
+            : '#888';
+        const name = (def && (def.name || (color && color.name))) || slot;
+        const emoji = (def && def.emoji) || '';
+        const rows = groups.map(g => {
+            const comp = Object.entries(g.composition || {})
+                .map(([type, n]) => `${(UNIT_TYPE[type] && UNIT_TYPE[type].name) || type} ×${n}`)
+                .join(' · ');
+            const leader = g.lord ? `${g.lord}` : '—';
+            const obj = g.objective ? ` → ${g.objective}` : '';
+            return `<div style="font-size:11px;line-height:1.4;margin:2px 0;padding:2px 4px;background:rgba(255,255,255,0.04);border-radius:3px;">
+  <strong>${leader}</strong> <span class="muted">${g.stance || 'hold'}${obj} · pow ${g.power || 0}</span><br>
+  <span style="font-size:10px;">${comp || '—'}</span>
+</div>`;
+        }).join('');
+        html += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
+  <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${groups.length} groups)</span></div>
+  ${rows}
+</div>`;
+    }
+    if (!any) html += '<p class="muted">No army groups</p>';
     return html;
 }
