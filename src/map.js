@@ -40,18 +40,20 @@ export function cityFortMax(tile) {
 
 /** Pick 2–4 continent centers spread across the map, each with its own radius:
  *  one large "main" continent, one or two medium ones, and optionally small
- *  islets. Centers are kept far enough apart (relative to their radii) that the
- *  continents stay separated by water instead of merging into one giant blob. */
+ *  islets. Radii are sized so land covers roughly half the map or more (the
+ *  retry loop in generateMap enforces ≥50%); centers are kept far enough apart
+ *  (relative to their radii) that the continents stay separated by water
+ *  instead of merging into one giant blob. */
 function pickContinentCenters() {
     const mapHalf = Math.min(GRID_WIDTH, GRID_HEIGHT) / 2;
     const count = 2 + Math.floor(Math.random() * 3); // 2..4 continents
     const centers = [];
     for (let i = 0; i < count; i++) {
         const radius = i === 0
-            ? mapHalf * (0.50 + Math.random() * 0.15)   // large: 0.50–0.65 of half-map
+            ? mapHalf * (0.75 + Math.random() * 0.15)   // large: 0.75–0.90 of half-map
             : i === 1
-                ? mapHalf * (0.30 + Math.random() * 0.12) // medium: 0.30–0.42
-                : mapHalf * (0.16 + Math.random() * 0.10); // small islets: 0.16–0.26
+                ? mapHalf * (0.45 + Math.random() * 0.10) // medium: 0.45–0.55
+                : mapHalf * (0.25 + Math.random() * 0.10); // small islets: 0.25–0.35
         // Keep most of the disc on the map (a little edge clipping is fine).
         const mx = Math.min(radius * 0.5, (GRID_WIDTH - 1) / 2);
         const mz = Math.min(radius * 0.5, (GRID_HEIGHT - 1) / 2);
@@ -481,18 +483,21 @@ export function generateMap() {
 
     // Shape the landmass into 2–4 irregular continents separated by water (cuts
     // off the square corners and carves wavy coastlines) BEFORE biomes/rivers/
-    // cities. Retry with a more generous cutoff if the first pass produced too
-    // little land (prevents cities from spawning in the ocean on unlucky seeds).
+    // cities. Retry with a more generous cutoff if the pass produced too little
+    // land — land should cover at least half the map (prevents both cities
+    // spawning in the ocean on unlucky seeds and an ocean-dominated map). The
+    // cutoff decays below zero on later attempts, widening coastlines beyond
+    // the nominal continent radius.
     applyContinentMask(tiles);
     let landCount = tiles.filter(t => t.terrain !== 'WATER').length;
     let maskAttempts = 0;
-    while (landCount < tiles.length * 0.30 && maskAttempts < 5) {
+    while (landCount < tiles.length * 0.52 && maskAttempts < 8) {
         // Reset all tiles to PLAINS before re-applying the mask, with a lower
         // cutoff each time (lower cutoff = more land).
         for (const t of tiles) {
             if (t.terrain === 'WATER') t.terrain = 'PLAINS';
         }
-        applyContinentMask(tiles, Math.max(0.02, 0.15 - (maskAttempts + 1) * 0.04));
+        applyContinentMask(tiles, Math.max(-0.12, 0.15 - (maskAttempts + 1) * 0.05));
         landCount = tiles.filter(t => t.terrain !== 'WATER').length;
         maskAttempts++;
     }
@@ -517,15 +522,15 @@ export function generateMap() {
     // stray islets disappear (and no capital can land on one). Runs after rivers
     // so river tiles are unaffected; city accessibility is re-validated below.
     pruneSmallLandmasses(tiles);
-    // Recompute land fraction — if pruning dropped us below the 30% floor, retry
+    // Recompute land fraction — if pruning dropped us below the 50% floor, retry
     // the whole mask (pruning can occasionally expose a too-sparse map).
     let landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
     let pruneAttempts = 0;
-    while (landCount2 < tiles.length * 0.30 && pruneAttempts < 5) {
+    while (landCount2 < tiles.length * 0.50 && pruneAttempts < 8) {
         for (const t of tiles) {
             if (t.terrain === 'WATER') t.terrain = 'PLAINS';
         }
-        applyContinentMask(tiles, Math.max(0.02, 0.15 - (pruneAttempts + 1) * 0.04));
+        applyContinentMask(tiles, Math.max(-0.12, 0.15 - (pruneAttempts + 1) * 0.05));
         assignBiomes(tiles);
         generateRivers(tiles);
         pruneSmallLandmasses(tiles);

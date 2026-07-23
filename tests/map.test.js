@@ -261,3 +261,23 @@ describe('map', () => {
     });
   });
 });
+
+describe('generateMap land fraction', () => {
+  // Regression: continent radii used to cap at ~0.65 of the half-map and the
+  // retry floors were 30%, leaving 50%+ of most maps as ocean. Land must now
+  // cover at least half the map on every size.
+  it('land covers at least 50% of the map across sizes and seeds', async () => {
+    const { calculateMapDimensions } = await import('../src/config.js');
+    const { generateMap } = await import('../src/map.js');
+    for (const size of ['tiny', 'small', 'medium', 'large', 'huge']) {
+      for (let i = 0; i < 8; i++) {
+        const { width, height } = calculateMapDimensions(size);
+        setGridDimensions(width, height);
+        const { tiles } = generateMap();
+        const arr = Array.isArray(tiles) ? tiles : [...tiles.values()];
+        const land = arr.filter(t => t.terrain !== 'WATER').length;
+        expect(land / arr.length).toBeGreaterThanOrEqual(0.5);
+      }
+    }
+  });
+});
