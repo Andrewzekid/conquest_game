@@ -1641,6 +1641,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         //      objective and mill around near (but never adjacent to) the city
         //      they were built to crack. Neutral cities count — a tower is how
         //      the AI cracks unclaimed fortified cities at peace.
+        //      Escort rule: the tower only advances on the city while a
+        //      friendly combat escort (melee/ranged/cavalry) is within
+        //      SIEGE_ESCORT_RADIUS — a lone tower rushing a city is a free
+        //      kill. Unescorted, it moves to rejoin the nearest escort, or
+        //      holds and waits when the faction has no escorts at all.
         if (unit.type === 'SIEGE_TOWER') {
             const ec = findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
             if (ec && (ec.fortification || 0) > 0) {
@@ -1651,11 +1656,16 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             const target = findNearestBesiegeableCity(unit, tiles, owner, isAtWar);
             if (target) {
                 if (!unit.hasMovedThisTurn) {
-                    const step = stepToward(unit, target, tiles, owner, units, moved, isAtWar);
-                    if (step) {
-                        actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
-                        moved.add(`${step.x},${step.z}`);
+                    const esc = nearestEscort(unit, units, owner);
+                    if (esc) {
+                        const goal = esc.dist <= SIEGE_ESCORT_RADIUS ? target : esc.unit;
+                        const step = stepToward(unit, goal, tiles, owner, units, moved, isAtWar);
+                        if (step) {
+                            actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                            moved.add(`${step.x},${step.z}`);
+                        }
                     }
+                    // No escort anywhere: hold and wait for one.
                 }
                 acted.add(unit.id);
                 continue;
@@ -2823,6 +2833,27 @@ function unitRole(type) {
     if (SUPPORT_TYPES.has(type)) return 'support';
     if (NAVAL_TYPES.has(type)) return 'naval';
     return 'other';
+}
+
+/** How close a friendly combat escort must be for a siege engine/tower to
+ *  advance on the objective (Chebyshev tiles). */
+const SIEGE_ESCORT_RADIUS = 3;
+
+/** The nearest friendly escort unit — a melee/ranged/cavalry combat unit that
+ *  can actually protect a siege engine or tower on the march (workers,
+ *  engineers, medics, scouts and other siege units don't count). Returns
+ *  { unit, dist } with dist in Chebyshev tiles, or null when the faction has
+ *  no escort units at all. */
+function nearestEscort(unit, units, owner) {
+    let best = null, bestDist = Infinity;
+    for (const u of units.values()) {
+        if (u.owner !== owner || u.id === unit.id) continue;
+        const r = unitRole(u.type);
+        if (r !== 'melee' && r !== 'ranged' && r !== 'cavalry') continue;
+        const d = Math.max(Math.abs(u.x - unit.x), Math.abs(u.z - unit.z));
+        if (d < bestDist) { bestDist = d; best = u; }
+    }
+    return best ? { unit: best, dist: bestDist } : null;
 }
 
 /** Detect what the faction is currently trying to do so training can match the
@@ -4447,11 +4478,22 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         if (stance === 'hold' && objective.owner === owner &&
             manhattan(u.x, u.z, objective.x, objective.z) <= 2) return;
         if (isFragile(u) && !hasScreen(u, units, owner)) return; // hold behind the screen
-        const step = stepToward(u, objective, tiles, owner, units, moved, isAtWar);
+        // Siege escort rule: siege engines/towers advance on the objective only
+        // while a friendly combat escort (melee/ranged/cavalry) is within
+        // SIEGE_ESCORT_RADIUS. Unescorted, they move to rejoin the nearest
+        // escort instead — or hold when the faction has none — so siege never
+        // ends the turn ahead of the army that must protect it.
+        let target = objective;
+        if (SIEGE_TYPES.has(u.type)) {
+            const esc = nearestEscort(u, units, owner);
+            if (!esc) return;
+            if (esc.dist > SIEGE_ESCORT_RADIUS) target = esc.unit;
+        }
+        const step = stepToward(u, target, tiles, owner, units, moved, isAtWar);
         if (step && !moved.has(`${step.x},${step.z}`)) {
             // Terrain bias: prefer defensive terrain if it doesn't slow us down.
-            const directDist = manhattan(step.x, step.z, objective.x, objective.z);
-            const currentDist = manhattan(u.x, u.z, objective.x, objective.z);
+            const directDist = manhattan(step.x, step.z, target.x, target.z);
+            const currentDist = manhattan(u.x, u.z, target.x, target.z);
             const tile = tiles.get(`${step.x},${step.z}`);
             const terrainDef = tile ? (tile.defense || 0) : 0;
             // If the step has terrain bonus and is still closer or same distance,
