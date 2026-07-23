@@ -1751,7 +1751,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         //     cities, and scout foreign shores. Naval units never join the
         //     land army groups.
         if (isNaval(unit)) {
-            if (unit.type === 'TRANSPORT') {
+            if (isTransport(unit)) {
                 if ((unit.cargo || []).length > 0) {
                     const cargoIds = unit.cargo || [];
                     const hasSettler = cargoIds.some(id => {
@@ -1774,13 +1774,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                                 moved.add(`${step.x},${step.z}`);
                             }
                         }
-                    } else if (hasMilitary && atWar) {
-                        // Military cargo: sail to the nearest enemy coastal city for amphibious assault.
-                        const dest = nearestEnemyCoastalCity(unit, tiles, owner, isAtWar);
-                        if (dest && Math.abs(unit.x - dest.x) + Math.abs(unit.z - dest.z) === 1) {
+                    } else if (hasMilitary) {
+                        // Military cargo: at war, sail to the nearest enemy coastal
+                        // city for an amphibious assault. Without an assault target
+                        // (peace, or no coastal enemy city), sail to the nearest
+                        // foreign shore and unload there — never drift with cargo.
+                        const dest = atWar ? nearestEnemyCoastalCity(unit, tiles, owner, isAtWar) : null;
+                        const target = dest || nearestForeignLandmass(unit, tiles, owner, land);
+                        if (target && canUnloadAt(unit, target, tiles)) {
                             actions.push({ type: 'disembark', unitId: unit.id });
-                        } else if (dest && !unit.hasMovedThisTurn) {
-                            const step = stepToward(unit, dest, tiles, owner, units, moved, isAtWar);
+                        } else if (target && !unit.hasMovedThisTurn) {
+                            const step = stepToward(unit, target, tiles, owner, units, moved, isAtWar);
                             if (step) {
                                 actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
                                 moved.add(`${step.x},${step.z}`);
@@ -1801,11 +1805,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     // assign the nearest idle warship (within 8 tiles) to follow.
                     {
                         const closeWarship = [...units.values()].some(u =>
-                            u.owner === owner && u.type !== 'TRANSPORT' && isNaval(u) &&
+                            u.owner === owner && !isTransport(u) && isNaval(u) &&
                             Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) <= 3);
                         if (!closeWarship) {
                             const escort = [...units.values()].find(u =>
-                                u.owner === owner && u.type !== 'TRANSPORT' && isNaval(u) &&
+                                u.owner === owner && !isTransport(u) && isNaval(u) &&
                                 !acted.has(u.id) && !u.hasMovedThisTurn &&
                                 Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) <= 8);
                             if (escort) {
@@ -1824,11 +1828,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
                 // Empty transport.
                 if (atWar) {
-                    // 6b — Amphibious assault: pick up idle land military units at shore.
-                    const mil = nearestIdleMilitaryAtShore(unit, units, tiles, owner, acted);
+                    // 6b — Amphibious assault: pick up idle land military units at
+                    //     shore on a friendly landmass (units already ashore abroad
+                    //     are left alone — re-boarding them would loop forever).
+                    const mil = nearestIdleMilitaryAtShore(unit, units, tiles, owner, acted, land);
                     if (mil) {
                         if (Math.abs(unit.x - mil.x) + Math.abs(unit.z - mil.z) === 1) {
-                            const cap = (UNIT_TYPE.TRANSPORT && UNIT_TYPE.TRANSPORT.capacity) || 2;
+                            const cap = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].capacity) || 2;
                             if (((unit.cargo || []).length) < cap) {
                                 actions.push({ type: 'board', unitId: mil.id, transportId: unit.id });
                                 acted.add(mil.id);
@@ -3375,6 +3381,12 @@ function isNaval(unit) {
     return !!(unit && UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].naval);
 }
 
+/** True if `unit` is a transport ship (TRANSPORT or STEAM_TRANSPORT) that can
+ *  carry land units as cargo. */
+function isTransport(unit) {
+    return !!unit && (unit.type === 'TRANSPORT' || unit.type === 'STEAM_TRANSPORT');
+}
+
 /** Choose a single-tile step toward the target, avoiding friendly stacks and
  *  tiles already claimed by another AI unit this turn. Naval units move on
  *  water/river; land units avoid water and unbridged rivers. Returns {x,z}. */
@@ -4674,12 +4686,26 @@ function isCoastalCity(tile, tiles) {
 /** An orthogonally-adjacent friendly Transport with free cargo space, or null. */
 function adjacentTransport(unit, units, owner) {
     for (const u of units.values()) {
-        if (u.owner !== owner || u.type !== 'TRANSPORT' || u.boarded) continue;
-        const cap = (UNIT_TYPE.TRANSPORT && UNIT_TYPE.TRANSPORT.capacity) || 2;
+        if (u.owner !== owner || !isTransport(u) || u.boarded) continue;
+        const cap = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].capacity) || 2;
         if (((u.cargo || []).length) >= cap) continue;
         if (Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) === 1) return u;
     }
     return null;
+}
+
+/** True if a loaded transport is close enough to its destination shore tile to
+ *  unload: within Manhattan 2 (so diagonal adjacency to the destination counts)
+ *  with at least one orthogonally adjacent land tile to disembark onto. Without
+ *  the diagonal case a transport sitting kitty-corner to the target would step
+ *  back and forth and never unload. */
+function canUnloadAt(transport, dest, tiles) {
+    if (manhattan(transport.x, transport.z, dest.x, dest.z) > 2) return false;
+    for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const t = tiles.get(`${transport.x + dx},${transport.z + dz}`);
+        if (t && t.terrain !== 'WATER' && t.terrain !== 'RIVER' && t.terrain !== 'MOUNTAIN') return true;
+    }
+    return false;
 }
 
 /** Nearest land tile on `massId` that is orthogonally adjacent to water — the
@@ -4782,8 +4808,19 @@ function nearestEnemyCoastalCity(unit, tiles, owner, isAtWar) {
 
 /** Nearest friendly idle land military unit standing on a shore tile (adjacent
  *  to water) — the target for an empty transport to pick up for amphibious
- *  assault. Excludes settlers, workers, and naval units. */
-function nearestIdleMilitaryAtShore(transport, units, tiles, owner, acted) {
+ *  assault. Excludes settlers, workers, and naval units. Only units on a
+ *  landmass with a friendly city are picked up: units already ashore on a
+ *  foreign landmass were just unloaded there, and re-boarding them would
+ *  create a board→disembark→reboard loop. */
+function nearestIdleMilitaryAtShore(transport, units, tiles, owner, acted, land) {
+    // Landmasses containing a friendly city — the only places to embark from.
+    const friendlyMasses = new Set();
+    for (const t of tiles.values()) {
+        if (t.terrain === 'CITY' && t.owner === owner) {
+            const mass = land && land.idOf.get(`${t.x},${t.z}`);
+            if (mass != null) friendlyMasses.add(mass);
+        }
+    }
     let best = null, bestDist = Infinity;
     for (const u of units.values()) {
         if (u.owner !== owner || u.boarded) continue;
@@ -4791,6 +4828,7 @@ function nearestIdleMilitaryAtShore(transport, units, tiles, owner, acted) {
         if (acted.has(u.id)) continue;
         const t = tiles.get(`${u.x},${u.z}`);
         if (!t || t.terrain === 'WATER' || t.terrain === 'MOUNTAIN') continue;
+        if (!land || !friendlyMasses.has(land.idOf.get(`${u.x},${u.z}`))) continue;
         let onShore = false;
         for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
             const nt = tiles.get(`${u.x + dx},${u.z + dz}`);

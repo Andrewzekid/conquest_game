@@ -2376,7 +2376,7 @@ export class Game {
         if (unit.owner !== PLAYER_FACTION || transport.owner !== PLAYER_FACTION) return;
         const ndef = UNIT_TYPE[unit.type], tdef = UNIT_TYPE[transport.type];
         if (!ndef || ndef.naval) { this.log('Only land units can board a transport.'); return; }
-        if (!tdef || !tdef.naval || transport.type !== 'TRANSPORT') { this.log('Only transports can be boarded.'); return; }
+        if (!tdef || !tdef.naval || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) { this.log('Only transports can be boarded.'); return; }
         if (unit.boarded) { this.log('This unit is already aboard a transport.'); return; }
         const cap = tdef.capacity || 2;
         if ((transport.cargo && transport.cargo.length) || 0 >= cap) { this.log('That transport is full.'); return; }
@@ -2400,7 +2400,7 @@ export class Game {
     /** A Transport with cargo disembarks one carried unit onto an orthogonally
      *  adjacent passable land tile. Disembarking uses the transport's move. */
     handleDisembark(transport) {
-        if (!transport || transport.owner !== PLAYER_FACTION || transport.type !== 'TRANSPORT') return;
+        if (!transport || transport.owner !== PLAYER_FACTION || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) return;
         if (!transport.cargo || transport.cargo.length === 0) { this.log('This transport is empty.'); return; }
         // Find the adjacent land tile (reusing the same logic as the UI helper).
         let dest = null;
@@ -5048,10 +5048,10 @@ export class Game {
                     const unit = this.gameState.units.get(action.unitId);
                     const transport = this.gameState.units.get(action.transportId);
                     if (!unit || !transport || unit.owner !== faction || transport.owner !== faction) break;
-                    if (transport.type !== 'TRANSPORT' || unit.boarded) break;
+                    if ((transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT') || unit.boarded) break;
                     const ndef = UNIT_TYPE[unit.type];
                     if (!ndef || ndef.naval) break;
-                    const cap = UNIT_TYPE.TRANSPORT.capacity || 2;
+                    const cap = (UNIT_TYPE[transport.type] && UNIT_TYPE[transport.type].capacity) || 2;
                     if (((transport.cargo || []).length) >= cap) break;
                     if (Math.abs(unit.x - transport.x) + Math.abs(unit.z - transport.z) !== 1) break;
                     if (!transport.cargo) transport.cargo = [];
@@ -5067,7 +5067,7 @@ export class Game {
                     // An AI transport unloads one carried unit onto an adjacent
                     // passable land tile (mirrors handleDisembark, no UI).
                     const transport = this.gameState.units.get(action.unitId);
-                    if (!transport || transport.owner !== faction || transport.type !== 'TRANSPORT') break;
+                    if (!transport || transport.owner !== faction || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) break;
                     if (!transport.cargo || transport.cargo.length === 0) break;
                     let dest = null;
                     for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {

@@ -98,9 +98,9 @@ export function bindUI(gameState, callbacks) {
                 if (dx === 0 && dz === 0) continue;
                 if (dx !== 0 && dz !== 0) continue; // orthogonal only
                 for (const u of units.values()) {
-                    if (u.type === 'TRANSPORT' && u.owner === unit.owner &&
+                    if ((u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT') && u.owner === unit.owner &&
                         u.x === unit.x + dx && u.z === unit.z + dz) {
-                        const cap = (UNIT_TYPE.TRANSPORT && UNIT_TYPE.TRANSPORT.capacity) || 2;
+                        const cap = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].capacity) || 2;
                         const used = (u.cargo && u.cargo.length) || 0;
                         if (used < cap) return u;
                     }
@@ -522,17 +522,17 @@ export function bindUI(gameState, callbacks) {
                 const tr = findAdjacentTransport(gameState, unit);
                 if (tr) {
                     const cargoLen = (tr.cargo && tr.cargo.length) || 0;
-                    if (cargoLen < (UNIT_TYPE.TRANSPORT.capacity || 2)) {
+                    if (cargoLen < (UNIT_TYPE[tr.type].capacity || 2)) {
                         html += `<button id="board-btn" data-transport-id="${tr.id}" class="btn btn-sm" style="margin-top:4px;" title="Board this transport to cross water.">${svgIcon('TRANSPORT', { size: 14 })} Board Transport #${tr.id}</button><br>`;
                     }
                 }
             }
-            if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {
+            if ((unit.type === 'TRANSPORT' || unit.type === 'STEAM_TRANSPORT') && unit.cargo && unit.cargo.length) {
                 const land = findAdjacentLand(gameState, unit);
                 if (land) {
                     html += `<button id="disembark-btn" class="btn btn-sm" style="margin-top:4px;" title="Disembark one carried unit onto the adjacent land tile.">${svgIcon('harbor', { size: 14 })} Disembark at [${land.x}, ${land.z}]</button><br>`;
                 }
-                html += `<span style="font-size:10px; color:#9ab;">Carrying ${unit.cargo.length}/${UNIT_TYPE.TRANSPORT.capacity || 2} units.</span><br>`;
+                html += `<span style="font-size:10px; color:#9ab;">Carrying ${unit.cargo.length}/${UNIT_TYPE[unit.type].capacity || 2} units.</span><br>`;
             }
             if (unit.goal) {
                 html += `${svgIcon('target', { size: 13 })} Auto-moving to [${unit.goal.x}, ${unit.goal.z}] `;
