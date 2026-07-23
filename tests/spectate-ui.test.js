@@ -79,4 +79,28 @@ describe('spectate-ui', () => {
       expect(m[1]).toMatch(/if \(this\.spectateMode\)/);
     });
   });
+
+  // The faction picked on the start menu must actually be in a spectate game:
+  // it leads the AI faction list so it always lands in slot 0 (previously the
+  // selection was discarded, so the picked faction often wasn't playing at
+  // all — reported as "my faction doesn't build any units").
+  describe('spectate selected faction + slot-0 parity', () => {
+    const menusSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'menus.js'), 'utf-8');
+
+    it('spectate faction list starts with the selected faction (slot 0)', () => {
+      expect(menusSrc).toContain('[_selectedFaction, ...FACTION_IDS.filter(id => id !== _selectedFaction)]');
+    });
+
+    it('faction selection is not disabled in spectate mode', () => {
+      expect(menusSrc).not.toContain("factionWrap.style.pointerEvents = _spectateMode ? 'none' : 'auto'");
+    });
+
+    it('slot 0 gets a victory target in spectate mode', () => {
+      expect(gameSrc).toContain('if (slot === PLAYER_FACTION && !this.spectateMode) continue;');
+    });
+
+    it('spectate victory check treats slot 0 as a normal AI faction', () => {
+      expect(gameSrc).not.toContain("const aiAlive = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));");
+    });
+  });
 });

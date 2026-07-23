@@ -336,7 +336,8 @@ export class Game {
 
         // Choose victory targets for AI factions based on personality.
         for (const slot of FACTIONS) {
-            if (slot === PLAYER_FACTION) continue;
+            // In spectate mode slot 0 is an AI too - it needs a victory target.
+            if (slot === PLAYER_FACTION && !this.spectateMode) continue;
             const def = this.factionDefs[slot];
             const personality = (def && def.aiPersonality) || 'BALANCED';
             this.gameState.aiState[slot].victoryTarget = chooseVictoryTarget(personality, 1, 0, 0, 0);
@@ -5291,7 +5292,7 @@ export class Game {
 
         // --- Spectate mode: check AI-only victory conditions ---
         if (this.spectateMode) {
-            const aiAlive = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
+            const aiAlive = FACTIONS.filter(f => !this.gameState.eliminated.has(f));
             // Domination: only one AI faction remains AND owns every city.
             if (aiAlive.length === 1) {
                 const winner = aiAlive[0];
