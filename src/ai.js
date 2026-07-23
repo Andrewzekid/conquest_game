@@ -1926,16 +1926,19 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
-    // 5. Army-group coordination: military units (everything that wasn't a
-    //    settler/worker/ship and didn't already act — including engineers that
-    //    didn't build anything) are grouped, then split into two roles:
+    // 5. Army-group coordination: ALL military units (everything that isn't a
+    //    settler/worker/ship) are grouped — including units that already acted
+    //    this turn (escorts, capturers, engineers). Acted members receive no
+    //    new orders (planGroup filters them) but still count for group
+    //    membership, power ranking, and the debug panel. Groups are then split
+    //    into two roles:
     //      - CONQUEST: the strongest 1-3 groups campaign outward (enemy cities,
     //        neutral cities, expansion). Kings/lords attached to these groups
     //        ride along with the main army.
     //      - PATROL: the rest hold a defensive ring near their nearest friendly
     //        city, guarding territory instead of wandering the map.
     const militaryPool = myUnits.filter(u =>
-        !acted.has(u.id) && u.type !== 'SETTLER' && u.type !== 'WORKER' && !isNaval(u));
+        u.type !== 'SETTLER' && u.type !== 'WORKER' && !isNaval(u));
     const groups = buildArmyGroups(militaryPool, lords, owner);
     const hasConquestTargets = atWar ||
         [...tiles.values()].some(t => t.terrain === 'CITY' && !t.owner);
@@ -2108,18 +2111,6 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         }
     }
-    // Persist a lightweight army-group summary for the spectate debug panel
-    // (size, stance, objective per group) — rebuilt every turn.
-    if (aiState) {
-        aiState.armyGroups = groups.map(g => {
-            const obj = groupObjectives.get(g);
-            return {
-                size: g.units.length,
-                stance: groupStances.get(g) || 'hold',
-                objective: obj ? `${obj.x},${obj.z}` : null,
-            };
-        });
-    }
 
     // 5c. Naval embarkation: when the conquest goal requires naval transport
     //     (meta.requiresNaval) and the plan has a 'boardArmy' step, order the
@@ -2234,6 +2225,27 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             groupStances.set(donorGroup, 'engage');
             claimedCityKeys.add(cityKey); // one unit per breached city per turn
         }
+    }
+
+    // Persist a lightweight army-group summary for the army-groups debug panel
+    // (size, stance, objective, leader, power, unit-type composition per
+    // group) — rebuilt every turn. Runs AFTER the 5c/5d passes so naval
+    // embarkation retargets and breach-detachment groups are included.
+    if (aiState) {
+        aiState.armyGroups = groups.map(g => {
+            const obj = groupObjectives.get(g);
+            const composition = {};
+            for (const u of g.units) composition[u.type] = (composition[u.type] || 0) + 1;
+            return {
+                id: g.id,
+                size: g.units.length,
+                stance: groupStances.get(g) || 'hold',
+                objective: obj ? `${obj.x},${obj.z}` : null,
+                lord: g.lord ? (g.lord.name || null) : null,
+                power: g.units.reduce((s, u) => s + unitValue(u), 0),
+                composition,
+            };
+        });
     }
 
     for (const g of groups) {

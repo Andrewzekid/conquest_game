@@ -421,3 +421,79 @@ describe('expand-islands vs naval-only conquest', () => {
         expect(goals[0].meta.requiresNaval).toBe(true);
     });
 });
+
+// ===========================================================================
+// 5. Army-group coverage & persisted summary (Part 1)
+// ===========================================================================
+describe('army-group coverage and summary', () => {
+    function groupSetup() {
+        const tiles = plainsGrid(0, 14, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [2, 7, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        const defs = [['INFANTRY', 5, 5], ['INFANTRY', 6, 5], ['CAVALRY', 6, 6]];
+        for (const [type, x, z] of defs) {
+            const u = makeUnit(type, 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Non-military units must never be grouped.
+        const worker = makeUnit('WORKER', 'ai1', 3, 3, { factionId: 'crimson' });
+        units.set(worker.id, worker);
+        const settler = makeUnit('SETTLER', 'ai1', 4, 3, { factionId: 'crimson' });
+        units.set(settler.id, settler);
+        return baseAIInput(tiles, units, { resources: { gold: 0, food: 100, wood: 50, iron: 30, production: 50 } });
+    }
+
+    it('persists a summary covering ALL military units with composition + leader + power', () => {
+        const input = groupSetup();
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(Array.isArray(summary)).toBe(true);
+        expect(summary.length).toBeGreaterThan(0);
+        // All 3 military units grouped; worker/settler excluded.
+        expect(summary.reduce((s, g) => s + g.size, 0)).toBe(3);
+        for (const g of summary) {
+            const compTotal = Object.values(g.composition).reduce((s, n) => s + n, 0);
+            expect(compTotal).toBe(g.size);
+            expect(typeof g.stance).toBe('string');
+            expect(g.power).toBeGreaterThan(0);
+            expect(g).toHaveProperty('lord');
+            expect(g).toHaveProperty('objective');
+        }
+        // Composition uses raw unit types with correct counts.
+        const merged = {};
+        for (const g of summary) for (const [t, n] of Object.entries(g.composition)) {
+            merged[t] = (merged[t] || 0) + n;
+        }
+        expect(merged).toEqual({ INFANTRY: 2, CAVALRY: 1 });
+    });
+
+    it('units that already acted are still group members (coverage regression)', () => {
+        // Breach detachment acts on a unit during 5d; before this change acted
+        // units were excluded from the pool and invisible to the panel.
+        const input = groupSetup();
+        const u = [...input.units.values()].find(x => x.type === 'INFANTRY');
+        u.hasMovedThisTurn = true; // simulate having acted earlier this turn
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(summary.reduce((s, g) => s + g.size, 0)).toBe(3);
+    });
+
+    it('breach-detachment groups are persisted (summary built after 5d)', () => {
+        const tiles = plainsGrid(0, 14, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [2, 7, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [9, 5, 'CITY', 'enemy', { cityName: 'Breached', cityLevel: 1, fortification: 0, fortMax: 3, breachedTurn: 1 }],
+        ]);
+        const units = new Map();
+        for (const [x, z] of [[5, 5], [6, 5], [6, 6]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        const input = baseAIInput(tiles, units, {});
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(summary.some(g => g.id && g.id.startsWith('detach:'))).toBe(true);
+    });
+});
