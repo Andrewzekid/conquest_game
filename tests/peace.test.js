@@ -173,3 +173,41 @@ describe('Peace Negotiations — handler wiring (source-invariant)', () => {
     expect(PEACE_DEMAND_LIMITS.MAX_TERRITORY_TILES).toBe(3);
   });
 });
+
+// Source-invariant: the combat/capture choke points in game.js must feed the
+// PER_UNIT_LOST / PER_CITY_LOST / PER_BATTLE weariness rates (previously dead
+// constants — applyWarWeariness was imported but never called).
+describe('War weariness — combat/capture wiring (source-invariant)', () => {
+  const gameSrc = readFileSync(join(here, '..', 'src', 'game.js'), 'utf8');
+
+  it('unit deaths add PER_UNIT_LOST weariness via _onUnitDeath', () => {
+    const m = gameSrc.match(/_onUnitDeath\(unit\)\s*\{([\s\S]*?)\n    \}/);
+    expect(m, '_onUnitDeath body not found').not.toBeNull();
+    expect(m[1]).toMatch(/_addWarWeariness\(unit\.owner, WAR_WEARINESS_RATES\.PER_UNIT_LOST\)/);
+  });
+
+  it('lord deaths add PER_UNIT_LOST weariness via _onLordDeath', () => {
+    const m = gameSrc.match(/_onLordDeath\(lord\)\s*\{([\s\S]*?)\n    \}/);
+    expect(m, '_onLordDeath body not found').not.toBeNull();
+    expect(m[1]).toMatch(/_addWarWeariness\(lord\.owner, WAR_WEARINESS_RATES\.PER_UNIT_LOST\)/);
+  });
+
+  it('city capture adds PER_CITY_LOST weariness for the former owner', () => {
+    expect(gameSrc).toMatch(/applyWarWeariness\(diplo, prevOwner, WAR_WEARINESS_RATES\.PER_CITY_LOST\)/);
+  });
+
+  it('battles add PER_BATTLE weariness to both participants', () => {
+    const m = gameSrc.match(/_battleWeariness\(ownerA, ownerB\)\s*\{([\s\S]*?)\n    \}/);
+    expect(m, '_battleWeariness body not found').not.toBeNull();
+    expect(m[1]).toMatch(/PER_BATTLE/);
+    // Wired into the player + AI attack choke points.
+    expect(gameSrc).toMatch(/_battleWeariness\(attacker\.owner, defender\.owner\)/);
+    expect(gameSrc).toMatch(/_battleWeariness\(lord\.owner, def\.owner\)/);
+  });
+
+  it('casualty weariness only accrues while at war', () => {
+    const m = gameSrc.match(/_addWarWeariness\(faction, amount\)\s*\{([\s\S]*?)\n    \}/);
+    expect(m, '_addWarWeariness body not found').not.toBeNull();
+    expect(m[1]).toMatch(/DIPLOMACY_STATES\.WAR/);
+  });
+});

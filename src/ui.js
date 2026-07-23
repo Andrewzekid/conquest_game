@@ -1120,8 +1120,9 @@ export function bindUI(gameState, callbacks) {
             `;
 
             // Action buttons only on rows involving the player. The available
-            // action set depends on the current state.
-            if (involvesPlayer) {
+            // action set depends on the current state. Spectate mode is
+            // view-only: no propose/declare-war buttons or peace forms.
+            if (involvesPlayer && !gameState.spectateMode) {
                 if (rel.state === 'neutral') {
                     div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
@@ -1204,8 +1205,10 @@ export function bindUI(gameState, callbacks) {
                 row.style.cssText = 'margin:3px 0; padding:3px; border-left:3px solid #4488ff; font-size:11px;';
                 const kind = o.type === 'peace' ? 'Peace' : o.type === 'trade_pact' ? 'Trade Pact' : o.type === 'non_aggression' ? 'NAP' : o.type === 'ceasefire' ? 'Ceasefire' : 'Alliance';
                 row.innerHTML = `${fromName} proposes <b>${kind}</b>`;
-                row.appendChild(mkBtn('Accept', 'acceptOffer', i));
-                row.appendChild(mkBtn('Decline', 'declineOffer', i));
+                if (!gameState.spectateMode) {
+                    row.appendChild(mkBtn('Accept', 'acceptOffer', i));
+                    row.appendChild(mkBtn('Decline', 'declineOffer', i));
+                }
                 els.diplomacyPanel.appendChild(row);
             }
         }
@@ -1376,13 +1379,15 @@ export function bindUI(gameState, callbacks) {
     }
 
     // AI Debug Panel: shows per-faction unit composition (actual vs target),
-    // active goals, and recent actions. Rendered from the pure buildAIDebugHTML
-    // helper so the logic stays unit-testable.
+    // resource stockpiles + per-turn income, army groups, active goals, and
+    // recent actions. Rendered from the pure buildAIDebugHTML helper so the
+    // logic stays unit-testable.
     function showAIDebugPanel() {
         if (!els.aiDebugPanel || !els.aiDebugPanelWrap) return;
         if (els.aiDebugPanelWrap.style.display === 'none') return;
         els.aiDebugPanel.innerHTML = buildAIDebugHTML(
-            gameState.units, gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors);
+            gameState.units, gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors,
+            gameState.tiles, gameState.resources, gameState.buildings, gameState.lords);
     }
 
     // Victory Progress Tracker (Feature 5): a glanceable panel summarizing the

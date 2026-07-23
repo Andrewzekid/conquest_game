@@ -91,7 +91,7 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
 
     // City tiles: gold + production (level-scaled) plus a hinterland trickle of
     // food/wood/iron. Food scales with level so a young city still feeds itself
-    // (1 + level: a Lv1 city yields 2 food — enough early game to avoid
+    // (2 + level: a Lv1 city yields 3 food — enough early game to avoid
     // starvation before farms are up). Wood/iron scale weakly with influence.
     for (const tile of cities) {
         const tileKey = `${tile.x},${tile.z}`;
@@ -103,7 +103,7 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
         add('gold', 'city', gold);
         add('production', 'city', cityProduction(cl));
         const influence = cityRadius(tile);
-        add('food', 'city', 1 + cl);
+        add('food', 'city', 2 + cl);
         add('wood', 'city', 1 + Math.ceil(influence / 3));
         add('iron', 'city', Math.ceil(influence / 3));
         // City buildings (MARKET/BARRACKS/SIEGE_WORKSHOP/HARBOR/WALLS).

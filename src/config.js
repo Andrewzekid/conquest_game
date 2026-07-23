@@ -43,7 +43,7 @@ export function setGridDimensions(width, height) {
 // Terrain types. `key` is the string identifier used in tile.terrain (fixes map/renderer mismatch).
 export const TERRAIN = {
     PLAINS:   { key: 'PLAINS',   color: 0x7cfc00, name: 'Plains',   resource: 'food',  amount: 1,  defense: 0 },
-    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 3,  defense: 1 },
+    FOREST:   { key: 'FOREST',   color: 0x228b22, name: 'Forest',   resource: 'wood',  amount: 2,  defense: 1 },
     MOUNTAIN: { key: 'MOUNTAIN', color: 0x7d6b58, name: 'Mountain', resource: 'iron',  amount: 2,  defense: 3 },
     HILLS:    { key: 'HILLS',    color: 0x9aaa55, name: 'Hills',    resource: 'iron',  amount: 1,  defense: 1 },
     DESERT:   { key: 'DESERT',   color: 0xe6d08a, name: 'Desert',   resource: 'gold',  amount: 1,  defense: 0 },

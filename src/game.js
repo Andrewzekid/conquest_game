@@ -39,13 +39,13 @@ import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp,
          getAvailableSkills, investSkillPoint, getSkillEffects } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
-import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST } from './config.js';
+import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST, WAR_WEARINESS_RATES } from './config.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
          createTradeRoute, validateTradeRoute, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
 import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
          getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
 import { initAIState, createAIState, serializeAIState, deserializeAIState, chooseVictoryTarget, reevaluateVictoryTarget } from './ai_goals.js';
-import { shouldDeclareWar } from './ai_diplomacy.js';
+import { shouldDeclareWar, shouldAcceptPeace, adjustDiplomacyByGoal } from './ai_diplomacy.js';
 import { addEvent as addEventEntry } from './eventlog.js';
 import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
 import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
@@ -60,7 +60,7 @@ import { createTechState, serializeTechState, deserializeTechState,
          isUnitUnlocked,
          TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
-         ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES } from './config.js';
+         ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES, AI_PERSONALITIES } from './config.js';
 import { isObsolete } from './unit_obsolescence.js';
 
 const DRAG_THRESHOLD = 6; // px; under this a press→release is a click
@@ -1258,6 +1258,7 @@ export class Game {
             !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+        this._battleWeariness(attacker.owner, defender.owner);
 
         // Ranged fire vs an unbreached enemy city also chips its fortification.
         this._applyCityFortChip(attacker, defenderTile);
@@ -1346,6 +1347,7 @@ export class Game {
             !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+        this._battleWeariness(lord.owner, def.owner);
         this._playAttackAnimation(atk, def);
         lord.hasAttackedThisTurn = true;
         syncLordHp(atk); // resolveCombat already syncs, but be safe.
@@ -1407,6 +1409,7 @@ export class Game {
         const title = wasKing ? 'King' : 'Lord';
         const nm = lord.name || title;
         this.log(`${title} ${nm} has fallen in battle!`);
+        this._addWarWeariness(lord.owner, WAR_WEARINESS_RATES.PER_UNIT_LOST);
         if (wasKing) this._onKingDeath(lord);
     }
 
@@ -1906,6 +1909,28 @@ export class Game {
         this.handleCharge(attacker, defender);
     }
 
+    /** War weariness from casualties: only factions currently at war
+     *  accumulate weariness (it decays at peace via processWarWeariness).
+     *  Guards against counting peacetime attrition (starvation, burn cleanup). */
+    _addWarWeariness(faction, amount) {
+        if (!faction || !this.gameState.diplomacy) return;
+        for (const f of FACTIONS) {
+            if (f !== faction &&
+                getRelation(this.gameState.diplomacy, faction, f).state === DIPLOMACY_STATES.WAR) {
+                applyWarWeariness(this.gameState.diplomacy, faction, amount);
+                return;
+            }
+        }
+    }
+
+    /** War weariness from fighting a battle: both participants wear down.
+     *  Called once per battle by the attack handlers (not per combat round). */
+    _battleWeariness(ownerA, ownerB) {
+        if (!this.gameState.diplomacy) return;
+        if (ownerA) applyWarWeariness(this.gameState.diplomacy, ownerA, WAR_WEARINESS_RATES.PER_BATTLE);
+        if (ownerB && ownerB !== ownerA) applyWarWeariness(this.gameState.diplomacy, ownerB, WAR_WEARINESS_RATES.PER_BATTLE);
+    }
+
     /** Record a fallen unit in the graveyard for Raise Dead. */
     _onUnitDeath(unit) {
         this.gameState.units.delete(unit.id);
@@ -1913,6 +1938,7 @@ export class Game {
         this.gameState.graveyard.push({
             type: unit.type, owner: unit.owner, x: unit.x, z: unit.z, level: unit.level
         });
+        this._addWarWeariness(unit.owner, WAR_WEARINESS_RATES.PER_UNIT_LOST);
     }
 
     /**
@@ -2814,6 +2840,8 @@ export class Game {
     }
 
     handleDiplomacy(action, target) {
+        // Spectate mode is view-only: ignore any diplomacy action.
+        if (this.spectateMode) { this.log('Diplomacy is view-only while spectating.'); return; }
         const diplo = this.gameState.diplomacy;
         if (!this.gameState.reputation) this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
         const rep = this.gameState.reputation;
@@ -3064,9 +3092,11 @@ export class Game {
             cityTile.lastConqueredTurn = this.gameState.turn || 0;
             cityTile.unrest = UNREST_INCREASE_RATES.CAPTURE_INITIAL;
         }
-        // Former owner gets +25 grievance for losing a city
+        // Former owner gets +25 grievance for losing a city, and its people
+        // grow war-weary from the loss.
         if (prevOwner && prevOwner !== other) {
             addGrievance(diplo, prevOwner, other, 25, 'city captured');
+            applyWarWeariness(diplo, prevOwner, WAR_WEARINESS_RATES.PER_CITY_LOST);
         }
         // Neutral capture: factions with cities within the grudge radius
         // see it as an aggressive land grab.
@@ -3479,10 +3509,6 @@ export class Game {
                 if (Array.isArray(bs) && bs.includes('WALLS')) power[t.owner] += 5;
             }
         }
-        for (const f of FACTIONS) {
-            const gold = (this.gameState.resources[f] && this.gameState.resources[f].gold) || 0;
-            power[f] += Math.floor(gold / 100);
-        }
         // Pairwise nearest-city Manhattan distance (O(cities_a × cities_b) per
         // pair �?tiny compared to the old O(tiles²) scan).
         const dist = {};
@@ -3506,8 +3532,8 @@ export class Game {
     /** Invalidate the diplomacy cache (e.g. after a city capture mid-turn). */
     _invalidateDiploCache() { this._diploCache = null; }
 
-    /** Rough military/economic power of a faction: units + cities (weighted) +
-     *  a gold contribution. Used by the AI to judge whether it has the advantage
+    /** Rough military power of a faction: units + cities (weighted).
+     *  Used by the AI to judge whether it has the advantage
      *  to declare war. Uses the per-turn cache when available. */
     _factionPower(faction) {
         if (this._diploCache && this._diploCache.turn === this.gameState.turn) {
@@ -3520,8 +3546,7 @@ export class Game {
         for (const t of this.tiles.values()) {
             if (t.owner === faction && t.terrain === 'CITY') cities++;
         }
-        const gold = (this.gameState.resources[faction] && this.gameState.resources[faction].gold) || 0;
-        return units + cities * 2 + Math.floor(gold / 100);
+        return units + cities * 2;
     }
 
     /** Calculate comprehensive power rankings for all factions.
@@ -3548,7 +3573,7 @@ export class Game {
             const techs = fTs && fTs.researched ? fTs.researched.size : 0;
             const tilePercent = totalTiles > 0 ? tilesOwned / totalTiles : 0;
 
-            const score = cities * 20 + units * 3 + techs * 10 + Math.floor(gold / 50) + Math.floor(tilePercent * 100);
+            const score = cities * 20 + units * 3 + techs * 10 + Math.floor(tilePercent * 100);
 
             rankings[f] = {
                 score, cities, units, techs, gold, tilesOwned,
@@ -3697,6 +3722,14 @@ export class Game {
 
         const personality = def.aiPersonality || 'DEFENSIVE';
         const strategy = this._getDiplomaticStrategy(personality);
+        // Goal-driven diplomacy: the faction's active goal sequence shifts its
+        // willingness to go to war — a conquest goal lowers the power threshold
+        // it needs before striking, defensive/economic goals raise it.
+        const declAiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        const goalAdj = adjustDiplomacyByGoal(declAiSt && declAiSt.goals, this.gameState.diplomacy,
+            faction, personality, this.gameState.turn || 0);
+        const baseWarChance = (AI_PERSONALITIES[personality] || AI_PERSONALITIES.DEFENSIVE).warChance;
+        const warThreshold = Math.max(0.5, strategy.warThreshold - ((goalAdj.warChance || baseWarChance) - baseWarChance));
         const myPower = this._factionPower(faction);
         if (myPower <= 0) return;
         let declared = false;
@@ -3722,7 +3755,7 @@ export class Game {
             } else {
                 score -= distance * 0.8;
             }
-            if (ratio < strategy.warThreshold) return { other, score: -Infinity };
+            if (ratio < warThreshold) return { other, score: -Infinity };
             score += (ratio - 1) * 20;
             const isAlly = rel.state === DIPLOMACY_STATES.ALLIANCE;
             if (isAlly && ratio < strategy.breakAllianceThreshold) return { other, score: -Infinity };
@@ -3909,7 +3942,7 @@ export class Game {
         candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore, b.napScore, b.ceasefireScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore, a.napScore, a.ceasefireScore));
 
         for (const c of candidates) {
-            const { other, ratio, theirPower, rel, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
+            const { other, ratio, theirPower, rel, distance, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
             let type = null;
 
             // Pick best treaty type based on strategic scores
@@ -3981,7 +4014,18 @@ export class Game {
             const theirGriev = rel.grievances || 0;
             const bt = rel.brokenTreaties || 0;
             const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, 0, false, theirGriev);
-            const b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            let b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            // Goal-driven peace: the recipient's active goals shape its answer
+            // to a peace offer — war weariness, heavy losses, or a long/
+            // directionless war push toward acceptance, while an active
+            // conquest of the proposer blocks it outright.
+            if (type === DIPLOMACY_STATES.PEACE) {
+                const otherAiSt = this.gameState.aiState && this.gameState.aiState[other];
+                const peace = shouldAcceptPeace(otherAiSt, diplo, other, faction,
+                    rel.turnsAtWar || 0, 0, { powerRatio: theirPower / myPower, sharedBorder: distance <= 8 });
+                if (peace.accept) b = true;
+                else if (peace.reason === 'conquest_in_progress') b = false;
+            }
             if (a && b) {
                 const turn = this.gameState.turn || 0;
                 const duration = type === DIPLOMACY_STATES.NAP ? 15 :
@@ -4775,6 +4819,7 @@ export class Game {
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
                             !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                         result.messages.forEach(m => this.log(m));
+                        this._battleWeariness(attacker.owner, defender.owner);
                         // Ranged fire vs an unbreached enemy city also chips its fortification.
                         this._applyCityFortChip(attacker, defenderTile);
                         attacker.hasAttackedThisTurn = true;
@@ -5071,6 +5116,7 @@ export class Game {
                         !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                     attacker.attack = originalAttack;
                     result.messages.forEach(m => this.log(m));
+                    this._battleWeariness(attacker.owner, defender.owner);
                     attacker.hasAttackedThisTurn = true;
                     attacker.hasMovedThisTurn = true;
                     attacker.chargeExhausted = CHARGE_EXHAUST_TURNS;
@@ -5354,8 +5400,6 @@ export class Game {
             if (fTs && fTs.researched) {
                 score += fTs.researched.size * 10;
             }
-            // Gold (0.1 pts per gold).
-            score += Math.floor(((gs.resources && gs.resources[f] && gs.resources[f].gold) || 0) * 0.1);
             scores[f] = score;
         }
         return scores;

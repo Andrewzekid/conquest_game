@@ -16,7 +16,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
           SCARCITY_FLOW_THRESHOLDS, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
-import { sellAtMarket, getUnitCap } from './economy.js';
+import { sellAtMarket, getUnitCap, grossYields } from './economy.js';
 import { cityRadius, findParentCity } from './map.js';
 import { getBuildingState, upgradeBuilding } from './building.js';
 import { canAttack } from './diplomacy.js';
@@ -2108,6 +2108,19 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         }
     }
+    // Persist a lightweight army-group summary for the spectate debug panel
+    // (size, stance, objective per group) — rebuilt every turn.
+    if (aiState) {
+        aiState.armyGroups = groups.map(g => {
+            const obj = groupObjectives.get(g);
+            return {
+                size: g.units.length,
+                stance: groupStances.get(g) || 'hold',
+                objective: obj ? `${obj.x},${obj.z}` : null,
+            };
+        });
+    }
+
     // 5c. Naval embarkation: when the conquest goal requires naval transport
     //     (meta.requiresNaval) and the plan has a 'boardArmy' step, order the
     //     conquest group's land units to move toward and board friendly
@@ -4808,9 +4821,12 @@ export function kingRangedResponse(lord, enemyUnits, friendLocal, foeLocal) {
 }
 
 /** Build the AI Debug panel HTML (pure string — testable without a DOM).
- *  Shows per-faction unit composition (actual vs target), active goals, and
- *  recent actions. Used by the spectate-mode debug panel. */
-export function buildAIDebugHTML(units, aiState, factions, factionDefs, factionColors) {
+ *  Shows per-faction unit composition (actual vs target), resource stockpiles
+ *  and per-turn income, army groups (size/stance/objective), active goals, and
+ *  recent actions. Used by the spectate-mode debug panel.
+ *  `tiles`/`resources`/`buildings`/`lords` are optional: without them the
+ *  income line is skipped (keeps the old call signature usable). */
+export function buildAIDebugHTML(units, aiState, factions, factionDefs, factionColors, tiles, resources, buildings, lords) {
     let html = '<h3>AI Debug</h3>';
     for (const slot of factions) {
         const st = aiState && aiState[slot];
@@ -4876,10 +4892,32 @@ export function buildAIDebugHTML(units, aiState, factions, factionDefs, factionC
                 }).join(' → ') + '</div>';
         }
 
+        // Resource stockpile + per-turn income (gross yields before upkeep).
+        let incomeHtml = '';
+        if (tiles && resources) {
+            const stock = resources[slot] || {};
+            const inc = grossYields(tiles, slot, buildings, lords, def);
+            const sum = (brk) => Object.values(brk || {}).reduce((s, v) => s + v, 0);
+            const parts = ['gold', 'food', 'wood', 'iron', 'production'].map(res =>
+                `${res}: ${Math.floor(stock[res] || 0)} (+${sum(inc[res])}/t)`);
+            incomeHtml = `<div style="font-size:10px;margin:2px 0;" class="muted">${parts.join(' · ')}</div>`;
+        }
+
+        // Army groups (persisted each turn by computeAIActions).
+        let groupsHtml = '';
+        if (st && Array.isArray(st.armyGroups) && st.armyGroups.length) {
+            groupsHtml = '<div style="font-size:10px;margin:2px 0;"><strong>Army groups:</strong> ' +
+                st.armyGroups.map(g =>
+                    `<span style="margin-right:6px;">${g.size}u ${g.stance || 'hold'}${g.objective ? ` → ${g.objective}` : ''}</span>`
+                ).join('') + '</div>';
+        }
+
         html += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
   <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${total} units)</span></div>
   <div style="font-size:11px;margin:2px 0;">${compHtml || '<span class="muted">No units</span>'}</div>
   <div style="font-size:10px;margin:2px 0;" class="muted">Target: ${targetStr || 'N/A'}</div>
+  ${incomeHtml}
+  ${groupsHtml}
   <div style="margin:3px 0;">${goalHtml}</div>
   ${ordersHtml}
 </div>`;

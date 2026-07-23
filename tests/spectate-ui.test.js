@@ -7,6 +7,8 @@ const html = readFileSync(htmlPath, 'utf-8');
 
 const gameSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'game.js'), 'utf-8');
 
+const uiSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'ui.js'), 'utf-8');
+
 describe('spectate-ui', () => {
   it('spectate-controls div does NOT have class="hidden"', () => {
     // The bug was that class="hidden" with !important overrode inline display:flex
@@ -55,6 +57,26 @@ describe('spectate-ui', () => {
     it('loadFromState mirrors the spectate flag onto gameState', () => {
       // Loaded games skip initState, so the flag must be mirrored there too.
       expect(gameSrc).toMatch(/this\.gameState\.spectateMode\s*=\s*this\.spectateMode/);
+    });
+  });
+
+  // Spectate mode is view-only: the diplomacy panel stays visible for
+  // inspection, but the player-slot action buttons (Propose/Declare War, the
+  // peace-with-demands form, Accept/Decline on pending offers) must not render,
+  // and handleDiplomacy must ignore any action that slips through.
+  describe('spectate diplomacy is view-only', () => {
+    it('diplomacy action buttons are suppressed in spectate mode', () => {
+      expect(uiSrc).toMatch(/if \(involvesPlayer && !gameState\.spectateMode\)/);
+    });
+
+    it('pending-offer Accept/Decline buttons are suppressed in spectate mode', () => {
+      expect(uiSrc).toMatch(/if \(!gameState\.spectateMode\) \{\s*row\.appendChild\(mkBtn\('Accept', 'acceptOffer', i\)\);/);
+    });
+
+    it('handleDiplomacy guards on spectateMode before touching state', () => {
+      const m = gameSrc.match(/handleDiplomacy\(action, target\)\s*\{([\s\S]*?)const diplo = this\.gameState\.diplomacy;/);
+      expect(m, 'handleDiplomacy body not found').not.toBeNull();
+      expect(m[1]).toMatch(/if \(this\.spectateMode\)/);
     });
   });
 });

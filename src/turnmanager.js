@@ -42,13 +42,12 @@ function calculateSimpleRankings(gameState, tiles) {
             if (t.terrain === 'CITY') factions[t.owner].cities++;
         }
     }
-    // Also count units and gold
+    // Also count units
     for (const u of (gameState.units || new Map()).values()) {
         if (factions[u.owner]) factions[u.owner].score += 2;
     }
     for (const [f, data] of Object.entries(factions)) {
-        const gold = (gameState.resources && gameState.resources[f] && gameState.resources[f].gold) || 0;
-        data.score += data.cities * 20 + data.tiles + Math.floor(gold / 50);
+        data.score += data.cities * 20 + data.tiles;
     }
     let leader = null, leaderScore = 0, secondScore = 0;
     for (const [f, data] of Object.entries(factions)) {
