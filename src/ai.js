@@ -803,6 +803,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (aiUnlocked.has('CATAPULT')) siegeOptions.push('CATAPULT');
         if (aiUnlocked.has('TREBUCHET')) siegeOptions.push('TREBUCHET');
     }
+    // Obsolescence: this block reads the raw faction roster and aiUnlocked —
+    // not the obsolescence-filtered fullRoster — so drop siege types whose
+    // modern replacement is researched (CATAPULT/TREBUCHET/SIEGE once
+    // GUNPOWDER is done, ARTILLERY once METALLURGY is done).
+    const siegeOptionsFiltered = applyObsolescence(siegeOptions, aiTs && aiTs.researched);
+    siegeOptions.length = 0;
+    for (const u of siegeOptionsFiltered) siegeOptions.push(u);
     // Composition-aware siege cap: the siege ratio depends on the army's
     // current objective. A faction actively besieging an enemy city fields
     // more siege; a decisive field battle or home defense wants fewer siege
@@ -1093,8 +1100,23 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     "ships never train" bug). A harbor queued this turn (0h/1d) counts as
     //     present so ships can launch the same turn the harbor goes up.
     {
-        const harborCity = owned.find(t => t.terrain === 'CITY' &&
-            ((buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR') || queuedHarbors.has(`${t.x},${t.z}`)));
+        // A harbor serves a city from ANY tile in its influence — findBuildSite
+        // deliberately places HARBOR on non-city tiles (the city tile is
+        // reserved for WALLS/MARKET), and the engine (bestMilitaryLevel) scans
+        // the city's whole influence when validating ship training. Mirror that
+        // influence scan here; requiring the harbor ON the city tile meant no
+        // ships were ever trained once the harbor went up on an influence tile.
+        const hasHarborInInfluence = (city) => {
+            const cr = cityRadius(city);
+            for (let dx = -cr; dx <= cr; dx++) {
+                for (let dz = -cr; dz <= cr; dz++) {
+                    const k = `${city.x + dx},${city.z + dz}`;
+                    if ((buildings.get(k) || []).includes('HARBOR') || queuedHarbors.has(k)) return true;
+                }
+            }
+            return false;
+        };
+        const harborCity = owned.find(t => t.terrain === 'CITY' && hasHarborInInfluence(t));
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
@@ -2866,6 +2888,20 @@ function roleDeficit(roster, counts, total, target) {
     }
     return worstRole;
 }
+/** Modern-first preference order per combat role. Position in the list is the
+ *  era proxy: index 0 is the most modern unit of the role, later entries are
+ *  progressively older/weaker. Signature units are listed first within their
+ *  role so a faction that has them trains them (the roster filter skips units
+ *  a faction lacks); the canAfford gate means early/cheap armies still fall
+ *  back to cheaper units when the signature is too expensive. */
+const ROLE_ORDER = {
+    melee:   ['LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD', 'PIKEMAN', 'INFANTRY'],
+    ranged:  ['RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'ARQUEBUSIER', 'LONGBOWMAN', 'DRAGOON', 'ARCHER'],
+    cavalry: ['WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'CAVALRY', 'CHARIOT'],
+    siege:   ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY'],
+    support: ['ENGINEER', 'MEDIC'],
+    naval:   ['MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN'],
+};
 /** Pick an affordable unit from this faction's roster, biased toward a
  *  faction-specialized army composition. Early on it secures melee screens,
  *  then fills the biggest role deficit. Falls back to the strongest affordable
@@ -2976,6 +3012,27 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         }
     }
 
+    // Era-gap savings: when the best unlocked unit for the role in deficit is
+    // NOT affordable, and the strongest affordable same-role unit sits ≥2 steps
+    // below it in ROLE_ORDER (i.e. a much older/weaker unit), skip training
+    // this turn and let the treasury accumulate toward the modern unit. The
+    // fixed-threshold savings above only fire when already close to affording,
+    // so without this rule a poor AI spends every turn's surplus on cheap era-0
+    // filler and never reaches the modern unit's cost. Skipped below the
+    // defense floor (total < 4) and while under immediate threat (defensive
+    // objective — buying anything that fights beats saving for later).
+    if (aiState && total >= 4 && !(objective && objective.defensive)) {
+        const role = roleDeficit(roster, counts, total, target);
+        const order = ROLE_ORDER[role] || [];
+        const best = order.find(t => roster.includes(t));
+        const affordable = order.find(t => roster.includes(t) &&
+            canAfford(t, resources, getUnitCostFor(t, factionDef)));
+        if (best && affordable && best !== affordable &&
+            order.indexOf(affordable) - order.indexOf(best) >= 2) {
+            return null;
+        }
+    }
+
     // Defense floor: first few units must be melee so expansion/siege don't
     // strip the army bare. Prefer modern melee (LINE_INFANTRY, DRAGOON) when
     // their tech is researched so the early army isn't stuck on medieval units.
@@ -2992,17 +3049,7 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     }
     if (total >= 4) {
         const role = roleDeficit(roster, counts, total, target);
-        const order = [];
-        // Signature units are listed first within their role so a faction that
-        // has them trains them (the roster filter skips units a faction lacks);
-        // the canAfford gate means early/cheap armies still fall back to cheaper
-        // units when the signature is too expensive.
-        if (role === 'melee') order.push('LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD', 'PIKEMAN', 'INFANTRY');
-        else if (role === 'ranged') order.push('RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'ARQUEBUSIER', 'LONGBOWMAN', 'DRAGOON', 'ARCHER');
-        else if (role === 'cavalry') order.push('WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'CAVALRY', 'CHARIOT');
-        else if (role === 'siege') order.push('SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY');
-        else if (role === 'support') order.push('ENGINEER', 'MEDIC');
-        else if (role === 'naval') order.push('MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN');
+        const order = [...(ROLE_ORDER[role] || [])];
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }

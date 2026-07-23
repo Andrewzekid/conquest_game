@@ -61,6 +61,14 @@ describe('unit_obsolescence — getObsoleteUnits', () => {
         expect(obs.has('MORTAR')).toBe(true);
     });
 
+    it('obsoletes SIEGE, CATAPULT and TREBUCHET when GUNPOWDER researched (ARTILLERY)', () => {
+        const obs = getObsoleteUnits(ts(['GUNPOWDER']).researched);
+        expect(obs.has('SIEGE')).toBe(true);      // Iron-style roster siege unit
+        expect(obs.has('CATAPULT')).toBe(true);   // even without SIEGE_CRAFT
+        expect(obs.has('TREBUCHET')).toBe(true);
+        expect(obs.has('ARTILLERY')).toBe(false); // the modern replacement itself
+    });
+
     it('obsoletes FRIGATE and GALLEON when STEAM_ENGINE researched (IRONCLAD)', () => {
         const obs = getObsoleteUnits(ts(['STEAM_ENGINE']).researched);
         expect(obs.has('FRIGATE')).toBe(true);

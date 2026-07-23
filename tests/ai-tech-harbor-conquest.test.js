@@ -1038,3 +1038,178 @@ describe('Integration: full AI pipeline with modern tech', () => {
         expect(bridges.length).toBeGreaterThan(0);
     });
 });
+
+// ===========================================================================
+// PART 5: Phase 3 — AI production scenarios
+//  (siege obsolescence by faction, harbor on an influence tile, era-gap savings)
+// ===========================================================================
+describe('Phase 3: siege obsolescence by faction', () => {
+    // Army pre-loaded with melee/ranged/cavalry so SIEGE is the clear training
+    // deficit. The enemy city is far away, so no defensive/siege objective
+    // distorts the composition. City level 5 keeps the unit cap high.
+    function siegeSetup({ faction, ts, buildings }) {
+        const tiles = makeTileMap([
+            [5, 5, 'CITY', 'ai1', { cityName: 'AI Capital', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+            [6, 5, 'PLAINS', 'ai1'],
+            [7, 5, 'PLAINS', 'ai1'],
+            [8, 5, 'PLAINS', 'ai1'],
+            [9, 5, 'PLAINS', 'ai1'],
+            [15, 15, 'CITY', 'enemy', { cityName: 'Enemy Hold', cityLevel: 2, fortification: 5, fortMax: 5 }],
+        ]);
+        const units = new Map();
+        const army = ['INFANTRY', 'INFANTRY', 'ARCHER', 'ARCHER', 'CAVALRY', 'CAVALRY'];
+        army.forEach((type, i) => units.set(i + 1, makeUnit(type, 'ai1', 6 + i, 5, { factionId: faction })));
+        return {
+            tiles, units,
+            resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 },
+            owner: 'ai1', buildings, influence: null,
+            factionDef: FACTION_DEFS[faction],
+            diploState: warDiplo('ai1', 'enemy'),
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: createAIState(), aiTechStates: { ai1: ts },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: 35,
+        };
+    }
+    const workshop = () => new Map([['5,5', ['BARRACKS', 'SIEGE_WORKSHOP']]]);
+
+    it('Iron Empire with GUNPOWDER never trains SIEGE — trains ARTILLERY instead', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'iron', ts, buildings: workshop() })));
+        expect(trains).not.toContain('SIEGE');
+        expect(trains).not.toContain('CATAPULT');
+        expect(trains).not.toContain('TREBUCHET');
+        expect(trains).toContain('ARTILLERY');
+    });
+
+    it('Iron Empire with METALLURGY trains no outdated siege at all', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER', 'METALLURGY']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'iron', ts, buildings: workshop() })));
+        for (const old of ['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET']) {
+            expect(trains).not.toContain(old);
+        }
+    });
+
+    it('Shadow Court with only SIEGE_CRAFT still trains workshop siege (regression)', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'shadow', ts, buildings: workshop() })));
+        expect(trains.some(t => t === 'CATAPULT' || t === 'TREBUCHET')).toBe(true);
+    });
+
+    it('Shadow Court with GUNPOWDER never trains CATAPULT/TREBUCHET', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'shadow', ts, buildings: workshop() })));
+        expect(trains).not.toContain('CATAPULT');
+        expect(trains).not.toContain('TREBUCHET');
+    });
+});
+
+describe('Phase 3: harbor on an influence tile', () => {
+    // Regression for the "ships never built" bug: findBuildSite deliberately
+    // places HARBOR on a NON-city influence tile (the city tile is reserved
+    // for WALLS/MARKET), so the ship-training gate must scan the city's whole
+    // influence, not just the city tile. Same cross-water conquest setup as
+    // the on-city harbor test above, but the harbor sits on the plains at 6,5.
+    it('trains ships when the harbor is on a non-city influence tile', () => {
+        const tiles = makeTileMap([
+            [5, 5, 'CITY', 'ai1', { cityName: 'Capital', cityLevel: 2, fortification: 3, fortMax: 3, isCapital: true }],
+            [6, 5, 'PLAINS', 'ai1'],
+            [4, 5, 'WATER', null],
+            [15, 15, 'CITY', 'enemy', { cityName: 'Island Enemy', cityLevel: 1, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        for (let i = 0; i < 4; i++) units.set(i + 1, makeUnit('INFANTRY', 'ai1', 6 + i, 5, { factionId: 'crimson' }));
+        const ts = makeFactionTs(['NAVAL_ENGINEERING']);
+        const actions = runAI({
+            units, tiles,
+            resources: { gold: 2000, food: 1000, wood: 500, iron: 200, production: 800 },
+            owner: 'ai1', buildings: new Map([['5,5', ['BARRACKS']], ['6,5', ['HARBOR']]]),
+            influence: null, factionDef: FACTION_DEFS.crimson,
+            diploState: warDiplo('ai1', 'enemy'),
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: createAIState(), aiTechStates: { ai1: ts },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: 35,
+        });
+        const trains = trainTypes(actions);
+        expect(trains.some(t => t === 'TRANSPORT' || t === 'GALLEY')).toBe(true);
+    });
+});
+
+describe('Phase 3: era-gap savings (cheap-unit drain)', () => {
+    // Just short of RIFLEMAN (100g/22i) but enough for ARCHER (40g/20w).
+    const poorRes = () => ({ gold: 50, food: 20, wood: 25, iron: 10, production: 20 });
+    const fourInfantry = () => new Map([0, 1, 2, 3].map(i => {
+        const u = makeUnit('INFANTRY', 'ai1', i, 0);
+        return [u.id, u];
+    }));
+
+    it('saves (returns null) when only a >=2-eras-older same-role unit is affordable', () => {
+        const pick = findAffordableUnit(poorRes(), ['INFANTRY', 'ARCHER', 'RIFLEMAN'],
+            FACTION_DEFS.crimson, fourInfantry(), [], 'ai1', null, false, createAIState());
+        expect(pick).toBeNull();
+    });
+
+    it('trains the modern unit as soon as it is affordable', () => {
+        const rich = { gold: 500, food: 200, wood: 100, iron: 100, production: 200 };
+        const pick = findAffordableUnit(rich, ['INFANTRY', 'ARCHER', 'RIFLEMAN'],
+            FACTION_DEFS.crimson, fourInfantry(), [], 'ai1', null, false, createAIState());
+        expect(pick).toBe('RIFLEMAN');
+    });
+
+    it('does not save while under immediate threat (defensive objective)', () => {
+        const pick = findAffordableUnit(poorRes(), ['INFANTRY', 'ARCHER', 'RIFLEMAN'],
+            FACTION_DEFS.crimson, fourInfantry(), [], 'ai1', { defensive: true }, false, createAIState());
+        expect(pick).toBe('ARCHER');
+    });
+
+    it('still trains basic units when no modern replacement is unlocked', () => {
+        const pick = findAffordableUnit(poorRes(), ['INFANTRY', 'ARCHER'],
+            FACTION_DEFS.crimson, fourInfantry(), [], 'ai1', null, false, createAIState());
+        expect(pick).toBe('ARCHER');
+    });
+
+    // End-to-end pair: 3 INFANTRY + 3 CAVALRY + 1 SIEGE pre-loaded so RANGED
+    // is the clear role deficit (the ENGINEER keeps the no-engineer reserve
+    // from draining the treasury before the land loop); treasury just short
+    // of RIFLEMAN (100g/22i) but enough for LONGBOWMAN (45g/18w).
+    function savingsSetup(ts) {
+        const tiles = makeTileMap([
+            [5, 5, 'CITY', 'ai1', { cityName: 'AI Capital', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+            [6, 5, 'PLAINS', 'ai1'],
+            [7, 5, 'PLAINS', 'ai1'],
+            [8, 5, 'PLAINS', 'ai1'],
+            [9, 5, 'PLAINS', 'ai1'],
+            [15, 15, 'CITY', 'enemy', { cityName: 'Enemy Hold', cityLevel: 2, fortification: 5, fortMax: 5 }],
+        ]);
+        const units = new Map();
+        const army = ['INFANTRY', 'INFANTRY', 'INFANTRY', 'CAVALRY', 'CAVALRY', 'CAVALRY', 'SIEGE', 'ENGINEER'];
+        army.forEach((type, i) => units.set(i + 1, makeUnit(type, 'ai1', 6 + i, 5, { factionId: 'crimson' })));
+        return {
+            tiles, units,
+            resources: { gold: 55, food: 30, wood: 25, iron: 5, production: 20 },
+            owner: 'ai1',
+            buildings: new Map([['5,5', ['BARRACKS']]]),
+            influence: null, factionDef: FACTION_DEFS.crimson,
+            diploState: warDiplo('ai1', 'enemy'),
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: createAIState(), aiTechStates: { ai1: ts },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: 35,
+        };
+    }
+
+    it('end-to-end: AI just short of a modern unit saves instead of buying era-0 filler', () => {
+        const trains = trainTypes(runAI(savingsSetup(makeFactionTs(['RIFLED_MUSKET']))));
+        // RIFLEMAN unlocked but unaffordable, LONGBOWMAN affordable — the AI
+        // must skip training entirely and let the treasury accumulate.
+        expect(trains).not.toContain('LONGBOWMAN');
+        expect(trains).not.toContain('LEGIONNAIRE');
+        expect(trains).not.toContain('INFANTRY');
+    });
+
+    it('end-to-end regression: without modern techs the same treasury buys basics', () => {
+        const trains = trainTypes(runAI(savingsSetup(makeFactionTs([]))));
+        expect(trains).toContain('LONGBOWMAN');
+    });
+});

@@ -34,7 +34,11 @@ export const OBSOLESCENCE = {
 
     // Siege line: CATAPULT → TREBUCHET → ARTILLERY → CANNON → SIEGE_CANNON/FIELD_GUN
     TREBUCHET:    { obsoletes: ['CATAPULT'],                       tech: 'SIEGE_CRAFT' },
-    ARTILLERY:    { obsoletes: ['TREBUCHET'],                      tech: 'GUNPOWDER' },
+    // ARTILLERY (GUNPOWDER) also retires SIEGE (a roster unit some factions
+    // hold, e.g. Iron) and CATAPULT directly — otherwise a faction that
+    // reaches GUNPOWDER without SIEGE_CRAFT keeps spamming CATAPULT/SIEGE
+    // despite having gunpowder artillery unlocked.
+    ARTILLERY:    { obsoletes: ['TREBUCHET', 'CATAPULT', 'SIEGE'], tech: 'GUNPOWDER' },
     CANNON:       { obsoletes: ['ARTILLERY'],                      tech: 'METALLURGY' },
     SIEGE_CANNON: { obsoletes: ['SIEGE', 'CANNON', 'MORTAR'],      tech: 'EXPLOSIVES' },
     FIELD_GUN:    { obsoletes: [],                                  tech: 'FIELD_ARTILLERY' }, // SIEGE_CANNON already covers CANNON/MORTAR

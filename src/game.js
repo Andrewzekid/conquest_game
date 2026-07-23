@@ -2678,13 +2678,15 @@ export class Game {
                 this.log('That unit requires a tech you have not yet researched.');
                 return;
             }
-            // Obsolescence: a unit whose modern replacement's tech is researched
-            // can no longer be trained (it's obsolete). Catches stale UI actions
-            // and save-games with an obsolete unit queued.
-            if (isObsolete(unitType, ts.researched)) {
-                this.log('That unit is obsolete — a modern replacement is available.');
-                return;
-            }
+        }
+        // Obsolescence: a unit whose modern replacement's tech is researched
+        // can no longer be trained (it's obsolete). Applies to faction-roster
+        // units too — they bypass the tech gate but not obsolescence. Catches
+        // stale UI actions and save-games with an obsolete unit queued.
+        const pts = this.gameState.techState;
+        if (pts && pts.researched && isObsolete(unitType, pts.researched)) {
+            this.log('That unit is obsolete — a modern replacement is available.');
+            return;
         }
         // Ships require a Harbor in this city's influence (and the harbor must be coastal).
         if (NAVAL_UNITS.includes(unitType)) {
@@ -4570,6 +4572,13 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
                         if (this.gameState.trainedThisTurn.has(action.tileKey)) break;
+                        // Obsolescence: skip units whose modern replacement's tech
+                        // is researched. Defense-in-depth -- the AI roster builder
+                        // already filters these, but stale/queued actions (or a
+                        // faction-roster unit that bypasses the tech gate) could
+                        // still slip through.
+                        const aiTsObs = (this.gameState.aiTechStates || {})[faction];
+                        if (aiTsObs && aiTsObs.researched && isObsolete(action.unitType, aiTsObs.researched)) break;
                         // Siege engines (CATAPULT/TREBUCHET) require a Siege Workshop in this city's influence.
                         if (SIEGE_ENGINES.includes(action.unitType) && !this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP')) break;
                         // SIEGE unit also requires a Siege Workshop (siege-only city breacher).
