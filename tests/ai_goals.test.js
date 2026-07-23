@@ -245,7 +245,7 @@ describe('ai_goals new goal types', () => {
     expect(scout).toBeFalsy();
   });
 
-  it('attack-king goal appears when an enemy king is exposed', () => {
+  it('attack-king goal appears when an enemy king is exposed and vulnerable', () => {
     const goals = selectGoals(baseInput({
       factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
       enemies: ['azure'],
@@ -254,7 +254,7 @@ describe('ai_goals new goal types', () => {
       myCityCount: 3,
       settlerTarget: 8,
       enemyKings: [{
-        id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false,
+        id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false, vulnerable: true,
       }],
     }));
     const attackKing = goals.find(g => g.kind === 'attack-king');
@@ -286,7 +286,7 @@ describe('ai_goals new goal types', () => {
       factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
       enemies: ['azure'],
       enemyCities: [{ x: 5, z: 5, owner: 'azure' }],
-      enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false }],
+      enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 6, z: 6, hp: 10, guarded: false, vulnerable: true }],
     });
     const g1 = selectGoals(input);
     expect(g1.some(g => g.kind === 'attack-king')).toBe(true);

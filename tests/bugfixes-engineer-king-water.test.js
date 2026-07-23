@@ -434,7 +434,7 @@ describe('Attack-king objective', () => {
     it('attack-king base score is 40 (not 85)', () => {
         const goals = selectGoals(baseInput({
             enemyKings: [{
-                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false,
+                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false, vulnerable: true,
             }],
         }));
         const atkKing = goals.find(g => g.kind === 'attack-king');
@@ -445,10 +445,10 @@ describe('Attack-king objective', () => {
         }
     });
 
-    it('attack-king appears for exposed (unguarded) enemy king', () => {
+    it('attack-king appears for an exposed (unguarded) AND vulnerable enemy king', () => {
         const goals = selectGoals(baseInput({
             enemyKings: [{
-                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false,
+                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false, vulnerable: true,
             }],
         }));
         expect(goals.some(g => g.kind === 'attack-king')).toBe(true);
@@ -471,7 +471,7 @@ describe('Attack-king objective', () => {
     it('conquest goal outranks attack-king when both exist', () => {
         const goals = selectGoals(baseInput({
             enemyKings: [{
-                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false,
+                id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false, vulnerable: true,
             }],
         }));
         const topGoal = goals[0];
@@ -482,7 +482,7 @@ describe('Attack-king objective', () => {
         const aiState = createAIState();
         let input = baseInput({
             aiState, turn: 1,
-            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false }],
+            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 10, guarded: false, vulnerable: true }],
         });
         const g1 = selectGoals(input);
         expect(g1.some(g => g.kind === 'attack-king')).toBe(true);
@@ -497,12 +497,12 @@ describe('Attack-king objective', () => {
 
     it('distant king scores lower than nearby king', () => {
         const nearGoals = selectGoals(baseInput({
-            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 1, z: 0, hp: 10, guarded: false }],
+            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 1, z: 0, hp: 10, guarded: false, vulnerable: true }],
         }));
         const aiState2 = createAIState();
         const farGoals = selectGoals(baseInput({
             aiState: aiState2,
-            enemyKings: [{ id: 'k2', owner: 'azure', isKing: true, x: 20, z: 20, hp: 10, guarded: false }],
+            enemyKings: [{ id: 'k2', owner: 'azure', isKing: true, x: 20, z: 20, hp: 10, guarded: false, vulnerable: true }],
         }));
         const nearAtk = nearGoals.find(g => g.kind === 'attack-king');
         const farAtk = farGoals.find(g => g.kind === 'attack-king');

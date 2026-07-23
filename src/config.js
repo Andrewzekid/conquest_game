@@ -859,6 +859,13 @@ export const AI_ARTILLERY_RESERVE_SIEGE = 0.25;
 export const AI_SETTLER_SCARCITY_TURN_THRESHOLD = 2;
 export const AI_SETTLER_SCARCE_CAP_RELAX = 2;
 export const AI_SETTLER_SCARCE_FLOOR_RELAX = 1;
+// Breached-city detachment: max Manhattan distance from which the AI peels one
+// military unit off an army group to go claim a breached, unclaimed city.
+export const AI_BREACH_DETACH_RADIUS = 8;
+// King threat assessment: extra weight per tile of strike-reach surplus
+// (moveRange + attackRange beyond the foe's distance to the king). Mobile
+// threats that can strike this turn scare the king into retreating earlier.
+export const AI_KING_MOBILITY_THREAT_FACTOR = 0.25;
 
 // Flow-aware scarcity: a resource counts as "strained" when its per-turn net
 // flow is at or below these (negative) thresholds — i.e. the faction is

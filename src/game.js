@@ -21,7 +21,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
           MILITARY_BUILDING_LEVELS, ESPIONAGE_GRIPERANCE, CITY_RAZE_GRIPERANCE,
           WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
           WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
-          WAR_OBJECTIVE_MIN_CITIES } from './config.js';
+          WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
@@ -4143,13 +4143,29 @@ export class Game {
         const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
         const enemyLords = this.gameState.lords.filter(l => l.owner !== faction && atWar(l.owner));
 
-        // Local power within Chebyshev radius (units + lords).
-        const localPower = (x, z, radius, friendly) => {
+        // Mobility-weighted threat: a foe whose strike reach (moveRange +
+        // attackRange) meets or exceeds its distance to the king can attack
+        // THIS turn (full threat, plus AI_KING_MOBILITY_THREAT_FACTOR per tile
+        // of reach surplus); a foe that can't reach the king this turn counts
+        // at half weight. Slow melee 3 tiles away scares the king less than
+        // cavalry at the same distance.
+        const threatMobilityWeight = (u, x, z) => {
+            const def = UNIT_TYPE[u.type] || {};
+            const reach = (def.moveRange || 1) + (def.attackRange || (def.ranged ? 2 : 1));
+            const dist = Math.max(Math.abs(u.x - x), Math.abs(u.z - z));
+            if (dist > reach) return 0.5;
+            return 1 + (reach - dist) * AI_KING_MOBILITY_THREAT_FACTOR;
+        };
+
+        // Local power within Chebyshev radius (units + lords). With
+        // `mobilityWeighted`, enemy unit power is scaled by threatMobilityWeight.
+        const localPower = (x, z, radius, friendly, mobilityWeighted = false) => {
             let power = 0;
             for (const u of this.gameState.units.values()) {
                 if ((u.owner === faction) !== friendly) continue;
                 if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
-                power += (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0);
+                const w = (mobilityWeighted && !friendly) ? threatMobilityWeight(u, x, z) : 1;
+                power += ((u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0)) * w;
             }
             for (const l of this.gameState.lords) {
                 if ((l.owner === faction) !== friendly) continue;
@@ -4160,6 +4176,7 @@ export class Game {
         };
         const friendLocal = localPower(lord.x, lord.z, 3, true);
         const foeLocal = localPower(lord.x, lord.z, 3, false);
+        const foeLocalMobile = localPower(lord.x, lord.z, 3, false, true);
 
         // 1) Capture a breached/unclaimed city that is within reach and empty.
         for (const t of this.tiles.values()) {
@@ -4178,7 +4195,9 @@ export class Game {
         //    foe attack power all raise the bar so the king retreats earlier
         //    when the situation is more dire.
         const kingHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
-        // Count enemy military units within Chebyshev 4.
+        // Count enemy military units within Chebyshev 4, weighted by mobility
+        // (threatMobilityWeight): fast / long-reach foes that can strike the
+        // king this turn raise the retreat threshold more than slow ones.
         let foeCount = 0;
         let foeAttackPower = 0;
         let hasArtilleryThreat = false;
@@ -4188,8 +4207,9 @@ export class Game {
         for (const eu of enemyUnits) {
             const dist = Math.max(Math.abs(eu.x - lord.x), Math.abs(eu.z - lord.z));
             if (dist > 4) continue;
-            foeCount++;
-            foeAttackPower += (eu.attack ?? 0) + ((UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attack) || 0);
+            const mw = threatMobilityWeight(eu, lord.x, lord.z);
+            foeCount += mw;
+            foeAttackPower += ((eu.attack ?? 0) + ((UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attack) || 0)) * mw;
             // Artillery/siege within their attack range of the king = lethal threat.
             if (!hasArtilleryThreat && SIEGE_SET.has(eu.type)) {
                 const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
@@ -4221,7 +4241,8 @@ export class Game {
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
         // Also retreat when power-ratio is bad (subsumes the old 1.3x check).
-        if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
+        // Mobility-weighted: foes that can actually strike this turn count more.
+        if (foeLocalMobile > 0 && foeLocalMobile > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }

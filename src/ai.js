@@ -8,6 +8,7 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
          AI_FRONTIER_BONUS_CLOSE, AI_FRONTIER_BONUS_MID, AI_FRONTIER_BONUS_FAR,
           AI_ENEMY_CITY_PROXIMITY_PENALTY, AI_WEAK_CITY_SNIPE_BONUS, AI_WEAK_CITY_RATIO,
           WEAK_CITY_GARRISON_THRESHOLD, AI_NEUTRAL_RUSH_BONUS, SETTLER_AGGRESSION,
+          AI_BREACH_DETACH_RADIUS,
           MARKET_RATES, CITY_LEVEL_UP_COST, CITY_MAX_LEVEL,
           MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
           AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT, AI_ARTILLERY_RESERVE_SIEGE,
@@ -22,7 +23,7 @@ import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
-import { selectGoals, pathCrossesWater, isReachableByLand } from './ai_goals.js';
+import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } from './ai_goals.js';
 import { getUnlockedUnits, TECHS } from './tech.js';
 import { applyObsolescence } from './unit_obsolescence.js';
 import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
@@ -413,15 +414,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // Build the exposed-enemy-king list for the attack-king goal. A king is
-    // "exposed" when no friendly unit shares its tile (no bodyguard). The goal
-    // module uses this to decide whether to prioritize king assassination.
+    // "exposed" when no friendly unit shares its tile (no bodyguard) and
+    // "vulnerable" when exposed AND wounded or locally outpowered (see
+    // isKingVulnerable). Vulnerability is recomputed every turn so the goal
+    // system drops attack-king as soon as the king turtles up.
     const enemyKings = (lords || [])
         .filter(l => l.owner !== owner && l.isKing && enemies.includes(l.owner))
-        .map(l => ({
-            id: l.id, owner: l.owner, isKing: true,
-            x: l.x, z: l.z, hp: l.hp || 1,
-            guarded: [...units.values()].some(u => u.owner === l.owner && u.x === l.x && u.z === l.z),
-        }));
+        .map(l => {
+            const guarded = [...units.values()].some(u => u.owner === l.owner && u.x === l.x && u.z === l.z);
+            // Local power near the king (units only) + the king's own HP as
+            // extra defender power.
+            const bal = localPowerBalance(units, l.x, l.z, owner, atWar, isAtWar, 3);
+            const king = {
+                id: l.id, owner: l.owner, isKing: true,
+                x: l.x, z: l.z, hp: l.hp || 1, maxHp: l.maxHp || l.hp || 1,
+                guarded,
+            };
+            king.vulnerable = isKingVulnerable(king, bal.friend, bal.foe + (l.hp || 1));
+            return king;
+        });
 
     const goals = selectGoals({
         aiState, turn: currentTurn || (aiState ? aiState.lastPlanTurn : 0), factionDef,
@@ -473,6 +484,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         }
     }
+    // Gold available for capture decisions this turn, snapshotted BEFORE the
+    // spending blocks below drain the treasury. The breached-city detachment
+    // (block 5d) gates on this: detaching costs nothing now — the capture is
+    // paid later by the block-0 pre-pass, which always runs before spending.
+    const goldBeforeSpending = res.gold || 0;
 
     // 0a. Sell excess resources at market when gold is low. The AI tends to
     //     accumulate wood/iron/food while gold-starving; selling surpluses
@@ -2040,7 +2056,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     if (flankObj) objective = flankObj;
                 }
             } else {
-                objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal);
+                objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal, lords);
             }
         } else {
             const c = groupCentroid(g);
@@ -2135,6 +2151,75 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     }
                 }
             }
+        }
+    }
+
+    // 5d. Breached-city detachment: a breached, empty, capturable city beyond
+    //     the adjacent-capture radius otherwise sits unclaimed forever while
+    //     every army marches on the shared strategic target. Detach ONE
+    //     military unit per such city: retarget a whole singleton group, or
+    //     peel the closest member off a larger group (never the king's guard,
+    //     never a retreating group, never emptying a group). Gated on the
+    //     pre-spending gold snapshot — `res` is already drained by training
+    //     and building at this point.
+    if (goldBeforeSpending >= CAPTURE_COST) {
+        for (const t of tiles.values()) {
+            if (t.terrain !== 'CITY' || t.owner === owner) continue;
+            if ((t.fortification || 0) > 0) continue;
+            if (t.owner && isAtWar && !isAtWar(t.owner)) continue;
+            // Same capture rules as findAdjacentCapturable: breach delay must
+            // have passed and no unit may still occupy the city tile.
+            if (t.breachedTurn && currentTurn != null && currentTurn < t.breachedTurn) continue;
+            const cityKey = `${t.x},${t.z}`;
+            if (claimedCityKeys.has(cityKey)) continue; // already claimed this turn
+            // A conquest group is already marching here — no detachment needed.
+            if (strategicTarget && strategicTarget.x === t.x && strategicTarget.z === t.z) continue;
+            let occupied = false;
+            for (const u of units.values()) {
+                if (u.x === t.x && u.z === t.z) { occupied = true; break; }
+            }
+            if (occupied) continue;
+
+            const detachable = (u) => !acted.has(u.id) && !u.hasMovedThisTurn &&
+                u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u);
+            let donorGroup = null, donorUnit = null, donorD = Infinity;
+            // Pass A: nearest singleton group (retarget it wholesale — a weak
+            // idle group wins over peeling a member off a real army).
+            for (const g of groups) {
+                if (g === kingGuardGroup || g.id.startsWith('detach:')) continue;
+                if (groupStances.get(g) === 'retreat') continue;
+                if (g.units.length !== 1 || !detachable(g.units[0])) continue;
+                const d = manhattan(g.units[0].x, g.units[0].z, t.x, t.z);
+                if (d <= AI_BREACH_DETACH_RADIUS && d < donorD) {
+                    donorGroup = g; donorUnit = g.units[0]; donorD = d;
+                }
+            }
+            // Pass B: peel the closest member off a group with 2+ units.
+            if (!donorUnit) {
+                for (const g of groups) {
+                    if (g === kingGuardGroup || g.id.startsWith('detach:')) continue;
+                    if (groupStances.get(g) === 'retreat') continue;
+                    if (g.units.length < 2) continue;
+                    for (const u of g.units) {
+                        if (!detachable(u)) continue;
+                        const d = manhattan(u.x, u.z, t.x, t.z);
+                        if (d <= AI_BREACH_DETACH_RADIUS && d < donorD) {
+                            donorGroup = g; donorUnit = u; donorD = d;
+                        }
+                    }
+                }
+            }
+            if (!donorUnit) continue;
+            // Land-locked detachments only — a foot unit can't cross water.
+            if (!isReachableByLand(tiles, donorUnit.x, donorUnit.z, t.x, t.z)) continue;
+            if (donorGroup.units.length > 1) {
+                donorGroup.units = donorGroup.units.filter(u => u !== donorUnit);
+                donorGroup = { id: 'detach:' + donorUnit.id, lord: null, units: [donorUnit] };
+                groups.push(donorGroup);
+            }
+            groupObjectives.set(donorGroup, t);
+            groupStances.set(donorGroup, 'engage');
+            claimedCityKeys.add(cityKey); // one unit per breached city per turn
         }
     }
 
@@ -3426,7 +3511,8 @@ function enemyWillPassThroughConcealTile(u, units, tiles, owner, isAtWar) {
         if (!target) {
             for (const f of units.values()) {
                 if (f.owner !== owner) continue;
-                const d = Math.max(Math.abs(e.x - f.x), Math.abs(e.z - f.z));                if (d < bestD) { bestD = d; target = f; }
+                const d = Math.max(Math.abs(e.x - f.x), Math.abs(e.z - f.z));
+                if (d < bestD) { bestD = d; target = f; }
             }
         }
         if (!target) continue;
@@ -3509,18 +3595,31 @@ function groupIsInTrouble(group, units, owner, atWar, isAtWar) {
  *    city to attack (aggressive posture), or nearest unowned tile for expansion.
  *  - When engaging: use pickTarget's tiering (enemy city > neutral city > enemy tile).
  *  This ensures armies mobilize toward enemy borders instead of staying home. */
-function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal = null) {
+function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal = null, lords = null) {
     const c = groupCentroid(group);
 
     // Attack-king goal: when the top goal is an attack-king goal with a known
     // target tile, the group beelines toward the enemy king's position. This
     // is checked FIRST so it overrides the default "nearest enemy city" logic
     // — killing the exposed king is a higher-value objective than taking any
-    // single city.
+    // single city. The beeline only fires while the king is actually
+    // vulnerable (unguarded + wounded or locally outpowered): chasing a
+    // turtled-up full-health king endlessly distracts the conquest group from
+    // objectives that need it (goalValid drops such stale goals, but this
+    // live re-check covers the same turn the king's situation changes).
     if (topGoal && topGoal.kind === 'attack-king' && topGoal.targetTileKey) {
         const [kx, kz] = topGoal.targetTileKey.split(',').map(Number);
         if (!Number.isNaN(kx) && !Number.isNaN(kz)) {
-            return { x: kx, z: kz, terrain: 'CITY', owner: topGoal.targetFaction };
+            const kingLord = (lords || []).find(l => l.isKing && l.owner !== owner &&
+                (!topGoal.targetFaction || l.owner === topGoal.targetFaction));
+            if (kingLord) {
+                const guarded = [...units.values()].some(u =>
+                    u.owner === kingLord.owner && u.x === kingLord.x && u.z === kingLord.z);
+                const bal = localPowerBalance(units, kingLord.x, kingLord.z, owner, true, isAtWar, 3);
+                if (isKingVulnerable({ ...kingLord, guarded }, bal.friend, bal.foe + (kingLord.hp || 1))) {
+                    return { x: kx, z: kz, terrain: 'CITY', owner: topGoal.targetFaction };
+                }
+            }
         }
     }
 

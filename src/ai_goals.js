@@ -141,12 +141,29 @@ function ensureProgress(aiState) {
     return aiState.progress;
 }
 
+// An enemy king at/below this HP fraction counts as vulnerable no matter how
+// strong its surroundings are — a wounded king is worth finishing off.
+export const KING_VULNERABLE_HP_FRAC = 0.5;
+
+/** Is an at-war enemy king currently vulnerable to assassination?
+ *  Vulnerable = unguarded (no bodyguard on its tile) AND either wounded
+ *  (hp <= 50%) or locally outpowered (the attacker's power near the king
+ *  exceeds the defenders', king included). Anything less and an attack-king
+ *  push just distracts armies from conquest objectives that need them.
+ *  Pure: the caller supplies the local power sums. */
+export function isKingVulnerable(king, friendPower = 0, foePower = 0) {
+    if (!king || king.guarded) return false;
+    if ((king.hp || 1) / (king.maxHp || king.hp || 1) <= KING_VULNERABLE_HP_FRAC) return true;
+    return friendPower > foePower * 0.8;
+}
+
 /** Is a goal's precondition still met given the current context? A goal that
  *  becomes invalid forces a replan even inside the stability lock window.
  *  `ctx` = { enemies:Set, defensive:boolean, myCityCount, settlerTarget,
  *            scarcityTriggered, needsNavalExpansion, isIslandFaction,
  *            foreignMassWithoutCity, neutralFactions:Set, hasSpies:boolean,
- *            hasChokepoints:boolean, unexploredTiles:number } */
+ *            hasChokepoints:boolean, unexploredTiles:number,
+ *            enemyKings:Array } */
 function goalValid(goal, ctx) {
     switch (goal.kind) {
         case 'conquest': {
@@ -200,10 +217,17 @@ function goalValid(goal, ctx) {
             return !!ctx.hasChokepoints;
         case 'scout':
             return (ctx.unexploredTiles || 0) > 20;
-        case 'attack-king':
-            // Valid while at war with the target faction. If the king died or
-            // the war ended, the goal is dropped on the next replan.
-            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : ctx.enemies.size > 0;
+        case 'attack-king': {
+            // Valid only while at war with the target faction AND its king is
+            // still vulnerable (unguarded + wounded or locally outpowered —
+            // recomputed every turn into ctx.enemyKings). Without the
+            // vulnerability re-check the goal outlives the opportunity and
+            // keeps distracting conquest armies from objectives that need them.
+            if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            const king = (ctx.enemyKings || []).find(k => k.isKing &&
+                (!goal.targetFaction || k.owner === goal.targetFaction));
+            return !!(king && king.vulnerable);
+        }
         case 'take-key-city':
             // Valid while at war with a faction that has key cities.
             return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
@@ -356,6 +380,7 @@ export function selectGoals(input) {
         needsNavalExpansion, isIslandFaction, foreignMassWithoutCity,
         neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
         tiles: tiles || null, ownCities: ownCities || [], hasTransport: hasTransportNow,
+        enemyKings: enemyKings || [],
     };
 
     // Stability: keep the existing plan if it's still locked and every goal is
@@ -467,7 +492,12 @@ export function selectGoals(input) {
             // Naval conquest objectives are real but can't be pressed until
             // infrastructure (harbor + transports) is built. Score them lower
             // so they don't dominate over expand-islands/naval-prep goals.
-            const scoreScale = tier === 'naval' ? 0.6 : 1.0;
+            // When an EMPTY foreign landmass exists, penalize naval conquest
+            // much harder: settling free land overseas beats a costly naval
+            // invasion, so expand-islands should win. (If every foreign
+            // landmass has enemy cities, the normal 0.6 penalty keeps naval
+            // conquest worthwhile.)
+            const scoreScale = tier === 'naval' ? (foreignMassWithoutCity ? 0.3 : 0.6) : 1.0;
             // Resource scarcity amplifies conquest priority: when the faction
             // is starving for resources, capturing a nearby accessible city
             // provides fresh tiles and production. Boost by up to 40%.
@@ -597,15 +627,19 @@ export function selectGoals(input) {
             null, null, 'long', {});
     }
 
-    // Attack Enemy King: when an at-war enemy king is exposed (no bodyguard
-    // unit on its tile), consider assassinating it. Uses a low base score (40)
+    // Attack Enemy King: when an at-war enemy king is VULNERABLE (exposed —
+    // no bodyguard on its tile — AND wounded or locally outpowered, see
+    // isKingVulnerable), consider assassinating it. Uses a low base score (40)
     // so conquest/defense goals always win when both exist — the king should
-    // join the conquest group, not chase the enemy king across the map.
+    // join the conquest group, not chase the enemy king across the map. A
+    // full-health king with no local power advantage nearby is NOT a goal:
+    // chasing it endlessly distracts from conquest (goalValid drops such
+    // stale goals even inside the stability lock).
     {
         const exposedKing = enemyKings.find(king =>
             king.owner !== factionDef.id &&
             enemySet.has(king.owner) &&
-            king.isKing && !king.guarded);
+            king.isKing && !king.guarded && king.vulnerable);
         if (exposedKing) {
             const dKing = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
             const score = (40 - dKing * 0.3) * weights['attack-king'];
