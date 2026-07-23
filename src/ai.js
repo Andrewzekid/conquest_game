@@ -1,6 +1,6 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
-         SIEGE_ENGINES, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
+         SIEGE_ENGINES, SIEGE_ENGINE_BUILD_COST, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
          GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_VULN_TYPES,
          EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST,
@@ -934,13 +934,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         // Engineer cap: a meaningful corps that scales with empire size and
         // rises at war. Factions with no trainable siege rely on
         // engineers/towers as their ONLY siege path, so they keep a larger
-        // corps. The old cap (1 at peace, 3-5 at war) left engineers a
-        // negligible fraction of a 40-unit army, so the army was almost
-        // entirely infantry and engineers never built traps/towers/bridges.
-        // A conquest goal raises the cap further; and no-roster-siege factions
-        // keep a standing corps even at peace (engineers build Siege Towers —
-        // the one assault mechanic vs intact walls — which CATAPULT/TREBUCHET
-        // don't replace).
+        // corps. Hard-capped at 4: the bonuses below (war 3 + conquest 2 +
+        // water 2 + bridges 1) used to stack with no ceiling, producing
+        // 7+ engineers — a whole support army that crowds out combat units
+        // (support's composition target is only ~5-15%).
         const noRosterSiege = !roster.some(t => t === 'SIEGE' || t === 'ARTILLERY');
         let engCap = Math.max(
             atWar ? (hasTrainableSiege ? Math.max(3, Math.ceil(myCityCount / 2))
@@ -967,6 +964,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                           myUnits.find(u => u.type === 'ENGINEER').z, t.x, t.z) < 10);
             if (needsBridges) engCap += 1;
         }
+        engCap = Math.min(engCap, 4);
         const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
             actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
         if (engNow < engCap && capRoom()) {
@@ -1499,22 +1497,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 continue;
             }
             // Siege engine field construction: when we have a conquest goal and
-            // no siege engines in our army, engineers build CATAPULT/TREBUCHET
+            // no siege units in our army, engineers build CATAPULT/TREBUCHET
             // in the field. This is the only way non-roster-siege factions can
-            // get long-range siege (they can't train it). Also fires for any
-            // faction with a conquest goal that lacks siege, regardless of
-            // distance from enemy city.
-            const hasSiegeEngine = myUnits.some(u => u.type === 'CATAPULT' || u.type === 'TREBUCHET');
+            // get long-range siege (they can't train it). Gated on the unlocking
+            // TECH (MATHEMATICS/SIEGE_CRAFT) like the player's
+            // handleBuildSiegeEngine — NOT on fullRoster, which only contains
+            // CATAPULT/TREBUCHET when a Siege Workshop exists; that made this
+            // branch dead for exactly the workshop-less factions it serves.
+            // Cost must match the executor in game.js (SIEGE_ENGINE_BUILD_COST).
+            const hasSiegeEngine = myUnits.some(u => SIEGE_TYPES.has(u.type) && u.type !== 'SIEGE_TOWER');
             const warGoal = goalKind === 'conquest' || goalKind === 'take-key-city';
-            if (!hasSiegeEngine && warGoal && fullRoster.includes('CATAPULT') && !unit.hasAttackedThisTurn) {
+            const fieldSiegeTypes = ['CATAPULT', 'TREBUCHET'].filter(t =>
+                !aiTs || !aiTs.researched || aiUnlocked.has(t));
+            if (!hasSiegeEngine && warGoal && fieldSiegeTypes.length && !unit.hasAttackedThisTurn) {
                 const here = tiles.get(`${unit.x},${unit.z}`);
                 if (here && here.owner === owner && here.terrain !== 'WATER' && here.terrain !== 'RIVER' && here.terrain !== 'MOUNTAIN') {
-                    const siegeTypes = ['CATAPULT', 'TREBUCHET'].filter(t => fullRoster.includes(t));
-                    for (const stype of siegeTypes) {
-                        const sc = getUnitCostFor(stype, factionDef);
-                        if (canAffordCost(res, sc)) {
+                    for (const stype of fieldSiegeTypes) {
+                        if (canAffordCost(res, SIEGE_ENGINE_BUILD_COST)) {
                             actions.push({ type: 'buildSiegeEngine', unitId: unit.id, engineType: stype, tx: unit.x, tz: unit.z });
-                            res = subtractCost(res, sc);
+                            res = subtractCost(res, SIEGE_ENGINE_BUILD_COST);
                             acted.add(unit.id);
                             break;
                         }
@@ -3183,6 +3184,11 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     }
     for (const t of order) {
         if (!roster.includes(t)) continue;
+        // Engineers are support units with their own corps cap in
+        // computeAIActions (block 1c). Don't let the combat fallback spam
+        // them whenever siege is unaffordable — that bypassed the cap and
+        // was part of the "7 engineers" overproduction.
+        if (t === 'ENGINEER' && (counts.support || 0) >= 2) continue;
         if (canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
     }
     return null;
