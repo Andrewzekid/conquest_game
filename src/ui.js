@@ -1448,7 +1448,38 @@ export function bindUI(gameState, callbacks) {
                 <div class="victory-detail">You ${fmt(sc.playerScore||0)} · Best AI ${fmt(sc.aiScore||0)}</div>
                 ${bar(sc.progress||0)}
             </div>`;
-        els.victoryPanel.innerHTML = html;
+
+        // Per-faction standings: every faction's closest path to victory,
+        // sorted by score. Uses getAllFactionProgress (score, victory target,
+        // closest victory + progress per faction, elimination flags).
+        let standingsHtml = '';
+        if (typeof callbacks.getAllFactionProgress === 'function') {
+            let all = null;
+            try { all = callbacks.getAllFactionProgress(); } catch (e) { all = null; }
+            if (all) {
+                const vIcon = { domination: '⚔️', science: '🔬', economic: '💰', score: '🏆' };
+                const rows = Object.entries(all)
+                    .map(([slot, fp]) => ({ slot, fp }))
+                    .sort((a, b) => (b.fp.score || 0) - (a.fp.score || 0))
+                    .map(({ slot, fp }) => {
+                        const fc = fcOf(slot);
+                        const hex = (fc && typeof fc.tile === 'number')
+                            ? '#' + fc.tile.toString(16).padStart(6, '0') : '#888';
+                        const def = gameState.factionDefs && gameState.factionDefs[slot];
+                        const name = (def && def.name) || (fc && fc.name) || slot;
+                        if (fp.eliminated) {
+                            return `<div class="vp-faction-row vp-eliminated"><span class="vp-chip" style="background:${hex}"></span><span class="vp-name">${name}</span><span class="vp-detail">eliminated</span></div>`;
+                        }
+                        const pct = Math.max(0, Math.min(1, fp.closestProgress || 0)) * 100;
+                        const you = slot === PLAYER_FACTION && !gameState.spectateMode ? ' (You)' : '';
+                        const crown = fp.isDominant ? ' 👑' : '';
+                        const target = fp.victoryTarget ? ` · aims ${fp.victoryTarget}` : '';
+                        return `<div class="vp-faction-row"><span class="vp-chip" style="background:${hex}"></span><span class="vp-name">${name}${you}${crown}</span><span class="vp-detail">${vIcon[fp.closestVictory] || ''} ${fp.closestVictory || '—'} ${Math.round(pct)}%${target} · score ${fmt(fp.score || 0)}</span><div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(0)}%;background:${hex};"></div></div></div>`;
+                    }).join('');
+                standingsHtml = `<div class="victory-section"><div class="victory-label">🌍 Standings</div>${rows}</div>`;
+            }
+        }
+        els.victoryPanel.innerHTML = html + standingsHtml;
     }
 
     // Tech Tree Panel: shows all techs grouped by era, with status indicators

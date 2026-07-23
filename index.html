@@ -150,6 +150,14 @@
         .victory-detail { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
         .progress-track { height: 8px; background: #11182b; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
         .progress-fill { height: 100%; background: linear-gradient(90deg, #2e7d4f, #4caf6f); transition: width 0.3s ease; }
+        /* Per-faction standings rows inside the victory panel */
+        .vp-faction-row { margin: 6px 0; font-size: 11px; }
+        .vp-faction-row .vp-chip { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+        .vp-faction-row .vp-name { font-weight: 600; margin-right: 6px; }
+        .vp-faction-row .vp-detail { color: var(--muted); font-size: 10px; }
+        .vp-faction-row .progress-track { height: 5px; margin-top: 2px; }
+        .vp-faction-row.vp-eliminated .vp-name { text-decoration: line-through; opacity: 0.55; }
+        .vp-faction-row.vp-eliminated .vp-detail { opacity: 0.55; }
 
         /* Scrollbars */
         .panel-body::-webkit-scrollbar, #combat-log::-webkit-scrollbar { width: 9px; }

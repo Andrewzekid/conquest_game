@@ -3,6 +3,8 @@
  * Verifies getAllFactionProgress returns correct data for all factions.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createTechState, TECHS } from '../src/tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, ECONOMIC_VICTORY_GOLD,
          ECONOMIC_VICTORY_TRADE_ROUTES } from '../src/config.js';
@@ -112,5 +114,35 @@ describe('victory type strings', () => {
         expect(VICTORY_TYPES.SCIENCE).toBe('science');
         expect(VICTORY_TYPES.ECONOMIC).toBe('economic');
         expect(VICTORY_TYPES.SCORE).toBe('score');
+    });
+});
+
+// The victory panel renders a per-faction standings section (every faction's
+// closest victory with a faction-colored progress bar), wired through
+// getAllFactionProgress. Source-invariant: the suite has no DOM harness.
+describe('victory panel per-faction standings (source-invariant)', () => {
+    const uiSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'ui.js'), 'utf-8');
+    const indexHtml = readFileSync(resolve(import.meta.dirname, '..', 'index.html'), 'utf-8');
+
+    it('showVictoryPanel calls getAllFactionProgress and renders a Standings section', () => {
+        expect(uiSrc).toMatch(/callbacks\.getAllFactionProgress\(\)/);
+        expect(uiSrc).toContain('🌍 Standings');
+    });
+
+    it('standings rows use faction-colored chips and progress fills', () => {
+        expect(uiSrc).toContain('vp-faction-row');
+        expect(uiSrc).toContain('vp-chip');
+        expect(uiSrc).toMatch(/progress-fill" style="width:\$\{pct\.toFixed\(0\)\}%;background:\$\{hex\}/);
+    });
+
+    it('eliminated factions get the struck-through style', () => {
+        expect(uiSrc).toContain('vp-eliminated');
+        expect(indexHtml).toContain('.vp-faction-row.vp-eliminated .vp-name');
+    });
+
+    it('standings CSS classes exist in index.html', () => {
+        expect(indexHtml).toContain('.vp-faction-row .vp-chip');
+        expect(indexHtml).toContain('.vp-faction-row .vp-name');
+        expect(indexHtml).toContain('.vp-faction-row .vp-detail');
     });
 });
