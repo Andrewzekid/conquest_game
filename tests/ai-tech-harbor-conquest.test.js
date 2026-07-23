@@ -1102,6 +1102,20 @@ describe('Phase 3: siege obsolescence by faction', () => {
         expect(trains).not.toContain('CATAPULT');
         expect(trains).not.toContain('TREBUCHET');
     });
+
+    // ARTILLERY/CANNON/MORTAR are shared tech-gated EXTRA_UNITS so every
+    // faction's siege line stays upgradeable after old engines are obsoleted.
+    it('Shadow Court with GUNPOWDER CAN train ARTILLERY via the shared pool', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'shadow', ts, buildings: workshop() })));
+        expect(trains).toContain('ARTILLERY');
+    });
+
+    it('Iron Empire with METALLURGY trains CANNON or MORTAR (upgraded siege available)', () => {
+        const ts = makeFactionTs(['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER', 'METALLURGY']);
+        const trains = trainTypes(runAI(siegeSetup({ faction: 'iron', ts, buildings: workshop() })));
+        expect(trains.some(t => t === 'CANNON' || t === 'MORTAR')).toBe(true);
+    });
 });
 
 describe('Phase 3: harbor on an influence tile', () => {

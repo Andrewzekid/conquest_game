@@ -166,7 +166,10 @@ export const UNIT_TYPE = {
 // they're also tech-unlocked — other factions can reach them via research, but
 // the UI must tech-gate them (only show once the unlocking tech is researched)
 // rather than showing them all from turn 1.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON'];
+// ARTILLERY/CANNON/MORTAR are also shared (tech-gated by GUNPOWDER/METALLURGY)
+// so every faction's siege line stays upgradeable; factions with them in their
+// roster (e.g. Iron Empire) get them WITHOUT the tech as their signature perk.
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
