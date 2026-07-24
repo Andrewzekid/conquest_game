@@ -455,6 +455,61 @@ function groupCitiesByLandmass(tiles, cityTiles) {
     return groups;
 }
 
+/** Post-biome diversity pass: a landmass whose tiles are all (or almost all)
+ *  one terrain type starves its owner of resources — a plains-only island has
+ *  NO wood or iron income at all (the "trapped with 0 wood" scenario). For
+ *  every contiguous landmass, ensure at least 3 distinct terrain types and
+ *  coverage of the core resource terrains (FOREST=wood, HILLS/MOUNTAIN/PASS=
+ *  iron) by converting a slice of its tiles. Runs before city placement, so
+ *  only PLAINS/biome tiles are ever converted (never RIVER/MOUNTAIN/PASS —
+ *  mountains already count toward iron). */
+function ensureLandmassDiversity(tiles) {
+    const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const isLand = (t) => t && t.terrain !== 'WATER';
+    const BIOMES = ['FOREST', 'HILLS', 'DESERT', 'MARSH', 'TUNDRA'];
+    const seen = new Set();
+    for (const start of tiles) {
+        if (!isLand(start) || seen.has(`${start.x},${start.z}`)) continue;
+        const comp = [];
+        const queue = [start];
+        seen.add(`${start.x},${start.z}`);
+        while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const [dx, dz] of dirs) {
+                const k = `${cur.x + dx},${cur.z + dz}`;
+                if (seen.has(k)) continue;
+                const n = byKey.get(k);
+                if (!isLand(n)) continue;
+                seen.add(k);
+                queue.push(n);
+            }
+        }
+        if (comp.length < 6) continue; // specks too small to diversify
+        const types = new Set(comp.map(t => t.terrain));
+        const convertible = comp.filter(t => t.terrain === 'PLAINS' || BIOMES.includes(t.terrain));
+        const wanted = [];
+        // Resource coverage first: wood and iron are what single-biome masses lack.
+        if (!types.has('FOREST')) wanted.push('FOREST');
+        if (!types.has('HILLS') && !types.has('MOUNTAIN') && !types.has('PASS')) wanted.push('HILLS');
+        // Then general terrain-type diversity (at least 3 distinct types).
+        for (const b of BIOMES) {
+            if (types.size + wanted.length >= 3) break;
+            if (!types.has(b) && !wanted.includes(b)) wanted.push(b);
+        }
+        wanted.forEach((biome, i) => {
+            // Convert ~15% of the mass (min 2 tiles), spread across the mass
+            // by taking every k-th convertible tile in BFS order.
+            const n = Math.max(2, Math.round(comp.length * 0.15));
+            const step = Math.max(1, Math.floor(convertible.length / n));
+            for (let j = i % step, c = 0; j < convertible.length && c < n; j += step, c++) {
+                convertible[j].terrain = biome;
+            }
+        });
+    }
+}
+
 /**
  * Generate tile data for the full grid. Cities are placed explicitly: one start
  * city per faction plus a few neutral contested cities (fewer cities overall).
@@ -537,6 +592,10 @@ export function generateMap() {
         landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
         pruneAttempts++;
     }
+
+    // Diversity pass: no single-terrain landmasses (a plains-only island would
+    // have zero wood/iron income). Runs before city placement.
+    ensureLandmassDiversity(tiles);
 
     // Total city count: one per faction + a few neutral (scales with map size).
     const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);

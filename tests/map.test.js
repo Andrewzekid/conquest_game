@@ -281,3 +281,45 @@ describe('generateMap land fraction', () => {
     }
   });
 });
+
+describe('generateMap landmass diversity', () => {
+  // Regression: single-terrain landmasses starved their owner (a plains-only
+  // island has no wood or iron income). Every landmass of 6+ tiles must have
+  // at least 3 terrain types plus wood (FOREST) and iron (HILLS/MOUNTAIN/PASS).
+  it('every landmass has >=3 terrain types and wood+iron coverage', async () => {
+    const { calculateMapDimensions } = await import('../src/config.js');
+    const { generateMap } = await import('../src/map.js');
+    for (const size of ['small', 'medium', 'large']) {
+      for (let i = 0; i < 5; i++) {
+        const { width, height } = calculateMapDimensions(size);
+        setGridDimensions(width, height);
+        const { tiles } = generateMap();
+        const arr = Array.isArray(tiles) ? tiles : [...tiles.values()];
+        const byKey = new Map(arr.map(t => [`${t.x},${t.z}`, t]));
+        const seen = new Set();
+        for (const start of arr) {
+          if (start.terrain === 'WATER' || seen.has(`${start.x},${start.z}`)) continue;
+          const comp = [];
+          const queue = [start];
+          seen.add(`${start.x},${start.z}`);
+          while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const [dx, dz] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+              const k = `${cur.x + dx},${cur.z + dz}`;
+              if (seen.has(k)) continue;
+              const n = byKey.get(k);
+              if (!n || n.terrain === 'WATER') continue;
+              seen.add(k); queue.push(n);
+            }
+          }
+          if (comp.length < 6) continue;
+          const types = new Set(comp.map(t => t.terrain));
+          expect(types.size).toBeGreaterThanOrEqual(3);
+          expect(types.has('FOREST')).toBe(true);
+          expect(types.has('HILLS') || types.has('MOUNTAIN') || types.has('PASS')).toBe(true);
+        }
+      }
+    }
+  });
+});
