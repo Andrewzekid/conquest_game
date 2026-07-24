@@ -3629,7 +3629,7 @@ export class Game {
                 if (u.owner === f && !u.boarded) units++;
             }
             const gold = (gs.resources[f] && gs.resources[f].gold) || 0;
-            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            const fTs = this._factionTechState(f);
             const techs = fTs && fTs.researched ? fTs.researched.size : 0;
             const tilePercent = totalTiles > 0 ? tilesOwned / totalTiles : 0;
 
@@ -5367,14 +5367,18 @@ export class Game {
                     return;
                 }
             }
-            // Score victory: at turn 200, highest-scoring AI wins.
+            // Score victory: at turn 200, highest-scoring AI wins -- but only
+            // if the leader is actually advanced (>= 25 techs researched);
+            // otherwise the game runs on until someone is.
             if (this.gameState.turn >= SCORE_VICTORY_TURN && aiAlive.length > 0) {
                 const scores = this._calculateScores();
                 let bestFaction = null, bestScore = -1;
                 for (const f of aiAlive) {
                     if ((scores[f] || 0) > bestScore) { bestScore = scores[f] || 0; bestFaction = f; }
                 }
-                if (bestFaction) {
+                const bestTs = bestFaction ? this._factionTechState(bestFaction) : null;
+                const bestTechs = (bestTs && bestTs.researched) ? bestTs.researched.size : 0;
+                if (bestFaction && bestTechs >= 25) {
                     const name = this.factionColors[bestFaction] ? this.factionColors[bestFaction].name : bestFaction;
                     this.log(`${name} leads at turn ${SCORE_VICTORY_TURN} with score ${Math.floor(bestScore)} and WINS!`);
                     this.endGame('victory', VICTORY_TYPES.SCORE);
@@ -5447,6 +5451,17 @@ export class Game {
     }
 
     /** Calculate faction scores for score victory. */
+    /** The tech state to read for any faction slot. In spectate mode the
+     *  'player' slot is AI-run and its research lives in aiTechStates['player']
+     *  -- reading gs.techState for it (the dormant human state) made the
+     *  selected spectate faction report 0 techs researched everywhere
+     *  (scores, rankings, victory progress). */
+    _factionTechState(f) {
+        const gs = this.gameState;
+        if (f === PLAYER_FACTION && !this.spectateMode) return gs.techState;
+        return gs.aiTechStates && gs.aiTechStates[f];
+    }
+
     _calculateScores() {
         const gs = this.gameState;
         const scores = {};
@@ -5461,7 +5476,7 @@ export class Game {
                 if (u.owner === f) score += 2;
             }
             // Techs researched (10 pts each) — all factions.
-            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            const fTs = this._factionTechState(f);
             if (fTs && fTs.researched) {
                 score += fTs.researched.size * 10;
             }
@@ -5535,7 +5550,7 @@ export class Game {
                 continue;
             }
 
-            const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);
+            const fTs = this._factionTechState(f);
             const techs = fTs && fTs.researched ? fTs.researched.size : 0;
             const cities = countCities(this.tiles, f);
             const gold = (gs.resources[f] && gs.resources[f].gold) || 0;

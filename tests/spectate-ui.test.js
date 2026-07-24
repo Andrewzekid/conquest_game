@@ -104,3 +104,21 @@ describe('spectate-ui', () => {
     });
   });
 });
+
+  // In spectate the 'player' slot is AI-run: its techs live in
+  // aiTechStates['player'], not the dormant human techState. Reading the wrong
+  // one made the selected faction report 0 techs ("researches no techs").
+  describe('spectate slot-0 tech state + score threshold', () => {
+    it('_factionTechState reads aiTechStates for slot 0 in spectate', () => {
+      expect(gameSrc).toMatch(/_factionTechState\(f\)\s*{[\s\S]*?if \(f === PLAYER_FACTION && !this\.spectateMode\) return gs\.techState;/);
+    });
+
+    it('score/ranking/progress reads go through _factionTechState', () => {
+      expect(gameSrc).not.toContain("const fTs = f === PLAYER_FACTION ? gs.techState : (gs.aiTechStates && gs.aiTechStates[f]);");
+      expect(gameSrc.match(/this\._factionTechState\(f\)/g).length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('spectate score victory requires at least 25 techs researched', () => {
+      expect(gameSrc).toMatch(/bestTechs >= 25/);
+    });
+  });
