@@ -19,18 +19,22 @@
 // is researched. A unit is only listed as obsolete when the modern replacement
 // fills the SAME combat role (melee/ranged/cavalry/siege/naval) — so unlocking
 // RIFLEMAN (ranged) obsoletes ARCHER/MUSKETEER (ranged) but not INFANTRY (melee).
+// Chains are CUMULATIVE: each modern unit retires everything earlier in its
+// line, because tech prerequisites don't force the whole chain (a faction can
+// reach MATCHLOCK without FORTIFICATION and would otherwise keep training
+// ARCHERs next to its musketeers).
 export const OBSOLESCENCE = {
-    // Ranged line: ARCHER → CROSSBOWMAN → MUSKETEER → RIFLEMAN/SHARPSHOOTER
+    // Ranged line: ARCHER/LONGBOWMAN → CROSSBOWMAN → MUSKETEER → RIFLEMAN/SHARPSHOOTER
     CROSSBOWMAN:  { obsoletes: ['ARCHER', 'LONGBOWMAN'],          tech: 'FORTIFICATION' },
-    MUSKETEER:    { obsoletes: ['CROSSBOWMAN'],                    tech: 'MATCHLOCK' },
-    RIFLEMAN:     { obsoletes: ['MUSKETEER', 'ARQUEBUSIER'],       tech: 'RIFLED_MUSKET' },
+    MUSKETEER:    { obsoletes: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN'], tech: 'MATCHLOCK' },
+    RIFLEMAN:     { obsoletes: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER'], tech: 'RIFLED_MUSKET' },
     SHARPSHOOTER: { obsoletes: [],                                  tech: 'RIFLED_MUSKET' }, // peer, no extra obsoletes
 
-    // Melee line: INFANTRY/LEGIONNAIRE → LINE_INFANTRY
-    LINE_INFANTRY:{ obsoletes: ['INFANTRY', 'LEGIONNAIRE'],        tech: 'FLINTLOCK' },
+    // Melee line: INFANTRY/PIKEMAN/LEGIONNAIRE → LINE_INFANTRY
+    LINE_INFANTRY:{ obsoletes: ['INFANTRY', 'PIKEMAN', 'LEGIONNAIRE'], tech: 'FLINTLOCK' },
 
-    // Cavalry line: CAVALRY → CATAPHRACT/CHARIOT (medieval) → DRAGOON (enlightenment)
-    DRAGOON:      { obsoletes: ['CAVALRY', 'CHARIOT'],             tech: 'FLINTLOCK' },
+    // Cavalry line: CAVALRY/CHARIOT/CATAPHRACT → DRAGOON (enlightenment)
+    DRAGOON:      { obsoletes: ['CAVALRY', 'CHARIOT', 'CATAPHRACT'], tech: 'FLINTLOCK' },
 
     // Siege line: CATAPULT → TREBUCHET → ARTILLERY → CANNON → SIEGE_CANNON/FIELD_GUN
     TREBUCHET:    { obsoletes: ['CATAPULT'],                       tech: 'SIEGE_CRAFT' },
@@ -39,15 +43,15 @@ export const OBSOLESCENCE = {
     // reaches GUNPOWDER without SIEGE_CRAFT keeps spamming CATAPULT/SIEGE
     // despite having gunpowder artillery unlocked.
     ARTILLERY:    { obsoletes: ['TREBUCHET', 'CATAPULT', 'SIEGE'], tech: 'GUNPOWDER' },
-    CANNON:       { obsoletes: ['ARTILLERY'],                      tech: 'METALLURGY' },
-    SIEGE_CANNON: { obsoletes: ['SIEGE', 'CANNON', 'MORTAR'],      tech: 'EXPLOSIVES' },
-    FIELD_GUN:    { obsoletes: [],                                  tech: 'FIELD_ARTILLERY' }, // SIEGE_CANNON already covers CANNON/MORTAR
+    CANNON:       { obsoletes: ['ARTILLERY', 'TREBUCHET', 'CATAPULT', 'SIEGE'], tech: 'METALLURGY' },
+    SIEGE_CANNON: { obsoletes: ['SIEGE', 'CANNON', 'MORTAR', 'ARTILLERY', 'TREBUCHET', 'CATAPULT'], tech: 'EXPLOSIVES' },
+    FIELD_GUN:    { obsoletes: ['ARTILLERY', 'CANNON', 'MORTAR', 'CATAPULT', 'TREBUCHET', 'SIEGE'], tech: 'FIELD_ARTILLERY' },
 
     // Naval line: GALLEY → FRIGATE → IRONCLAD; TRANSPORT → STEAM_TRANSPORT
     FRIGATE:      { obsoletes: ['GALLEY'],                          tech: 'CARTOGRAPHY' },
-    IRONCLAD:     { obsoletes: ['FRIGATE', 'GALLEON', 'GALLEASS'], tech: 'STEAM_ENGINE' },
+    IRONCLAD:     { obsoletes: ['FRIGATE', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'STEAM_ENGINE' },
     STEAM_TRANSPORT: { obsoletes: ['TRANSPORT'],                   tech: 'STEAM_ENGINE' },
-    IRONCLAD_FRIGATE: { obsoletes: ['IRONCLAD', 'MAN_OF_WAR'],     tech: 'IRONCLADS' },
+    IRONCLAD_FRIGATE: { obsoletes: ['IRONCLAD', 'MAN_OF_WAR', 'FRIGATE', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'IRONCLADS' },
 };
 
 /** Given a set of researched tech ids, return the set of unit types now obsolete.

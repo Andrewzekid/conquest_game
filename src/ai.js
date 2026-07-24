@@ -3189,23 +3189,25 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     }
 
     // Era-gap savings: when the best unlocked unit for the role in deficit is
-    // NOT affordable, and the strongest affordable same-role unit sits ≥2 steps
-    // below it in ROLE_ORDER (i.e. a much older/weaker unit), skip training
-    // this turn and let the treasury accumulate toward the modern unit. The
-    // fixed-threshold savings above only fire when already close to affording,
-    // so without this rule a poor AI spends every turn's surplus on cheap era-0
-    // filler and never reaches the modern unit's cost. Skipped below the
-    // defense floor (total < 4) and while under immediate threat (defensive
-    // objective — buying anything that fights beats saving for later).
+    // NOT affordable, and either no same-role unit is affordable at all (the
+    // obsolescence filter removed the cheap chaff) or the strongest affordable
+    // same-role unit sits ≥2 steps below it in ROLE_ORDER (a much older/weaker
+    // unit), skip training this turn and let the treasury accumulate toward
+    // the modern unit. The fixed-threshold savings above only fire when
+    // already close to affording, so without this rule a poor AI spends every
+    // turn's surplus on cheap era-0 filler and never reaches the modern unit's
+    // cost. Skipped below the defense floor (total < 4) and while under
+    // immediate threat (defensive objective — buying anything that fights
+    // beats saving for later).
     if (aiState && total >= 4 && !(objective && objective.defensive)) {
         const role = roleDeficit(roster, counts, total, target);
         const order = ROLE_ORDER[role] || [];
         const best = order.find(t => roster.includes(t));
         const affordable = order.find(t => roster.includes(t) &&
             canAfford(t, resources, getUnitCostFor(t, factionDef)));
-        if (best && affordable && best !== affordable &&
-            order.indexOf(affordable) - order.indexOf(best) >= 2) {
-            return null;
+        if (best && !canAfford(best, resources, getUnitCostFor(best, factionDef))) {
+            const gap = affordable ? order.indexOf(affordable) - order.indexOf(best) : Infinity;
+            if (gap >= 2) return null;
         }
     }
 

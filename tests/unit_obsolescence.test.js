@@ -38,9 +38,12 @@ describe('unit_obsolescence — getObsoleteUnits', () => {
         const obs = getObsoleteUnits(ts(['RIFLED_MUSKET']).researched);
         expect(obs.has('MUSKETEER')).toBe(true);
         expect(obs.has('ARQUEBUSIER')).toBe(true);
-        // ARCHER already obsoleted by CROSSBOWMAN (FORTIFICATION) but that tech
-        // isn't researched here, so ARCHER is NOT obsolete from RIFLED_MUSKET alone
-        expect(obs.has('ARCHER')).toBe(false);
+        // Cumulative chains: RIFLED_MUSKET retires the WHOLE earlier ranged
+        // line — a faction that reaches it without FORTIFICATION must not
+        // keep training ARCHERs next to its riflemen.
+        expect(obs.has('ARCHER')).toBe(true);
+        expect(obs.has('LONGBOWMAN')).toBe(true);
+        expect(obs.has('CROSSBOWMAN')).toBe(true);
     });
 
     it('obsoletes INFANTRY and LEGIONNAIRE when FLINTLOCK researched', () => {
@@ -91,10 +94,10 @@ describe('unit_obsolescence — applyObsolescence', () => {
     it('filters obsolete units from a roster', () => {
         const roster = ['INFANTRY', 'ARCHER', 'CAVALRY', 'RIFLEMAN', 'SHARPSHOOTER'];
         const filtered = applyObsolescence(roster, ts(['RIFLED_MUSKET']).researched);
-        // RIFLED_MUSKET obsoletes MUSKETEER + ARQUEBUSIER (not in roster)
-        // ARCHER is obsoleted by FORTIFICATION (not researched here)
+        // RIFLED_MUSKET obsoletes MUSKETEER + ARQUEBUSIER (not in roster) and,
+        // cumulatively, the whole earlier ranged line (ARCHER included).
         expect(filtered).toContain('INFANTRY');
-        expect(filtered).toContain('ARCHER'); // FORTIFICATION not researched
+        expect(filtered).not.toContain('ARCHER'); // cumulative: retired by RIFLED_MUSKET
         expect(filtered).toContain('RIFLEMAN');
     });
 
