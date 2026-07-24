@@ -300,6 +300,80 @@ describe('ai_goals new goal types', () => {
   });
 });
 
+describe('ai_goals develop-army goal', () => {
+  // INFANTRY combat value: hp 10 + attack 3*2 = 16 each.
+  const inf = (n, owner) => Array.from({ length: n }, () => ({ type: 'INFANTRY', owner, hp: 10, attack: 3 }));
+  const parityInput = (overrides = {}) => baseInput({
+    factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+    turn: 40, // mid game
+    enemies: ['azure'],
+    enemyCities: [{ x: 20, z: 20, owner: 'azure', fortification: 5 }],
+    myUnits: inf(3, 'me'),
+    enemyUnits: inf(3, 'azure'),
+    gold: 500,
+    ...overrides,
+  });
+
+  it('is created at war with parity power and no weak city', () => {
+    const goals = selectGoals(parityInput());
+    const da = goals.find(g => g.kind === 'develop-army');
+    expect(da).toBeTruthy();
+    // Scores below conquest (a real target exists) but pushes develop-economy
+    // out of the top 3 while at war.
+    expect(goals[0].kind).toBe('conquest');
+    expect(goals.some(g => g.kind === 'develop-economy')).toBe(false);
+  });
+
+  it('is NOT created when a weak enemy city is reachable', () => {
+    const goals = selectGoals(parityInput({
+      enemyCities: [{ x: 20, z: 20, owner: 'azure', fortification: 1 }],
+    }));
+    expect(goals.some(g => g.kind === 'develop-army')).toBe(false);
+  });
+
+  it('is NOT created when a neutral city is reachable', () => {
+    const goals = selectGoals(parityInput({
+      enemyCities: [{ x: 10, z: 10, owner: null, neutral: true }],
+    }));
+    expect(goals.some(g => g.kind === 'develop-army')).toBe(false);
+  });
+
+  it('is NOT created when our army is already stronger', () => {
+    const goals = selectGoals(parityInput({
+      myUnits: inf(6, 'me'), enemyUnits: inf(3, 'azure'),
+    }));
+    expect(goals.some(g => g.kind === 'develop-army')).toBe(false);
+  });
+
+  it('is dropped once our army is clearly stronger (goalValid, 1.5x)', () => {
+    const aiState = createAIState();
+    const noCities = { enemyCities: [], bestFoundSpotKey: null, myCityCount: 8, settlerTarget: 8 };
+    const g1 = selectGoals(parityInput({ aiState, turn: 40, ...noCities }));
+    expect(g1[0].kind).toBe('develop-army');
+    // Within the lock window: our army balloons to 10 infantry vs their 3
+    // (>= 1.5x power) — the goal must invalidate and replan away.
+    const g2 = selectGoals(parityInput({
+      aiState, turn: 41, ...noCities,
+      myUnits: inf(10, 'me'), enemyUnits: inf(3, 'azure'),
+    }));
+    expect(g2.some(g => g.kind === 'develop-army')).toBe(false);
+  });
+
+  it('is dropped when a good conquest target appears (goalValid)', () => {
+    const aiState = createAIState();
+    const noCities = { enemyCities: [], bestFoundSpotKey: null, myCityCount: 8, settlerTarget: 8 };
+    const g1 = selectGoals(parityInput({ aiState, turn: 40, ...noCities }));
+    expect(g1[0].kind).toBe('develop-army');
+    // A weak city appears within the lock window — conquest is back on.
+    const g2 = selectGoals(parityInput({
+      aiState, turn: 41, bestFoundSpotKey: null, myCityCount: 8, settlerTarget: 8,
+      enemyCities: [{ x: 20, z: 20, owner: 'azure', fortification: 1 }],
+    }));
+    expect(g2.some(g => g.kind === 'develop-army')).toBe(false);
+    expect(g2.some(g => g.kind === 'conquest')).toBe(true);
+  });
+});
+
 describe('ai_goals conquest feasibility', () => {
   // The "golden horde" scenario: a faction with a tiny army and an empty
   // treasury can't execute a conquest — the goal should lose to

@@ -497,3 +497,74 @@ describe('army-group coverage and summary', () => {
         expect(summary.some(g => g.id && g.id.startsWith('detach:'))).toBe(true);
     });
 });
+
+
+// ===========================================================================
+// 6. Develop-army goal execution
+// ===========================================================================
+describe('develop-army execution', () => {
+    // Locked develop-army goal: at war, enemy field army at parity, no weak
+    // city (the enemy's only city is heavily fortified).
+    function developArmyInput(overrides = {}) {
+        const tiles = plainsGrid(0, 20, 0, 20, [
+            [5, 5, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 5, fortification: 3, fortMax: 3 }],
+            [18, 18, 'CITY', 'enemy', { cityName: 'Fort', cityLevel: 3, fortification: 5, fortMax: 5 }],
+        ]);
+        const units = new Map();
+        for (const [x, z] of [[6, 5], [7, 5], [6, 6]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: overrides.factionId || 'crimson' });
+            units.set(u.id, u);
+        }
+        // Enemy field army at parity (4 vs 3 infantry).
+        for (const [x, z] of [[15, 15], [16, 15], [15, 16], [16, 16]]) {
+            const u = makeUnit('INFANTRY', 'enemy', x, z, { factionId: 'azure' });
+            units.set(u.id, u);
+        }
+        const aiState = createAIState();
+        aiState.goals = [{
+            kind: 'develop-army', priority: 1, horizon: 'medium',
+            targetTileKey: null, targetFaction: null, meta: {}, plan: null,
+            stabilityTurns: 3, born: 0,
+        }];
+        aiState.planLockUntil = 100; // keep the seeded goal all turn
+        const input = baseAIInput(tiles, units, {
+            aiState,
+            resources: { gold: 800, food: 400, wood: 300, iron: 200, production: 500 },
+            ...overrides.ai,
+        });
+        input.buildings = overrides.buildings || new Map([['5,5', ['BARRACKS', 'SIEGE_WORKSHOP']]]);
+        if (overrides.factionDef) input.factionDef = overrides.factionDef;
+        if (overrides.aiTechStates) input.aiTechStates = overrides.aiTechStates;
+        return input;
+    }
+
+    it('trains siege and leans composition into siege, not infantry spam', () => {
+        const input = developArmyInput();
+        const actions = runAI(input);
+        const trains = actions.filter(a => a.type === 'train').map(a => a.unitType);
+        expect(trains).toContain('SIEGE');
+        // The develop-army goal force-enables the siege objective for training
+        // (same mechanism as conquest), so siege is the top composition target.
+        const comp = input.aiState.targetComposition;
+        expect(comp.siege).toBeGreaterThan(0.3);
+        expect(comp.siege).toBeGreaterThan(comp.melee);
+    });
+
+    it('builds military infrastructure ahead of economy buildings', () => {
+        // Golden Horde: no roster siege — a develop-army goal counts like
+        // wantsConquest, so the Siege Workshop is built FIRST (before
+        // Barracks/MARKET/UNIVERSITY), not after the economy buildings.
+        const ts = createTechState();
+        ts.researched.add('SIEGE_CRAFT');
+        const input = developArmyInput({
+            factionId: 'golden',
+            factionDef: FACTION_DEFS.golden,
+            buildings: new Map(),
+            aiTechStates: { ai1: ts },
+        });
+        const actions = runAI(input);
+        const builds = actions.filter(a => a.type === 'build').map(a => a.buildingType);
+        expect(builds.length).toBeGreaterThan(0);
+        expect(builds[0]).toBe('SIEGE_WORKSHOP');
+    });
+});

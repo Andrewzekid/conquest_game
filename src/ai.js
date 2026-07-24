@@ -447,6 +447,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         enemyKings,
         tiles, myUnits,
         gold: (resources && resources.gold) || 0,
+        enemyUnits: [...units.values()].filter(u => u.owner !== owner && enemies.includes(u.owner)),
     });
     if (aiState) aiState.goals = goals;
     const topGoal = goals[0] || null;
@@ -619,7 +620,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     never breach a fortified city and falls back to cavalry spam (the Golden
     //     Horde symptom). Build the workshop before Barracks in that case, and
     //     reserve its cost so the spending spree can't starve it.
-    const wantsConquest = atWar || goalKind === 'conquest';
+    //     A develop-army goal counts like conquest here: military infrastructure
+    //     comes ahead of economy buildings while the faction builds up.
+    const wantsConquest = atWar || goalKind === 'conquest' || goalKind === 'develop-army';
     const needsSiegeWorkshopFirst = wantsConquest && !hasTrainableSiege && !hasSiegeWorkshop && myCityCount >= 1;
     let workshopSiteFound = false;
     if (needsSiegeWorkshopFirst) {
@@ -1243,8 +1246,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // Goal-driven composition override: a conquest goal always trains for a
     // siege. The detectActiveObjectives siege flag only fires once the army is
     // already near an enemy city — far too late to shape the buildup — so a
-    // faction whose top goal is conquest force-enables the siege tweak.
-    const trainObjective = goalKind === 'conquest' ? { ...activeObjectives, siege: true } : activeObjectives;
+    // faction whose top goal is conquest force-enables the siege tweak. A
+    // develop-army goal trains the same way: the whole point is building a
+    // siege + high-damage force instead of spamming cheap infantry.
+    const trainObjective = (goalKind === 'conquest' || goalKind === 'develop-army')
+        ? { ...activeObjectives, siege: true } : activeObjectives;
     // Persist the effective (objective-tweaked) composition target so the AI
     // debug panel can show the target the AI is actually training toward,
     // rather than the untweaked base faction composition.

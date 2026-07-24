@@ -21,7 +21,7 @@ import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
     'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king',
-    'take-key-city', 'disrupt-victory', 'resource-war'];
+    'take-key-city', 'disrupt-victory', 'resource-war', 'develop-army'];
 
 // Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
 // conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
@@ -29,20 +29,20 @@ export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'd
 // posture (it previously only affected diplomacy rolls).
 const PERSONALITY_WEIGHTS = {
     AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6,
-                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4 },
+                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4, 'develop-army': 1.1 },
     DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6 },
+                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6, 'develop-army': 1.0 },
     ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
-                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7 },
+                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7, 'develop-army': 0.9 },
     BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0 },
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0, 'develop-army': 1.0 },
 };
 
 // Base scores per goal kind before personality weighting.
 const BASE_SCORE = {
     conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
     diplomacy: 40, spy: 35, chokepoint: 45, scout: 55, 'attack-king': 85,
-    'take-key-city': 75, 'disrupt-victory': 90, 'resource-war': 65,
+    'take-key-city': 75, 'disrupt-victory': 90, 'resource-war': 65, 'develop-army': 60,
 };
 
 function manhattan(ax, az, bx, bz) {
@@ -54,6 +54,16 @@ function manhattan(ax, az, bx, bz) {
 function isFieldUnit(u) {
     return !!u && !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type) &&
         !(UNIT_TYPE[u.type] && UNIT_TYPE[u.type].naval);
+}
+
+/** Rough combat value of a unit (mirrors ai.js' unitValue). */
+function fieldUnitValue(u) {
+    return (u.hp || 1) + (((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || u.attack || 0) * 2);
+}
+
+/** Total combat value of a field-unit list. */
+function fieldPower(list) {
+    return (list || []).reduce((s, u) => s + fieldUnitValue(u), 0);
 }
 
 /** Classify the current game phase by turn number.
@@ -171,7 +181,8 @@ export function isKingVulnerable(king, friendPower = 0, foePower = 0) {
  *            scarcityTriggered, needsNavalExpansion, isIslandFaction,
  *            foreignMassWithoutCity, neutralFactions:Set, hasSpies:boolean,
  *            hasChokepoints:boolean, unexploredTiles:number,
- *            enemyKings:Array } */
+ *            enemyKings:Array, enemyUnits:Array, myPower:number,
+ *            enemyPower:number, hasWeakConquestTarget:boolean } */
 function goalValid(goal, ctx) {
     switch (goal.kind) {
         case 'conquest': {
@@ -245,6 +256,14 @@ function goalValid(goal, ctx) {
         case 'resource-war':
             // Valid while at war with a faction that controls contested resources.
             return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'develop-army':
+            // Valid while at war with no good conquest target and our army not
+            // clearly stronger (own >= 1.5x enemy means conquest is feasible
+            // again). Both inputs are recomputed every turn from CURRENT data,
+            // so the goal drops as soon as the situation changes.
+            if (ctx.enemies.size === 0) return false;
+            if (ctx.hasWeakConquestTarget) return false;
+            return !(ctx.enemyPower > 0 && ctx.myPower >= ctx.enemyPower * 1.5);
         default:
             return false;
     }
@@ -368,6 +387,7 @@ export function classifyReachability(tiles, fromX, fromZ, c, hasTransport) {
  *   spyTargetKey,       // string|null — tile key of nearest enemy city (for spy goal)
  *   chokepointKey,      // string|null — tile key of a strategic chokepoint
  *   gold,               // number — current treasury (for conquest feasibility)
+ *   enemyUnits,         // Array of at-war enemy units (for power comparison)
  * }
  * Returns the ordered Goal[] (also written to aiState.goals when re-planned).
  */
@@ -382,11 +402,37 @@ export function selectGoals(input) {
         neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
         unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
         enemyKings = [],
-        tiles = null, myUnits = [], gold = 0,
+        tiles = null, myUnits = [], gold = 0, enemyUnits = [],
     } = input;
 
     const enemySet = new Set(enemies || []);
     const hasTransportNow = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
+
+    // Own field army (non-naval military units) — feeds the conquest
+    // feasibility check below. Enemy field power feeds develop-army.
+    const myFieldUnits = (myUnits || []).filter(isFieldUnit);
+    const enemyFieldUnits = (enemyUnits || []).filter(u => enemySet.has(u.owner) && isFieldUnit(u));
+    const myPower = fieldPower(myFieldUnits);
+    const enemyPower = fieldPower(enemyFieldUnits);
+
+    // A "good conquest target" for develop-army gating: a land-reachable
+    // weak or neutral city. Computed before the stability check so goalValid
+    // can drop a develop-army goal the moment such a target appears.
+    let hasWeakConquestTarget = false;
+    for (const c of enemyCities || []) {
+        if (c.owner && !enemySet.has(c.owner)) continue;
+        if (!c.neutral && (c.fortification || 0) > 1) continue;
+        if (tiles && ownCities && ownCities.length) {
+            let reach = false;
+            for (const o of ownCities) {
+                if (isReachableByLand(tiles, o.x, o.z, c.x, c.z)) { reach = true; break; }
+            }
+            if (!reach) continue;
+        }
+        hasWeakConquestTarget = true;
+        break;
+    }
+
     const ctx = {
         enemies: enemySet, defensive: !!activeObjectives.defensive,
         myCityCount, settlerTarget, scarcityTriggered,
@@ -394,6 +440,8 @@ export function selectGoals(input) {
         neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
         tiles: tiles || null, ownCities: ownCities || [], hasTransport: hasTransportNow,
         enemyKings: enemyKings || [],
+        enemyUnits: enemyUnits || [], myPower, enemyPower,
+        hasWeakConquestTarget,
     };
 
     // Stability: keep the existing plan if it's still locked and every goal is
@@ -406,10 +454,6 @@ export function selectGoals(input) {
 
     const personality = (factionDef && factionDef.aiPersonality) || 'BALANCED';
     const weights = PERSONALITY_WEIGHTS[personality] || PERSONALITY_WEIGHTS.BALANCED;
-
-    // Own field army (non-naval military units) — feeds the conquest
-    // feasibility check below.
-    const myFieldUnits = (myUnits || []).filter(isFieldUnit);
 
     const candidates = [];
     const push = (kind, score, targetTileKey, targetFaction, horizon, meta, plan = null) => {
@@ -543,6 +587,18 @@ export function selectGoals(input) {
                 { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval', neutral: !!tgt.neutral },
                 navalPlan);
         }
+    }
+
+    // Develop Army: at war but conquest isn't feasible — no land-reachable
+    // weak/neutral city AND the enemy's field army is at least as strong as
+    // ours. Rushing a stronger foe (or a wall of fortified cities) with cheap
+    // infantry is a losing plan, so build military infrastructure and train
+    // siege/high-damage units first. Scores below conquest but above
+    // develop-economy while at war.
+    if (enemySet.size > 0 && !hasWeakConquestTarget && enemyPower > 0 && enemyPower >= myPower) {
+        push('develop-army',
+            BASE_SCORE['develop-army'] * weights['develop-army'],
+            null, null, 'medium', {});
     }
 
     // War Objectives: targeted strategic goals that make wars more meaningful
@@ -683,16 +739,16 @@ export function selectGoals(input) {
     const vtModifiers = {
         domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
                       diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3,
-                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1 },
+                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1, 'develop-army': 0.8 },
         science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
                       diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9,
-                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9 },
+                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9, 'develop-army': 1.1 },
         economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
                       diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8,
-                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4 },
+                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4, 'develop-army': 1.2 },
         score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
                       diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1,
-                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0 }
+                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0, 'develop-army': 1.0 }
     };
     const vtMod = vtModifiers[vt] || vtModifiers.domination;
     for (const c of candidates) {
@@ -705,13 +761,13 @@ export function selectGoals(input) {
     const phaseMod = {
         early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
                   diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9,
-                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8 },
+                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8, 'develop-army': 1.0 },
         mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1,
-                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0 },
+                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0, 'develop-army': 1.1 },
         late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
                   diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3,
-                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2 },
+                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2, 'develop-army': 0.9 },
     };
     const pm = phaseMod[phase] || phaseMod.mid;
     for (const c of candidates) {
