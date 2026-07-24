@@ -98,6 +98,14 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         return { messages: [`${combatName(attackerUnit)} can only attack cities!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
     }
 
+    // Corrupted hp (NaN/undefined -- e.g. units from pre-HP saves leveled up
+    // or burned into NaN) would make a combatant unkillable, since NaN <= 0
+    // is false everywhere. Normalize at the gate: non-finite hp counts as 0
+    // (already dead), non-finite maxHp falls back to current hp.
+    for (const c of [attackerUnit, defenderUnit]) {
+        if (typeof c.hp !== 'number' || !Number.isFinite(c.hp)) c.hp = 0;
+        if (typeof c.maxHp !== 'number' || !Number.isFinite(c.maxHp)) c.maxHp = Math.max(1, c.hp);
+    }
     const atkStats = combatStats(attackerUnit);
     const defStats = combatStats(defenderUnit);
     // A breached city gives no defensive terrain bonus — treat it as open ground.

@@ -51,6 +51,16 @@ export function createUnit(type, owner, x, z, opts = {}) {
 /** Award XP to a unit; level up raises HP/ATK/DEF. Returns log messages. */
 export function awardUnitXP(unit, amount = UNIT_XP_PER_KILL) {
     if (!unit) return [];
+    // Sanitize combat fields first: a unit missing hp/maxHp/level/xp (old
+    // saves) turns NaN on the first arithmetic below — and a NaN-hp unit is
+    // unkillable (NaN <= 0 is false).
+    if (typeof unit.xp !== 'number' || !Number.isFinite(unit.xp)) unit.xp = 0;
+    if (typeof unit.level !== 'number' || !Number.isFinite(unit.level)) unit.level = 1;
+    if (typeof unit.maxHp !== 'number' || !Number.isFinite(unit.maxHp)) {
+        const base = UNIT_TYPE[unit.type];
+        unit.maxHp = (base ? base.hp : 10) + (unit.level - 1) * 3;
+    }
+    if (typeof unit.hp !== 'number' || !Number.isFinite(unit.hp)) unit.hp = unit.maxHp;
     unit.xp += amount;
     const messages = [];
     while (unit.xp >= UNIT_XP_PER_LEVEL * unit.level) {

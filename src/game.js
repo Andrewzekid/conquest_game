@@ -498,10 +498,26 @@ export class Game {
                 if (def) lord.active = def.king.active;
             }
             // Backfill combat fields for pre-lord-combat saves: lords now have
-            // HP and can attack once per turn.
-            if (typeof lord.maxHp !== 'number') lord.maxHp = lordMaxHp(lord);
-            if (typeof lord.hp !== 'number') lord.hp = lord.maxHp;
+            // HP and can attack once per turn. level/xp must be sanitized
+            // FIRST -- lordMaxHp reads lord.level (undefined level => NaN hp).
+            if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
+            if (typeof lord.xp !== 'number' || !Number.isFinite(lord.xp)) lord.xp = 0;
+            if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
+            if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
             if (typeof lord.hasAttackedThisTurn !== 'boolean') lord.hasAttackedThisTurn = false;
+        }
+        // Backfill unit combat fields for pre-HP saves: a unit missing
+        // hp/maxHp/level/xp turns NaN on its first level-up, burn tick or
+        // trap (the "NaN / 60" combat-log bug), and NaN-hp units are
+        // unkillable (NaN <= 0 is false).
+        for (const u of this.gameState.units.values()) {
+            const ubase = UNIT_TYPE[u.type];
+            if (typeof u.level !== 'number' || !Number.isFinite(u.level)) u.level = 1;
+            if (typeof u.xp !== 'number' || !Number.isFinite(u.xp)) u.xp = 0;
+            if (typeof u.maxHp !== 'number' || !Number.isFinite(u.maxHp)) {
+                u.maxHp = (ubase ? ubase.hp : 10) + (u.level - 1) * 3;
+            }
+            if (typeof u.hp !== 'number' || !Number.isFinite(u.hp)) u.hp = u.maxHp;
         }
         if (!this.gameState.turnManager) {
             this.gameState.turnManager = createTurnManager(
@@ -1390,10 +1406,12 @@ export class Game {
      *  to life) between turns. */
     _sweepDeadCombatants() {
         for (const u of [...this.gameState.units.values()]) {
-            if (typeof u.hp === 'number' && u.hp <= 0) this._onUnitDeath(u);
+            // NaN/undefined hp counts as dead: corrupted combatants must be
+            // buried, not left immortal (NaN <= 0 is false).
+            if (typeof u.hp !== 'number' || !Number.isFinite(u.hp) || u.hp <= 0) this._onUnitDeath(u);
         }
         for (const l of [...(this.gameState.lords || [])]) {
-            if (l && typeof l.hp === 'number' && l.hp <= 0) this._onLordDeath(l);
+            if (l && (typeof l.hp !== 'number' || !Number.isFinite(l.hp) || l.hp <= 0)) this._onLordDeath(l);
         }
     }
 
@@ -2008,7 +2026,15 @@ export class Game {
         const capital = getOwnedCities(this.tiles, owner)[0] || this.tiles.get(`${g.x},${g.z}`);
         if (!capital) return;
         const unit = createUnit(g.type, owner, capital.x, capital.z, { factionDef: def });
-        if (g.level > 1) { unit.level = g.level; }
+        if (g.level > 1) {
+            // Restore the fallen unit's level WITH its per-level stat bumps --
+            // setting level alone left maxHp/attack/defense at level-1 values.
+            unit.maxHp += (g.level - 1) * 3;
+            unit.hp = unit.maxHp;
+            unit.attack += (g.level - 1);
+            unit.defense += (g.level - 1);
+            unit.level = g.level;
+        }
         this.gameState.units.set(unit.id, unit);
         this.gameState.graveyard = this.gameState.graveyard.filter(x => x !== g);
         const name = this.factionColors[owner].name || owner;

@@ -94,6 +94,12 @@ export function syncLordHp(combatant) {
 
 /** Award XP to a lord; level up if threshold reached. Returns log messages. */
 export function awardXP(lord, amount) {
+    // Sanitize first: a lord missing level/xp/hp (old saves) turns NaN here —
+    // lordMaxHp reads lord.level, and NaN hp is unkillable.
+    if (typeof lord.xp !== 'number' || !Number.isFinite(lord.xp)) lord.xp = 0;
+    if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
+    if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
+    if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
     lord.xp += amount;
     const messages = [];
     while (lord.xp >= LORD_XP_PER_LEVEL * lord.level) {
