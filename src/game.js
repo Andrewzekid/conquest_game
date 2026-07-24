@@ -1175,6 +1175,13 @@ export class Game {
         if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) {
             return;
         }
+        // Same city-entry gate as moveUnit: a city that can't be captured
+        // this move (walls up, breach delay, or garrisoned) can't be entered.
+        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner) {
+            const lordCanEnter = (canCaptureTile(lord.owner, destTile, this.gameState.resources[lord.owner], null, this.gameState.turn || 0) ||
+                this.siegeTowerAdjacentTo(destTile, lord.owner)) && !this._cityOccupied(destTile, null);
+            if (!lordCanEnter) return;
+        }
         lord.x = x;
         lord.z = z;
         lord.hasMovedThisTurn = true;
@@ -1200,17 +1207,20 @@ export class Game {
     }
 
     moveUnit(unit, x, z) {
-        unit.x = x;
-        unit.z = z;
-        unit.hasMovedThisTurn = true;
-
         const destTile = this.tiles.get(`${x},${z}`);
         const pool = this.gameState.resources[unit.owner];
         // Civ6 territory: units capture CITIES only. A city is captured if it's
         // breached (fortification 0) OR stormed via an adjacent friendly Siege
-        // Tower (canAssault bypasses the fortification gate).
-        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner &&
-            (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
+        // Tower (canAssault bypasses the fortification gate) AND no defender
+        // holds the tile. A city that can't be captured this move (walls up,
+        // breach delay, or garrisoned) can't be ENTERED either.
+        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner) {
+            const capturable = (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) ||
+                this.siegeTowerAdjacentTo(destTile, unit.owner)) && !this._cityOccupied(destTile, unit.id);
+            if (!capturable) {
+                this.log(`${UNIT_TYPE[unit.type].name} can't enter ${destTile.cityName || 'the city'} -- its defenses hold.`);
+                return;
+            }
             pool.gold -= CAPTURE_COST;
             const prevOwner = destTile.owner;
             const wasNeutral = !prevOwner;
@@ -1218,6 +1228,9 @@ export class Game {
             sfx.capture();
             this._awardCaptureGrievances(destTile, unit.owner, prevOwner, wasNeutral);
         }
+        unit.x = x;
+        unit.z = z;
+        unit.hasMovedThisTurn = true;
         // Arrived at goal �?clear it.
         if (unit.goal && unit.goal.x === x && unit.goal.z === z) unit.goal = null;
 
@@ -2161,6 +2174,20 @@ export class Game {
         for (const u of this.gameState.units.values()) {
             if (u.owner !== owner || u.type !== 'SIEGE_TOWER') continue;
             if (Math.abs(u.x - cityTile.x) + Math.abs(u.z - cityTile.z) === 1) return true;
+        }
+        return false;
+    }
+
+    /** Is a city tile occupied by any unit or living lord (optionally ignoring
+     *  one unit)? A garrisoned city can't be captured or walked into -- the
+     *  defender must be killed first. */
+    _cityOccupied(tile, exceptId = null) {
+        for (const u of this.gameState.units.values()) {
+            if (u.id === exceptId || u.boarded) continue;
+            if (u.x === tile.x && u.z === tile.z) return true;
+        }
+        for (const l of (this.gameState.lords || [])) {
+            if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) return true;
         }
         return false;
     }
@@ -3424,6 +3451,10 @@ export class Game {
                 const dest = this.tiles.get(`${step.x},${step.z}`);
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
                     break; // stop adjacent; player can besiege/capture manually
+                }
+                // Don't auto-walk onto a garrisoned city -- kill the defender first.
+                if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && this._cityOccupied(dest, unit.id)) {
+                    break;
                 }
                 // Perform a plain move (no capture cost for friendly tiles; capture if possible).
                 unit.x = step.x; unit.z = step.z; unit.hasMovedThisTurn = true; moved = true;
@@ -4820,16 +4851,21 @@ export class Game {
                 case 'move': {
                     const unit = this.gameState.units.get(action.unitId);
                     if (unit) {
-                        unit.x = action.tx; unit.z = action.tz; unit.hasMovedThisTurn = true;
                         const dest = this.tiles.get(`${action.tx},${action.tz}`);
-                        if (dest && dest.terrain === 'CITY' && dest.owner !== faction &&
-                            (canCaptureTile(faction, dest, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(dest, faction))) {
+                        // City-entry gate (mirrors moveUnit): a city that can't
+                        // be captured this move -- walls up, breach delay, or
+                        // a defender still inside -- can't be ENTERED either.
+                        if (dest && dest.terrain === 'CITY' && dest.owner !== faction) {
+                            const capturable = (canCaptureTile(faction, dest, pool, null, this.gameState.turn || 0) ||
+                                this.siegeTowerAdjacentTo(dest, faction)) && !this._cityOccupied(dest, unit.id);
+                            if (!capturable) break;
                             pool.gold -= CAPTURE_COST;
                             const prevOwner = dest.owner;
                             const wasNeutral = !prevOwner;
                             captureCityTerritory(this.tiles, dest, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
                             this._awardCaptureGrievances(dest, faction, prevOwner, wasNeutral);
                         }
+                        unit.x = action.tx; unit.z = action.tz; unit.hasMovedThisTurn = true;
                         // An enemy fall trap on the destination springs now.
                         this._checkFallTrap(unit);
                     }

@@ -463,3 +463,102 @@ describe('king/lord healing in besieged cities', () => {
         expect(lord.hp).toBe(10); // the usual +2 is suppressed too
     });
 });
+
+// ---------------------------------------------------------------------------
+// 8. City-entry gate: no walking into uncapturable cities (move paths)
+// ---------------------------------------------------------------------------
+describe('city-entry gate on move paths', () => {
+    function forceMoveAction(unitId, tx, tz, faction = 'ai1') {
+        computeAIActions.mockImplementation(() => [{ type: 'move', unitId, tx, tz }]);
+    }
+
+    it('AI move action onto a GARRISONED breached city: no capture, no move-in', () => {
+        const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
+        const city = state.tiles.get('5,5');
+        city.fortification = 0;
+        city.breachedTurn = 1;
+        state.units.clear();
+        const defender = makeUnit('INFANTRY', 'player', 5, 5);
+        const aiInf = makeUnit('INFANTRY', 'ai1', 6, 5);
+        state.units.set(defender.id, defender);
+        state.units.set(aiInf.id, aiInf);
+        const g = makeAIGame(state);
+
+        forceMoveAction(aiInf.id, 5, 5);
+        g.runAITurn('ai1');
+
+        expect(city.owner).toBe('player');
+        expect([aiInf.x, aiInf.z]).toEqual([6, 5]); // stayed outside
+        expect(state.resources.ai1.gold).toBe(200);
+    });
+
+    it('AI move action onto an UNBREACHED neutral city: entry refused', () => {
+        const state = makeGameState();
+        const city = state.tiles.get('10,10');
+        city.owner = null; // unclaimed
+        city.fortification = 3;
+        state.units.clear();
+        const aiInf = makeUnit('INFANTRY', 'ai1', 9, 10);
+        state.units.set(aiInf.id, aiInf);
+        const g = makeAIGame(state);
+
+        forceMoveAction(aiInf.id, 10, 10);
+        g.runAITurn('ai1');
+
+        expect(city.owner).toBeNull();
+        expect([aiInf.x, aiInf.z]).toEqual([9, 10]);
+    });
+
+    it('player moveUnit cannot enter an unbreached neutral city', () => {
+        const state = makeGameState();
+        const city = state.tiles.get('10,10');
+        city.owner = null;
+        city.fortification = 3;
+        state.units.clear();
+        const inf = makeUnit('INFANTRY', 'player', 9, 10);
+        state.units.set(inf.id, inf);
+        const g = makeGame(state);
+
+        g.moveUnit(inf, 10, 10);
+
+        expect(city.owner).toBeNull();
+        expect([inf.x, inf.z]).toEqual([9, 10]);
+        expect(inf.hasMovedThisTurn).toBeFalsy();
+    });
+
+    it('player moveUnit cannot enter a garrisoned breached enemy city', () => {
+        const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
+        const city = state.tiles.get('10,10'); // ai1 city
+        city.fortification = 0;
+        city.breachedTurn = 1;
+        state.units.clear();
+        const defender = makeUnit('INFANTRY', 'ai1', 10, 10);
+        const inf = makeUnit('INFANTRY', 'player', 9, 10);
+        state.units.set(defender.id, defender);
+        state.units.set(inf.id, inf);
+        const g = makeGame(state);
+
+        g.moveUnit(inf, 10, 10);
+
+        expect(city.owner).toBe('ai1');
+        expect([inf.x, inf.z]).toEqual([9, 10]);
+        expect(state.resources.player.gold).toBe(200);
+    });
+
+    it('player moveUnit still captures a breached EMPTY enemy city (regression)', () => {
+        const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
+        const city = state.tiles.get('10,10');
+        city.fortification = 0;
+        city.breachedTurn = 1;
+        state.units.clear();
+        const inf = makeUnit('INFANTRY', 'player', 9, 10);
+        state.units.set(inf.id, inf);
+        const g = makeGame(state);
+
+        g.moveUnit(inf, 10, 10);
+
+        expect(city.owner).toBe('player');
+        expect([inf.x, inf.z]).toEqual([10, 10]);
+        expect(state.resources.player.gold).toBe(200 - CAPTURE_COST);
+    });
+});
