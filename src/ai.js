@@ -25,7 +25,7 @@ import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
 import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } from './ai_goals.js';
 import { getUnlockedUnits, TECHS } from './tech.js';
-import { applyObsolescence } from './unit_obsolescence.js';
+import { applyObsolescence, isObsolete } from './unit_obsolescence.js';
 import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
@@ -1203,14 +1203,26 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 // researched (TRANSPORT is obsolete once STEAM_TRANSPORT is
                 // available). Fall back to TRANSPORT for pre-steam factions.
                 const modernTransport = aiUnlocked.has('STEAM_TRANSPORT') ? 'STEAM_TRANSPORT' : 'TRANSPORT';
-                let pick = 'GALLEY';
+                // Warship pick: the best unlocked, non-obsolete warship.
+                // Previously this defaulted to GALLEY forever — which the
+                // executor's obsolescence check then REJECTED once FRIGATE
+                // was researched, so no warships were ever built past
+                // CARTOGRAPHY. Now it takes the strongest modern warship the
+                // faction can afford, falling back down the era ladder.
+                const WARSHIP_ORDER = ['MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE',
+                    'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE_2', 'FRIGATE',
+                    'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'GALLEY'];
+                const warshipOptions = applyObsolescence(
+                    WARSHIP_ORDER.filter(t => aiUnlocked.has(t)), aiTs && aiTs.researched);
+                let pick = null;
                 if ((needsExpansionFleet || needsConquestTransport) && transportCount === 0) pick = modernTransport;
                 else if (needsMoreTransports && Math.random() < 0.7) pick = modernTransport;
                 else if (needsConquestTransport && Math.random() < 0.7) pick = modernTransport;
+                else pick = warshipOptions.find(t => canAfford(t, res, getUnitCostFor(t, factionDef))) || null;
                 // Tech gate: don't train a ship whose tech hasn't been researched.
-                if (!aiUnlocked.has(pick)) {
+                if (pick && !aiUnlocked.has(pick)) {
                     // Fall back to GALLEY (always available via NAVAL_ENGINEERING) if possible.
-                    pick = aiUnlocked.has('GALLEY') ? 'GALLEY' : null;
+                    pick = aiUnlocked.has('GALLEY') && !isObsolete('GALLEY', aiTs && aiTs.researched) ? 'GALLEY' : null;
                 }
                 if (pick) {
                     const pc = getUnitCostFor(pick, factionDef);

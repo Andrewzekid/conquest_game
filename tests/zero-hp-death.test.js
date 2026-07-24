@@ -229,17 +229,19 @@ describe('_sweepDeadCombatants', () => {
 // Healing never resurrects the dead
 // ---------------------------------------------------------------------------
 describe('healing does not resurrect 0-hp combatants', () => {
-    it('lord regen heals a wounded living king but not a 0-hp one', () => {
+    it('lord regen heals a wounded living king only in his own city, never a 0-hp one', () => {
         const state = makeGameState();
-        const wounded = makeKing('ai1', 9, 10, { hp: 10, maxHp: 20 }); // not in his city → +2
+        const inCity = makeKing('ai1', 10, 10, { hp: 10, maxHp: 20 });  // inside his city → +5
+        const inField = makeKing('ai1', 9, 10, { hp: 10, maxHp: 20 });  // outside → 0 (kings only heal at home)
         const dead = makeKing('player', 8, 8, { hp: 0, maxHp: 20 });
-        state.lords.push(wounded, dead);
+        state.lords.push(inCity, inField, dead);
         const tm = createTurnManager(state, [PLAYER_FACTION, 'ai1'], null, null, null);
 
         tm.endPlayerTurn();
 
-        expect(wounded.hp).toBe(12); // living lord regen still works
-        expect(dead.hp).toBe(0);     // the dead do not regenerate
+        expect(inCity.hp).toBe(15);   // own-city king regen
+        expect(inField.hp).toBe(10);  // kings do not recover in the field
+        expect(dead.hp).toBe(0);      // the dead do not regenerate
     });
 
     it('medics heal wounded units but do not resurrect 0-hp units', () => {

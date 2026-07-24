@@ -363,7 +363,8 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         }
         // Reset lord per-turn flags (lords/kings can move and attack once per
         // turn, like units) and slowly regenerate their HP between battles.
-        // Kings resting inside one of their own cities recover faster — but no
+        // Kings recover ONLY inside one of their own cities (+5/turn) — no
+        // field recovery, so a campaigning king must come home to heal. No
         // lord recovers inside a breached or besieged city (walls down or an
         // enemy unit at the gates): no safe rest while under assault.
         if (gameState.lords) {
@@ -388,7 +389,7 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                             }
                         }
                     }
-                    const heal = cityUnderAssault ? 0 : ((lord.isKing && inOwnCity) ? 5 : 2);
+                    const heal = cityUnderAssault ? 0 : (lord.isKing ? (inOwnCity ? 5 : 0) : 2);
                     lord.hp = Math.min(lord.maxHp, lord.hp + heal);
                 }
             }

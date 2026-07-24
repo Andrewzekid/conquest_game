@@ -1267,3 +1267,41 @@ describe('conquest goal boosts siege ratio', () => {
         expect(tc.siege).toBeGreaterThanOrEqual(0.40);
     });
 });
+
+// ===========================================================================
+// PART 7: Modern warship picks (B12)
+// ===========================================================================
+describe('modern warship picks', () => {
+    it('trains FRIGATE, not GALLEY, when CARTOGRAPHY is researched', () => {
+        const tiles = makeTileMap([
+            [5, 5, 'CITY', 'ai1', { cityName: 'Capital', cityLevel: 5, fortification: 3, fortMax: 3, isCapital: true }],
+            [6, 5, 'PLAINS', 'ai1'],
+            [4, 5, 'WATER', null],
+            [15, 15, 'CITY', 'enemy', { cityName: 'Island Enemy', cityLevel: 1, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        for (let i = 0; i < 4; i++) units.set(i + 1, makeUnit('INFANTRY', 'ai1', 6 + i, 5, { factionId: 'crimson' }));
+        // Two transports already fielded → transport needs are satisfied and
+        // the ship block goes for a warship.
+        const t1 = makeUnit('TRANSPORT', 'ai1', 4, 5, { factionId: 'crimson' });
+        const t2 = makeUnit('TRANSPORT', 'ai1', 4, 5, { factionId: 'crimson' });
+        units.set(t1.id, t1); units.set(t2.id, t2);
+        const ts = makeFactionTs(['NAVAL_ENGINEERING', 'CARTOGRAPHY']);
+        const actions = runAI({
+            units, tiles,
+            resources: { gold: 2000, food: 1000, wood: 500, iron: 200, production: 800 },
+            owner: 'ai1', buildings: new Map([['5,5', ['BARRACKS', 'HARBOR']]]),
+            influence: null, factionDef: FACTION_DEFS.crimson,
+            diploState: warDiplo('ai1', 'enemy'),
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: createAIState(), aiTechStates: { ai1: ts },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: 35,
+        });
+        const trains = trainTypes(actions);
+        // GALLEY is obsolete after CARTOGRAPHY — the executor would reject it.
+        expect(trains).not.toContain('GALLEY');
+        // A modern (CARTOGRAPHY-era) warship is trained instead.
+        expect(trains.some(t => t === 'FRIGATE' || t === 'GALLEON')).toBe(true);
+    });
+});
