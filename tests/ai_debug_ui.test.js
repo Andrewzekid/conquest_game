@@ -62,6 +62,24 @@ describe('buildAIDebugHTML — army groups moved out', () => {
     });
 });
 
+describe('buildAIDebugHTML — effective composition target', () => {
+    it('prefers the persisted objective-tweaked targetComposition over the base', () => {
+        const s = mkState();
+        // Conquest-goal snapshot: siege-boosted effective target.
+        s.aiState.ai1.targetComposition = { melee: 0.27, ranged: 0, cavalry: 0.18, siege: 0.5, support: 0.05, naval: 0 };
+        const html = buildAIDebugHTML(s.units, s.aiState, ['ai1'], s.factionDefs, s.factionColors,
+            s.tiles, s.resources, s.buildings, s.lords);
+        expect(html).toContain('siege: 50%');
+    });
+
+    it('falls back to base factionComposition when no snapshot exists', () => {
+        const s = mkState();
+        const html = buildAIDebugHTML(s.units, s.aiState, ['ai1'], s.factionDefs, s.factionColors,
+            s.tiles, s.resources, s.buildings, s.lords);
+        expect(html).toContain('Target:');
+    });
+});
+
 // Source-invariant: computeAIActions must persist the lightweight army-group
 // summary each turn so the debug panel has something to render.
 describe('AI debug — army group persistence (source-invariant)', () => {

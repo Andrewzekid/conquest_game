@@ -5,7 +5,7 @@
  *  3. Conquest objective selection (selectGoals, landmass filtering, target scoring)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { computeAIActions, findAffordableUnit } from '../src/ai.js';
+import { computeAIActions, findAffordableUnit, effectiveComposition } from '../src/ai.js';
 import { createAIState, selectGoals, pathCrossesWater } from '../src/ai_goals.js';
 import { createTechState, getUnlockedUnits, TECHS } from '../src/tech.js';
 import { FACTION_DEFS } from '../src/faction.js';
@@ -163,8 +163,11 @@ describe('Tech unlock → modern unit training', () => {
         });
 
         it('trains RIFLEMAN when RIFLED_MUSKET researched and affordable', () => {
+            // Shadow Court: no siege/cavalry roles, so the conquest-goal siege
+            // tweak is skipped and its big ranged share (45%) drives training —
+            // this test is about tech gating the roster, not composition.
             const ts = makeFactionTs(['RIFLED_MUSKET']);
-            const input = warSetup({ ts, resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 } });
+            const input = warSetup({ ts, faction: 'shadow', resources: { gold: 2000, food: 1000, wood: 500, iron: 500, production: 1000 } });
             const actions = runAI(input);
             const trains = trainTypes(actions);
             // With lots of resources, AI should train modern units
@@ -1197,14 +1200,19 @@ describe('Phase 3: era-gap savings (cheap-unit drain)', () => {
             [15, 15, 'CITY', 'enemy', { cityName: 'Enemy Hold', cityLevel: 2, fortification: 5, fortMax: 5 }],
         ]);
         const units = new Map();
-        const army = ['INFANTRY', 'INFANTRY', 'INFANTRY', 'CAVALRY', 'CAVALRY', 'CAVALRY', 'SIEGE', 'ENGINEER'];
-        army.forEach((type, i) => units.set(i + 1, makeUnit(type, 'ai1', 6 + i, 5, { factionId: 'crimson' })));
+        // Shadow Court: no siege/cavalry roles, so the conquest siege tweak is
+        // skipped and the ranged deficit is what the savings rule weighs —
+        // RIFLEMAN (unlocked, 100g) vs LONGBOWMAN (roster, affordable). The
+        // scout cap is pre-filled so the scout block can't drain the treasury
+        // before the savings decision.
+        const army = ['INFANTRY', 'INFANTRY', 'INFANTRY', 'ENGINEER', 'SCOUT', 'SCOUT'];
+        army.forEach((type, i) => units.set(i + 1, makeUnit(type, 'ai1', 6 + i, 5, { factionId: 'shadow' })));
         return {
             tiles, units,
             resources: { gold: 55, food: 30, wood: 25, iron: 5, production: 20 },
             owner: 'ai1',
             buildings: new Map([['5,5', ['BARRACKS']]]),
-            influence: null, factionDef: FACTION_DEFS.crimson,
+            influence: null, factionDef: FACTION_DEFS.shadow,
             diploState: warDiplo('ai1', 'enemy'),
             lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
             aiState: createAIState(), aiTechStates: { ai1: ts },
@@ -1225,5 +1233,37 @@ describe('Phase 3: era-gap savings (cheap-unit drain)', () => {
     it('end-to-end regression: without modern techs the same treasury buys basics', () => {
         const trains = trainTypes(runAI(savingsSetup(makeFactionTs([]))));
         expect(trains).toContain('LONGBOWMAN');
+    });
+});
+
+// ===========================================================================
+// PART 6: Conquest-goal siege composition (Task A)
+// ===========================================================================
+describe('conquest goal boosts siege ratio', () => {
+    it('effectiveComposition: siege objective pushes siege to ~40%+ and cuts cavalry', () => {
+        // Crimson base (ranged zeroed): melee 39%, cav 39%, siege 17%.
+        const base = effectiveComposition(FACTION_DEFS.crimson, FACTION_DEFS.crimson.roster, false, null);
+        const t = effectiveComposition(FACTION_DEFS.crimson, FACTION_DEFS.crimson.roster, false, { siege: true });
+        expect(t.siege).toBeGreaterThanOrEqual(0.40);
+        expect(t.cavalry).toBeLessThan(base.cavalry);
+        expect(t.siege).toBeGreaterThan(base.siege);
+    });
+
+    it('effectiveComposition: factions with no trainable siege are not diluted', () => {
+        // Shadow has no siege role and no workshop — the siege tweak must be
+        // skipped entirely (otherwise 40% of the target lands on an
+        // unfillable role and dilutes the trainable ones).
+        const base = effectiveComposition(FACTION_DEFS.shadow, FACTION_DEFS.shadow.roster, false, null);
+        const t = effectiveComposition(FACTION_DEFS.shadow, FACTION_DEFS.shadow.roster, false, { siege: true });
+        expect(t.siege).toBe(0);
+        expect(t.ranged).toBeCloseTo(base.ranged, 5);
+    });
+
+    it('pipeline: conquest goal persists a siege-heavy targetComposition and trains siege', () => {
+        const input = warSetup({ ts: makeFactionTs([]) });
+        runAI(input);
+        const tc = input.aiState.targetComposition;
+        expect(tc).toBeTruthy();
+        expect(tc.siege).toBeGreaterThanOrEqual(0.40);
     });
 });

@@ -1183,9 +1183,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     cap. Keeps a gold buffer when a capture is imminent so the walk-in
     //     capture isn't starved (see step 0). Runs after ships so a small fleet
     //     is guaranteed room before the army fills the cap.
+    // Goal-driven composition override: a conquest goal always trains for a
+    // siege. The detectActiveObjectives siege flag only fires once the army is
+    // already near an enemy city — far too late to shape the buildup — so a
+    // faction whose top goal is conquest force-enables the siege tweak.
+    const trainObjective = goalKind === 'conquest' ? { ...activeObjectives, siege: true } : activeObjectives;
+    // Persist the effective (objective-tweaked) composition target so the AI
+    // debug panel can show the target the AI is actually training toward,
+    // rather than the untweaked base faction composition.
+    if (aiState) aiState.targetComposition = effectiveComposition(factionDef, fullRoster, hasSiegeWorkshop, trainObjective);
     while (myUnits.length + trainCount() < aiUnitCap) {
         if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
-        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, activeObjectives, hasSiegeWorkshop, aiState);
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, trainObjective, hasSiegeWorkshop, aiState);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
@@ -3019,6 +3028,48 @@ export function factionComposition(def, roster, hasSiegeWorkshop = false) {
     return t;
 }
 
+/** Effective army composition target after objective-driven tweaks. The siege
+ *  ratio swings hardest: a siege objective (an active siege, or a conquest
+ *  goal — wired in via `trainObjective` in computeAIActions) leans hard into
+ *  siege engines at the expense of cavalry, while a decisive field battle or
+ *  defense pulls siege back in favor of melee/cavalry. The result is
+ *  renormalized to sum 1. Shared by findAffordableUnit (training) and the AI
+ *  debug panel (via the aiState.targetComposition snapshot persisted each
+ *  turn) so both show the SAME effective target. */
+export function effectiveComposition(def, roster, hasSiegeWorkshop = false, objective = null) {
+    const target = factionComposition(def, roster, hasSiegeWorkshop);
+    if (!objective) return target;
+    if (objective.siege && (target.siege > 0 || hasSiegeWorkshop)) {
+        // Only lean into siege when the faction can actually field siege units
+        // (roster siege or a workshop) — otherwise the boost would land on an
+        // unfillable role and just dilute the trainable ones. Cavalry takes
+        // the biggest cut; ranged keeps a small share so gunpowder-era ranged
+        // lines don't vanish entirely during a conquest.
+        target.siege = Math.min(0.65, target.siege + 0.40);
+        target.cavalry = Math.max(0, target.cavalry - 0.15);
+        target.ranged = Math.max(0, target.ranged - 0.05);
+        target.melee = Math.max(0.20, target.melee - 0.05);
+    } else if (objective.decisive) {
+        target.siege = Math.max(0, target.siege - 0.15);
+        target.cavalry = Math.min(0.50, target.cavalry + 0.15);
+        target.melee = Math.min(0.55, target.melee + 0.05);
+    } else if (objective.raid) {
+        target.cavalry = Math.min(0.50, target.cavalry + 0.20);
+        target.siege = Math.max(0, target.siege - 0.10);
+    } else if (objective.defensive) {
+        target.melee = Math.min(0.55, target.melee + 0.15);
+        target.ranged = Math.min(0.35, target.ranged + 0.10);
+        target.cavalry = Math.max(0, target.cavalry - 0.15);
+        target.siege = Math.max(0, target.siege - 0.10);
+    } else {
+        return target;
+    }
+    // Renormalize.
+    const sum = Object.values(target).reduce((a, b) => a + b, 0);
+    if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
+    return target;
+}
+
 function roleDeficit(roster, counts, total, target) {
     const available = new Set();
     for (const t of roster) available.add(unitRole(t));
@@ -3058,34 +3109,11 @@ const ROLE_ORDER = {
 export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false, aiState = null) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    let target = factionComposition(factionDef, roster, hasSiegeWorkshop);
-    // Objective-driven composition tweaks. The siege ratio swings hardest:
-    // a siege objective leans hard into siege engines, while a decisive field
-    // battle or defense pulls siege back in favor of melee/cavalry.
-    if (objective) {
-        target = { ...target };
-        if (objective.siege) {
-            target.siege = Math.min(0.65, target.siege + 0.40);
-            target.cavalry = Math.max(0, target.cavalry - 0.10);
-            target.ranged = Math.max(0, target.ranged - 0.10);
-            target.melee = Math.max(0.20, target.melee - 0.05);
-        } else if (objective.decisive) {
-            target.siege = Math.max(0, target.siege - 0.15);
-            target.cavalry = Math.min(0.50, target.cavalry + 0.15);
-            target.melee = Math.min(0.55, target.melee + 0.05);
-        } else if (objective.raid) {
-            target.cavalry = Math.min(0.50, target.cavalry + 0.20);
-            target.siege = Math.max(0, target.siege - 0.10);
-        } else if (objective.defensive) {
-            target.melee = Math.min(0.55, target.melee + 0.15);
-            target.ranged = Math.min(0.35, target.ranged + 0.10);
-            target.cavalry = Math.max(0, target.cavalry - 0.15);
-            target.siege = Math.max(0, target.siege - 0.10);
-        }
-        // Renormalize.
-        const sum = Object.values(target).reduce((a, b) => a + b, 0);
-        if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
-    }
+    // Base faction composition + objective-driven tweaks (see
+    // effectiveComposition): a siege objective leans hard into siege engines,
+    // while a decisive field battle or defense pulls siege back in favor of
+    // melee/cavalry.
+    let target = effectiveComposition(factionDef, roster, hasSiegeWorkshop, objective);
     // Reserve a baseline artillery slice (CATAPULT/TREBUCHET) even when no
     // siege objective is active, so a workshop-bearing faction always builds
     // some long-range engines rather than letting basic siege saturate the cap.
@@ -4948,9 +4976,11 @@ export function buildAIDebugHTML(units, aiState, factions, factionDefs, factionC
         }
         const total = myUnits.length;
 
-        // Get faction composition targets.
+        // Get faction composition targets — prefer the effective (objective-
+        // tweaked) target persisted by computeAIActions each turn; fall back
+        // to the base faction composition when no snapshot exists.
         const roster = (def && def.roster) || [];
-        const target = factionComposition(def, roster);
+        const target = (st && st.targetComposition) || factionComposition(def, roster);
         const targetStr = Object.entries(target)
             .filter(([, v]) => v > 0)
             .map(([k, v]) => `${k}: ${Math.round(v * 100)}%`)

@@ -71,6 +71,7 @@ export function createAIState() {
         drainingResource: null,     // worst per-turn-draining resource this turn (food/wood/iron/gold)
         lastFlow: null,              // per-resource net change vs prevStock { gold, food, wood, iron }
         victoryTarget: null,        // chosen victory type string ('domination'|'science'|'economic'|'score')
+        targetComposition: null,    // effective (objective-tweaked) composition target, for the debug panel
     };
 }
 
@@ -640,7 +641,7 @@ export function selectGoals(input) {
             king.owner !== factionDef.id &&
             enemySet.has(king.owner) &&
             king.isKing && !king.guarded && king.vulnerable);
-        if (exposedKing) {
+        if (exposedKing && homeAnchor) {
             const dKing = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
             const score = (40 - dKing * 0.3) * weights['attack-king'];
             push('attack-king',
