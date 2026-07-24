@@ -300,6 +300,49 @@ describe('ai_goals new goal types', () => {
   });
 });
 
+describe('ai_goals conquest feasibility', () => {
+  // The "golden horde" scenario: a faction with a tiny army and an empty
+  // treasury can't execute a conquest — the goal should lose to
+  // settle/develop-economy until the economy can sustain an army.
+  const tinyArmy = [
+    { type: 'INFANTRY' }, { type: 'INFANTRY' },
+  ];
+  const bigArmy = [
+    { type: 'INFANTRY' }, { type: 'INFANTRY' }, { type: 'INFANTRY' },
+    { type: 'INFANTRY' }, { type: 'CAVALRY' },
+  ];
+  const farCityInput = (overrides = {}) => baseInput({
+    factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+    enemies: ['azure'],
+    enemyCities: [{ x: 10, z: 10, owner: 'azure' }],
+    myUnits: tinyArmy,
+    ...overrides,
+  });
+
+  it('dampens conquest when the army is tiny AND the treasury is weak', () => {
+    const poor = selectGoals(farCityInput({ gold: 50 }));
+    expect(poor.some(g => g.kind === 'conquest')).toBe(true);
+    expect(poor[0].kind).not.toBe('conquest'); // settle/economy wins instead
+    const rich = selectGoals(farCityInput({ gold: 500 }));
+    expect(rich[0].kind).toBe('conquest'); // strong economy: unaffected
+  });
+
+  it('does not dampen conquest when the army is big enough', () => {
+    const goals = selectGoals(farCityInput({ myUnits: bigArmy, gold: 50 }));
+    expect(goals[0].kind).toBe('conquest');
+  });
+
+  it('dampening scales the conquest score by 0.5', () => {
+    const poor = selectGoals(farCityInput({ gold: 50 }));
+    // Dampened conquest loses the top spot to settle and sits at ~2/3 of it
+    // (undampened it would be ~1.33x settle — see the rich case in the test
+    // above, where conquest stays top).
+    const conquestPoor = poor.find(g => g.kind === 'conquest');
+    expect(poor[0].kind).toBe('settle');
+    expect(conquestPoor.priority).toBeLessThan(0.7);
+  });
+});
+
 describe('ai_goals game-phase scoring', () => {
   it('early game boosts scout and settle goals', () => {
     const earlyGoals = selectGoals(baseInput({

@@ -16,7 +16,7 @@
 import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
          WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
          WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
-         WAR_OBJECTIVE_MIN_CITIES, GRID_SIZE } from './config.js';
+         WAR_OBJECTIVE_MIN_CITIES, GRID_SIZE, UNIT_TYPE } from './config.js';
 
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
@@ -47,6 +47,13 @@ const BASE_SCORE = {
 
 function manhattan(ax, az, bx, bz) {
     return Math.abs(ax - bx) + Math.abs(az - bz);
+}
+
+/** A "field army" unit: military, non-naval, not a settler/worker/scout.
+ *  Used by the conquest-feasibility dampener and the war goals below. */
+function isFieldUnit(u) {
+    return !!u && !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type) &&
+        !(UNIT_TYPE[u.type] && UNIT_TYPE[u.type].naval);
 }
 
 /** Classify the current game phase by turn number.
@@ -360,6 +367,7 @@ export function classifyReachability(tiles, fromX, fromZ, c, hasTransport) {
  *   unexploredTiles,    // number — count of tiles not yet owned by anyone (for scout goal)
  *   spyTargetKey,       // string|null — tile key of nearest enemy city (for spy goal)
  *   chokepointKey,      // string|null — tile key of a strategic chokepoint
+ *   gold,               // number — current treasury (for conquest feasibility)
  * }
  * Returns the ordered Goal[] (also written to aiState.goals when re-planned).
  */
@@ -374,7 +382,7 @@ export function selectGoals(input) {
         neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
         unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
         enemyKings = [],
-        tiles = null, myUnits = [],
+        tiles = null, myUnits = [], gold = 0,
     } = input;
 
     const enemySet = new Set(enemies || []);
@@ -398,6 +406,10 @@ export function selectGoals(input) {
 
     const personality = (factionDef && factionDef.aiPersonality) || 'BALANCED';
     const weights = PERSONALITY_WEIGHTS[personality] || PERSONALITY_WEIGHTS.BALANCED;
+
+    // Own field army (non-naval military units) — feeds the conquest
+    // feasibility check below.
+    const myFieldUnits = (myUnits || []).filter(isFieldUnit);
 
     const candidates = [];
     const push = (kind, score, targetTileKey, targetFaction, horizon, meta, plan = null) => {
@@ -514,8 +526,17 @@ export function selectGoals(input) {
                 { kind: 'boardArmy' },
                 { kind: 'sailTo', targetTileKey: `${tgt.x},${tgt.z}` },
             ] : null;
+            // Conquest feasibility (the "golden horde" scenario): a faction
+            // with a tiny army (< 4 field units) AND a weak treasury (< 100
+            // gold) cannot sustain a campaign — barracks, siege engines and
+            // the units themselves all cost gold it doesn't have. Halve the
+            // conquest score so settle/develop-economy win until the economy
+            // can support an army. Neutral (unclaimed) cities are exempt:
+            // capturing one needs no siege army and grows the economy, much
+            // like settling.
+            const feasibility = (!tgt.neutral && myFieldUnits.length < 4 && (gold || 0) < 100) ? 0.5 : 1.0;
             push('conquest',
-                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale * scarcityBoost,
+                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale * scarcityBoost * feasibility,
                 `${tgt.x},${tgt.z}`,
                 tgt.owner,
                 'short',

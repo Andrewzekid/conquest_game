@@ -446,6 +446,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         unexploredTiles, spyTargetKey, chokepointKey,
         enemyKings,
         tiles, myUnits,
+        gold: (resources && resources.gold) || 0,
     });
     if (aiState) aiState.goals = goals;
     const topGoal = goals[0] || null;
