@@ -300,6 +300,89 @@ describe('ai_goals new goal types', () => {
   });
 });
 
+describe('ai_goals decisive-battle goal', () => {
+  // INFANTRY combat value: hp 10 + attack 3*2 = 16 each.
+  const infAt = (owner, ...pos) => pos.map(([x, z]) => ({ type: 'INFANTRY', owner, hp: 10, attack: 3, x, z }));
+  const warInput = (overrides = {}) => baseInput({
+    factionDef: { id: 'crimson', aiPersonality: 'BALANCED' },
+    turn: 40, // mid game
+    enemies: ['azure'],
+    enemyCities: [{ x: 20, z: 20, owner: 'azure', fortification: 5 }],
+    myUnits: infAt('me', [0, 0], [1, 0], [0, 1], [1, 1]),
+    enemyUnits: infAt('azure', [10, 10], [11, 10], [10, 11], [11, 11]),
+    gold: 500,
+    ...overrides,
+  });
+
+  it('is created at war vs a field army with comparable power', () => {
+    const goals = selectGoals(warInput());
+    const db = goals.find(g => g.kind === 'decisive-battle');
+    expect(db).toBeTruthy();
+    expect(db.meta.clusters.length).toBe(1);
+    expect(db.meta.clusters[0].size).toBe(4);
+    expect(db.targetTileKey).toBe(`${db.meta.clusters[0].x},${db.meta.clusters[0].z}`);
+  });
+
+  it('stores multiple clusters when the enemy army is split', () => {
+    const goals = selectGoals(warInput({
+      myUnits: infAt('me', [0, 0], [1, 0], [0, 1], [1, 1], [2, 0]),
+      enemyUnits: infAt('azure', [10, 10], [11, 10], [10, 11], [30, 30], [31, 30], [30, 31]),
+    }));
+    const db = goals.find(g => g.kind === 'decisive-battle');
+    expect(db).toBeTruthy();
+    expect(db.meta.clusters.length).toBe(2);
+    expect(db.meta.clusters[0].size).toBe(3);
+    expect(db.meta.clusters[1].size).toBe(3);
+  });
+
+  it('is NOT created when the enemy field army is too small (< 4)', () => {
+    const goals = selectGoals(warInput({
+      enemyUnits: infAt('azure', [10, 10], [11, 10], [10, 11]),
+    }));
+    expect(goals.some(g => g.kind === 'decisive-battle')).toBe(false);
+  });
+
+  it('is NOT created when our power is below 0.8x the enemy\'s', () => {
+    const goals = selectGoals(warInput({
+      myUnits: infAt('me', [0, 0], [1, 0]),
+    }));
+    expect(goals.some(g => g.kind === 'decisive-battle')).toBe(false);
+  });
+
+  it('conquest still outranks it when a weak city is available', () => {
+    const goals = selectGoals(warInput({
+      enemyCities: [{ x: 5, z: 5, owner: 'azure', fortification: 1 }],
+    }));
+    expect(goals[0].kind).toBe('conquest');
+    expect(goals.some(g => g.kind === 'decisive-battle')).toBe(true);
+  });
+
+  it('is dropped when the enemy army is destroyed (goalValid)', () => {
+    const aiState = createAIState();
+    const noCities = { enemyCities: [], bestFoundSpotKey: null, myCityCount: 8, settlerTarget: 8 };
+    const g1 = selectGoals(warInput({ aiState, turn: 40, ...noCities }));
+    expect(g1[0].kind).toBe('decisive-battle');
+    // Within the lock window the enemy army is reduced to 2 field units.
+    const g2 = selectGoals(warInput({
+      aiState, turn: 41, ...noCities,
+      enemyUnits: infAt('azure', [10, 10], [11, 10]),
+    }));
+    expect(g2.some(g => g.kind === 'decisive-battle')).toBe(false);
+  });
+
+  it('is dropped when the war ends (goalValid)', () => {
+    const aiState = createAIState();
+    const noCities = { enemyCities: [], bestFoundSpotKey: null, myCityCount: 8, settlerTarget: 8 };
+    const g1 = selectGoals(warInput({ aiState, turn: 40, ...noCities }));
+    expect(g1[0].kind).toBe('decisive-battle');
+    const g2 = selectGoals(warInput({
+      aiState, turn: 41, ...noCities,
+      enemies: [], enemyUnits: [],
+    }));
+    expect(g2.some(g => g.kind === 'decisive-battle')).toBe(false);
+  });
+});
+
 describe('ai_goals develop-army goal', () => {
   // INFANTRY combat value: hp 10 + attack 3*2 = 16 each.
   const inf = (n, owner) => Array.from({ length: n }, () => ({ type: 'INFANTRY', owner, hp: 10, attack: 3 }));

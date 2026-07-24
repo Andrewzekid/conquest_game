@@ -1248,9 +1248,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // already near an enemy city — far too late to shape the buildup — so a
     // faction whose top goal is conquest force-enables the siege tweak. A
     // develop-army goal trains the same way: the whole point is building a
-    // siege + high-damage force instead of spamming cheap infantry.
+    // siege + high-damage force instead of spamming cheap infantry. A
+    // decisive-battle goal force-enables the decisive tweak (melee/cavalry
+    // over siege) — the target is the enemy's field army, not its walls.
     const trainObjective = (goalKind === 'conquest' || goalKind === 'develop-army')
-        ? { ...activeObjectives, siege: true } : activeObjectives;
+        ? { ...activeObjectives, siege: true }
+        : goalKind === 'decisive-battle' ? { ...activeObjectives, decisive: true }
+        : activeObjectives;
     // Persist the effective (objective-tweaked) composition target so the AI
     // debug panel can show the target the AI is actually training toward,
     // rather than the untweaked base faction composition.
@@ -2119,7 +2123,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const conquestGroups = [...conquest];
     let strategicTarget = null;
     let flankAssignments = [];
-    if (conquestGroups.length > 0) {
+    // A decisive-battle top goal targets enemy ARMY CLUSTERS, not cities —
+    // skip the shared city target so each group picks a cluster instead
+    // (see the claimedClusters threading below).
+    if (conquestGroups.length > 0 && goalKind !== 'decisive-battle') {
         const goalTargetKey = topGoal && topGoal.targetTileKey ? topGoal.targetTileKey : null;
         strategicTarget = computeStrategicTarget(conquestGroups, tiles, units, owner, isAtWar, aiState, goalTargetKey);
         if (strategicTarget && conquestGroups.length >= 2) {
@@ -2132,6 +2139,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const REINFORCE_RANGE = 12;
     const groupObjectives = new Map();   // group -> objective tile
     const groupStances = new Map();      // group -> stance
+    // Decisive-battle: cluster keys ("x,z") already assigned to a conquest
+    // group this turn, so groups distribute across enemy armies.
+    const claimedClusters = new Set();
     for (const g of groups) {
         let objective, stance;
         if (conquest.has(g)) {
@@ -2148,7 +2158,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     if (flankObj) objective = flankObj;
                 }
             } else {
-                objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal, lords);
+                objective = pickGroupObjective(g, tiles, owner, isAtWar, stance, units, topGoal, lords, claimedClusters);
             }
         } else {
             const c = groupCentroid(g);
@@ -3764,7 +3774,7 @@ function groupIsInTrouble(group, units, owner, atWar, isAtWar) {
  *    city to attack (aggressive posture), or nearest unowned tile for expansion.
  *  - When engaging: use pickTarget's tiering (enemy city > neutral city > enemy tile).
  *  This ensures armies mobilize toward enemy borders instead of staying home. */
-function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal = null, lords = null) {
+function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal = null, lords = null, claimedClusters = null) {
     const c = groupCentroid(group);
 
     // Attack-king goal: when the top goal is an attack-king goal with a known
@@ -3801,6 +3811,28 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal
             if (d < bestDist) { bestDist = d; best = t; }
         }
         if (best) return best;
+    }
+
+    // Decisive-battle goal: hunt the enemy's field army. Each conquest group
+    // is sent at the nearest UNCLAIMED enemy army cluster (claimedClusters
+    // tracks this turn's assignments, so multiple groups spread across
+    // multiple enemy armies instead of stacking on one). King-led groups
+    // never beeline at an army — assassinating kings is attack-king's job.
+    // Falls through to normal city targeting when no (unclaimed) clusters
+    // remain.
+    if (topGoal && topGoal.kind === 'decisive-battle' && !(group.lord && group.lord.isKing) &&
+        topGoal.meta && Array.isArray(topGoal.meta.clusters)) {
+        const available = topGoal.meta.clusters.filter(cl =>
+            !(claimedClusters && claimedClusters.has(`${cl.x},${cl.z}`)));
+        let best = null, bestD = Infinity;
+        for (const cl of available) {
+            const d = manhattan(c.x, c.z, cl.x, cl.z);
+            if (d < bestD) { bestD = d; best = cl; }
+        }
+        if (best) {
+            if (claimedClusters) claimedClusters.add(`${best.x},${best.z}`);
+            return { x: best.x, z: best.z };
+        }
     }
 
     // Hold or Engage: seek out targets aggressively.

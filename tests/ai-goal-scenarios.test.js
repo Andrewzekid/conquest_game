@@ -568,3 +568,79 @@ describe('develop-army execution', () => {
         expect(builds[0]).toBe('SIEGE_WORKSHOP');
     });
 });
+
+
+// ===========================================================================
+// 7. Decisive-battle goal execution
+// ===========================================================================
+describe('decisive-battle execution', () => {
+    // Locked decisive-battle goal with TWO enemy army clusters. Two own
+    // army groups (the strongest of four) are both nearer to cluster 1, so
+    // without cluster claiming BOTH would pick cluster 1 — the claiming
+    // mechanism must send the second group to cluster 2 instead.
+    function decisiveBattleInput() {
+        const tiles = plainsGrid(0, 20, 0, 20, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 5, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        // Group A (processed first): 2 cataphracts near (6,10).
+        for (const [x, z] of [[5, 10], [6, 10]]) {
+            const u = makeUnit('CATAPHRACT', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Group B: 2 cataphracts near (14,10) — also nearer to cluster 1
+        // (dist 7) than to cluster 2 (dist 8).
+        for (const [x, z] of [[13, 10], [14, 10]]) {
+            const u = makeUnit('CATAPHRACT', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Two weaker filler groups so conquestCount = ceil(4/2) = 2 and only
+        // A + B are conquest groups.
+        for (const [x, z] of [[5, 18], [15, 18]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Enemy cluster 1: 2 infantry at (8,10)-(8,11) -> centroid (8,11).
+        // Enemy cluster 2: 2 infantry at (19,12)-(19,13) -> centroid (19,13)
+        // (far enough from the filler groups that they aren't "in trouble"
+        // and don't pull a conquest group away via reinforcement).
+        for (const [x, z] of [[8, 10], [8, 11], [19, 12], [19, 13]]) {
+            const u = makeUnit('INFANTRY', 'enemy', x, z, { factionId: 'azure' });
+            units.set(u.id, u);
+        }
+        const aiState = createAIState();
+        aiState.goals = [{
+            kind: 'decisive-battle', priority: 1, horizon: 'short',
+            targetTileKey: '8,11', targetFaction: null,
+            meta: { clusters: [{ x: 8, z: 11, size: 2 }, { x: 19, z: 13, size: 2 }] },
+            plan: null, stabilityTurns: 3, born: 0,
+        }];
+        aiState.planLockUntil = 100; // keep the seeded goal all turn
+        const input = baseAIInput(tiles, units, { aiState });
+        return input;
+    }
+
+    it('distributes two conquest groups across two enemy army clusters', () => {
+        const input = decisiveBattleInput();
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        const hunting = summary.filter(g => (g.composition.CATAPHRACT || 0) > 0);
+        expect(hunting.length).toBe(2);
+        const objectives = hunting.map(g => g.objective).sort();
+        expect(objectives).toEqual(['19,13', '8,11']);
+    });
+
+    it('falls back to city targeting when no clusters remain', () => {
+        const input = decisiveBattleInput();
+        input.aiState.goals[0].meta.clusters = [];
+        // Give the enemy a reachable city so the fallback has a target.
+        input.tiles.set('18,18', makeTile(18, 18, 'CITY', 'enemy',
+            { cityName: 'Camp', cityLevel: 1, fortification: 0, fortMax: 3 }));
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        const hunting = summary.filter(g => (g.composition.CATAPHRACT || 0) > 0);
+        expect(hunting.length).toBe(2);
+        // No clusters: both groups target the enemy city instead of an army.
+        for (const g of hunting) expect(g.objective).toBe('18,18');
+    });
+});

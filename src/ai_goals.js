@@ -21,7 +21,7 @@ import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
 // Goal kinds, in the canonical order used for display/debug.
 export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
     'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king',
-    'take-key-city', 'disrupt-victory', 'resource-war', 'develop-army'];
+    'take-key-city', 'disrupt-victory', 'resource-war', 'develop-army', 'decisive-battle'];
 
 // Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
 // conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
@@ -29,13 +29,17 @@ export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'd
 // posture (it previously only affected diplomacy rolls).
 const PERSONALITY_WEIGHTS = {
     AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6,
-                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4, 'develop-army': 1.1 },
+                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4, 'develop-army': 1.1,
+                  'decisive-battle': 1.2 },
     DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6, 'develop-army': 1.0 },
+                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6, 'develop-army': 1.0,
+                  'decisive-battle': 0.9 },
     ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
-                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7, 'develop-army': 0.9 },
+                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7, 'develop-army': 0.9,
+                  'decisive-battle': 0.8 },
     BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
-                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0, 'develop-army': 1.0 },
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0, 'develop-army': 1.0,
+                  'decisive-battle': 1.0 },
 };
 
 // Base scores per goal kind before personality weighting.
@@ -43,6 +47,7 @@ const BASE_SCORE = {
     conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
     diplomacy: 40, spy: 35, chokepoint: 45, scout: 55, 'attack-king': 85,
     'take-key-city': 75, 'disrupt-victory': 90, 'resource-war': 65, 'develop-army': 60,
+    'decisive-battle': 80,
 };
 
 function manhattan(ax, az, bx, bz) {
@@ -64,6 +69,32 @@ function fieldUnitValue(u) {
 /** Total combat value of a field-unit list. */
 function fieldPower(list) {
     return (list || []).reduce((s, u) => s + fieldUnitValue(u), 0);
+}
+
+/** Cluster field units spatially: a unit joins the cluster whose nearest
+ *  member is within Manhattan 6, else it starts a new cluster. Returns up to
+ *  `max` largest clusters as {x, z, size} centroids, largest first. Used by
+ *  the decisive-battle goal so multiple army groups can be distributed
+ *  across multiple enemy armies at once. */
+function clusterFieldUnits(fieldUnits, max = 3) {
+    const clusters = [];
+    for (const u of fieldUnits) {
+        let best = null, bestD = Infinity;
+        for (const cl of clusters) {
+            for (const m of cl.members) {
+                const d = manhattan(u.x, u.z, m.x, m.z);
+                if (d < bestD) { bestD = d; best = cl; }
+            }
+        }
+        if (best && bestD <= 6) best.members.push(u);
+        else clusters.push({ members: [u] });
+    }
+    clusters.sort((a, b) => b.members.length - a.members.length);
+    return clusters.slice(0, max).map(cl => {
+        let sx = 0, sz = 0;
+        for (const m of cl.members) { sx += m.x; sz += m.z; }
+        return { x: Math.round(sx / cl.members.length), z: Math.round(sz / cl.members.length), size: cl.members.length };
+    });
 }
 
 /** Classify the current game phase by turn number.
@@ -264,6 +295,15 @@ function goalValid(goal, ctx) {
             if (ctx.enemies.size === 0) return false;
             if (ctx.hasWeakConquestTarget) return false;
             return !(ctx.enemyPower > 0 && ctx.myPower >= ctx.enemyPower * 1.5);
+        case 'decisive-battle': {
+            // Valid while at war and the enemy still fields an army worth
+            // hunting (>= 3 field units). Re-derived from CURRENT units every
+            // turn (never from stale unit ids), so the goal drops the turn
+            // after the enemy army is destroyed.
+            if (ctx.enemies.size === 0) return false;
+            const field = (ctx.enemyUnits || []).filter(u => ctx.enemies.has(u.owner) && isFieldUnit(u));
+            return field.length >= 3;
+        }
         default:
             return false;
     }
@@ -601,6 +641,24 @@ export function selectGoals(input) {
             null, null, 'medium', {});
     }
 
+    // Decisive Battle: at war, the enemy has a massed field army (>= 4 field
+    // units) and ours is comparable (>= 0.8x their power) — hunting that army
+    // down is a war objective in its own right, separate from taking cities.
+    // meta.clusters stores up to 3 enemy army clusters so multiple conquest
+    // groups can be distributed across them (see pickGroupObjective in
+    // ai.js); targetTileKey is the largest cluster's centroid. Scores below
+    // conquest: taking cities still wins wars.
+    if (enemySet.size > 0 && enemyFieldUnits.length >= 4 && myPower >= enemyPower * 0.8) {
+        const clusters = clusterFieldUnits(enemyFieldUnits);
+        if (clusters.length) {
+            push('decisive-battle',
+                BASE_SCORE['decisive-battle'] * weights['decisive-battle'],
+                `${clusters[0].x},${clusters[0].z}`,
+                null, 'short',
+                { clusters });
+        }
+    }
+
     // War Objectives: targeted strategic goals that make wars more meaningful
     // and drive AI to pursue specific objectives beyond generic conquest.
 
@@ -739,16 +797,20 @@ export function selectGoals(input) {
     const vtModifiers = {
         domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
                       diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3,
-                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1, 'develop-army': 0.8 },
+                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1, 'develop-army': 0.8,
+                      'decisive-battle': 1.2 },
         science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
                       diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9,
-                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9, 'develop-army': 1.1 },
+                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9, 'develop-army': 1.1,
+                      'decisive-battle': 0.7 },
         economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
                       diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8,
-                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4, 'develop-army': 1.2 },
+                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4, 'develop-army': 1.2,
+                      'decisive-battle': 0.6 },
         score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
                       diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1,
-                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0, 'develop-army': 1.0 }
+                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0, 'develop-army': 1.0,
+                      'decisive-battle': 1.0 }
     };
     const vtMod = vtModifiers[vt] || vtModifiers.domination;
     for (const c of candidates) {
@@ -761,13 +823,16 @@ export function selectGoals(input) {
     const phaseMod = {
         early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
                   diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9,
-                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8, 'develop-army': 1.0 },
+                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8, 'develop-army': 1.0,
+                  'decisive-battle': 0.8 },
         mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
                   diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1,
-                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0, 'develop-army': 1.1 },
+                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0, 'develop-army': 1.1,
+                  'decisive-battle': 1.1 },
         late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
                   diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3,
-                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2, 'develop-army': 0.9 },
+                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2, 'develop-army': 0.9,
+                  'decisive-battle': 1.2 },
     };
     const pm = phaseMod[phase] || phaseMod.mid;
     for (const c of candidates) {
