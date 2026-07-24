@@ -146,3 +146,20 @@ describe('victory panel per-faction standings (source-invariant)', () => {
         expect(indexHtml).toContain('.vp-faction-row .vp-detail');
     });
 });
+
+// Regression: score-track progress was turn/200 — identical for every faction
+// (the "everyone shows 69%" bug). It must be leader-relative, and per-track
+// progress must be exposed for the standings bars.
+describe('getAllFactionProgress score progress (source-invariant)', () => {
+    const gameSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'game.js'), 'utf-8');
+
+    it('score progress is leader-relative, not turn/200', () => {
+        expect(gameSrc).toMatch(/const maxScore = Math\.max\(1, \.\.\.FACTIONS/);
+        expect(gameSrc).toMatch(/const scoreProg = \(scores\[f\] \|\| 0\) \/ maxScore;/);
+        expect(gameSrc).not.toMatch(/\{ type: 'score', progress: \(gs\.turn \|\| 0\) \/ SCORE_VICTORY_TURN \}/);
+    });
+
+    it('per-track progress is exposed for the standings UI', () => {
+        expect(gameSrc).toMatch(/tracks: \{ domination: dominationProg, science: scienceProg, economic: economicProg, score: scoreProg \}/);
+    });
+});

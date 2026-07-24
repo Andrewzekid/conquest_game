@@ -5543,6 +5543,12 @@ export class Game {
         const result = {};
         const totalTechs = Object.keys(TECHS).length;
         const scores = this._calculateScores();
+        // Leader-relative score progress: the score victory is a RACE, so a
+        // faction's score progress is its score vs the current leader's (the
+        // old turn/200 value was identical for every faction -- the standings
+        // panel showed the same % for everyone).
+        const maxScore = Math.max(1, ...FACTIONS.filter(f => !(gs.eliminated && gs.eliminated.has(f)))
+            .map(f => scores[f] || 0));
 
         for (const f of FACTIONS) {
             if (gs.eliminated && gs.eliminated.has(f)) {
@@ -5570,12 +5576,14 @@ export class Game {
                 tradeRoutes / Math.max(1, ECONOMIC_VICTORY_TRADE_ROUTES)
             );
 
+            const scoreProg = (scores[f] || 0) / maxScore;
+
             // Closest victory
             const victories = [
                 { type: 'domination', progress: dominationProg },
                 { type: 'science', progress: scienceProg },
                 { type: 'economic', progress: economicProg },
-                { type: 'score', progress: (gs.turn || 0) / SCORE_VICTORY_TURN }
+                { type: 'score', progress: scoreProg }
             ];
             const closest = victories.reduce((a, b) => b.progress > a.progress ? b : a);
 
@@ -5590,6 +5598,7 @@ export class Game {
                 victoryTarget: aiSt ? aiSt.victoryTarget : null,
                 closestVictory: closest.type,
                 closestProgress: closest.progress,
+                tracks: { domination: dominationProg, science: scienceProg, economic: economicProg, score: scoreProg },
                 isDominant: false // will be set from power rankings if available
             };
         }
