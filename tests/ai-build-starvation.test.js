@@ -113,3 +113,64 @@ describe('critical-build starvation disband', () => {
         expect(harbor.reason).toBeTruthy();    // with a reason, not invisible
     });
 });
+
+// ---------------------------------------------------------------------------
+// Continuous bridge lines across multi-tile rivers (B10)
+// ---------------------------------------------------------------------------
+describe('continuous bridge lines', () => {
+    it('engineer bridges a 2-tile-wide river across consecutive turns', () => {
+        // ai1 engineer at (5,5), objective enemy city at (9,5); river band at
+        // x=6 and x=7 (2 tiles wide). Turn 1: bridge (6,5). The engineer then
+        // steps onto the new bridge and bridges (7,5) on a later turn.
+        const tiles = makeTileMap([
+            [5, 5, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [5, 4, 'PLAINS', 'ai1'], [5, 6, 'PLAINS', 'ai1'], [4, 5, 'PLAINS', 'ai1'],
+            [6, 5, 'RIVER', null], [7, 5, 'RIVER', null],
+            [8, 5, 'PLAINS', null], [8, 4, 'PLAINS', null], [8, 6, 'PLAINS', null],
+            [9, 5, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 5, fortMax: 5 }],
+            [6, 4, 'PLAINS', null], [6, 6, 'PLAINS', null], [7, 4, 'PLAINS', null], [7, 6, 'PLAINS', null],
+        ]);
+        const units = new Map();
+        const eng = makeUnit('ENGINEER', 'ai1', 5, 5, { factionId: 'violet' });
+        units.set(eng.id, eng);
+        const input = {
+            tiles, units,
+            resources: { gold: 500, food: 200, wood: 50, iron: 30, production: 100 },
+            owner: 'ai1', buildings: new Map(), influence: null,
+            factionDef: FACTION_DEFS.violet,
+            diploState: (() => {
+                const rel = {
+                    state: DIPLOMACY_STATES.WAR, turnsAllied: 0, turnsAtWar: 3, relationship: -50,
+                    warsDeclared: 1, peaceTreaties: 0, tradesMade: 0, brokenTreaties: 0, grievances: 0,
+                    grievanceLog: [], expiresOn: null, formalWar: true, lastWarDeclaredTurn: 1, grudges: {}, trust: 0.1,
+                };
+                return { relations: { 'ai1:enemy': { ...rel }, 'enemy:ai1': { ...rel } }, pendingOffers: [], diplomaticEvents: [] };
+            })(),
+            lords: [], tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+            aiState: createAIState(), aiTechStates: { ai1: createTechState() },
+            victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            currentTurn: 20,
+        };
+        // Turn 1: bridge the first river tile.
+        let actions = runAI(input);
+        const b1 = actions.find(a => a.type === 'buildBridge');
+        expect(b1).toBeTruthy();
+        expect(b1.tileKey).toBe('6,5');
+        tiles.get('6,5').bridge = true; // executor would set this
+
+        // Later turns: engineer steps onto the bridge and bridges the second.
+        let bridgedSecond = false;
+        for (let t = 0; t < 4 && !bridgedSecond; t++) {
+            for (const u of units.values()) { u.hasMovedThisTurn = false; u.hasAttackedThisTurn = false; }
+            actions = runAI(input);
+            for (const a of actions) {
+                if (a.type === 'move' && a.unitId === eng.id) { eng.x = a.tx; eng.z = a.tz; }
+                if (a.type === 'buildBridge' && a.tileKey === '7,5') {
+                    tiles.get('7,5').bridge = true;
+                    bridgedSecond = true;
+                }
+            }
+        }
+        expect(bridgedSecond).toBe(true);
+    });
+});

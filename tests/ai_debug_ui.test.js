@@ -41,8 +41,8 @@ describe('buildAIDebugHTML — resource income', () => {
         expect(html).toContain('wood: 10 (+');
         expect(html).toContain('iron: 5 (+');
         expect(html).toContain('production: 8 (+');
-        // A lone Lv1 city yields 2 + level = 3 food per turn.
-        expect(html).toContain('food: 20 (+3/t)');
+        // A lone Lv1 city yields 1 + level = 2 food per turn.
+        expect(html).toContain('food: 20 (+2/t)');
     });
 
     it('skips the income line when tiles/resources are not provided', () => {

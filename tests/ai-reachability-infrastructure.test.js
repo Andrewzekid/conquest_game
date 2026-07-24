@@ -140,11 +140,13 @@ describe('A. Reachability-aware conquest targets', () => {
             expect(isReachableByLand(tiles, 0, 0, 2, 0)).toBe(false);
         });
 
-        it('returns false when an unbridged river blocks the path', () => {
+        it('returns true across an unbridged river (engineers can bridge it)', () => {
+            // Rivers count as land-reachable: a river-separated target is a
+            // land objective (build a bridge line), not a naval one.
             const tiles = makeTileMap([
                 [0, 0, 'PLAINS', null], [1, 0, 'RIVER', null], [2, 0, 'PLAINS', null],
             ]);
-            expect(isReachableByLand(tiles, 0, 0, 2, 0)).toBe(false);
+            expect(isReachableByLand(tiles, 0, 0, 2, 0)).toBe(true);
         });
 
         it('returns true when a bridged river is on the path', () => {

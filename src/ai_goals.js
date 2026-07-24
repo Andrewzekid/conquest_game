@@ -307,8 +307,12 @@ export function isReachableByLand(tiles, fromX, fromZ, toX, toZ, maxSteps) {
             if (visited.has(k)) continue;
             const t = tiles.get(k);
             if (!t) continue;
-            // Land passability: WATER and unbridged RIVER are impassable.
-            if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) {
+            // Land passability: WATER is impassable. RIVER counts as passable
+            // — engineers can bridge rivers, so a river-separated target is a
+            // land objective (build bridges), not a naval one. Without this,
+            // factions with a river between them and the target never pursue
+            // it by land (the violet-order scenario).
+            if (t.terrain === 'WATER') {
                 visited.add(k);
                 continue;
             }

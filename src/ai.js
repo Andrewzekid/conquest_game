@@ -2531,10 +2531,12 @@ function findBridgeTarget(unit, tiles, owner, isAtWar, atWar, allowPeaceBridge) 
         if (!river || river.terrain !== 'RIVER' || river.bridge) continue;
         const far = tiles.get(`${unit.x + 2 * dx},${unit.z + 2 * dz}`);
         if (!far) continue;
-        // Far side must be passable land the engineer can step onto once the
-        // bridge is built (not water/mountain, not another unbridged river).
+        // Far side must not be water/mountain. It MAY be another unbridged
+        // river: rivers can be several tiles wide, and the only way across is
+        // a continuous bridge line — build this tile now, step onto it next
+        // turn, and bridge the next one (previously the far-side river check
+        // blocked anything but 1-tile bridges forever).
         if (far.terrain === 'WATER' || far.terrain === 'MOUNTAIN') continue;
-        if (far.terrain === 'RIVER' && !far.bridge) continue;
         if (manhattan(far.x, far.z, objective.x, objective.z) < curDist) return river;
     }
     return null;
