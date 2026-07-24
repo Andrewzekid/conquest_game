@@ -766,12 +766,16 @@ export function bindUI(gameState, callbacks) {
     }
 
     function showBuildMenu(tile) {
-        if (!tile || tile.owner !== PLAYER_FACTION) {
+        const influence = tile ? getInfluencedTiles(gameState.tiles, PLAYER_FACTION) : new Set();
+        const inInfluence = tile ? influence.has(`${tile.x},${tile.z}`) : false;
+        // Buildable anywhere inside a city's influence (the engine's
+        // constructBuilding only requires influence, not ownership) — gating
+        // the menu on ownership hid ALL options on influenced-but-unowned
+        // tiles (e.g. an island tile inside the city's radius).
+        if (!tile || (tile.owner !== PLAYER_FACTION && !inInfluence)) {
             if (els.buildMenu) els.buildMenu.innerHTML = '';
             return;
         }
-        const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
-        const inInfluence = influence.has(`${tile.x},${tile.z}`);
         const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.techState);
         if (els.buildMenu) {
             els.buildMenu.innerHTML = '';
@@ -793,16 +797,25 @@ export function bindUI(gameState, callbacks) {
                 els.buildMenu.appendChild(note);
             }
             for (const b of buildable) {
-                if (!b.canBuild) continue;
                 const btn = document.createElement('button');
                 btn.textContent = `${b.name} (${formatCost(b.cost)})`;
                 btn.title = (BUILDING_TYPE[b.type] && BUILDING_TYPE[b.type].desc) ? BUILDING_TYPE[b.type].desc : (b.reason || '');
                 btn.style.cssText = 'display:block; margin:2px; padding:4px; width:100%;';
                 btn.onmouseenter = () => setDesc(describeBuilding(b.type));
                 btn.onmouseleave = () => setDesc('');
-                btn.onclick = () => {
-                    if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
-                };
+                if (!b.canBuild) {
+                    // Show unavailable options greyed out WITH the reason —
+                    // hiding them made the menu look broken/empty (e.g.
+                    // Harbor not appearing on a coastal tile you can't yet
+                    // afford, or a workshop outside influence).
+                    btn.disabled = true;
+                    btn.style.opacity = '0.45';
+                    btn.textContent += b.reason ? ` — ${b.reason}` : '';
+                } else {
+                    btn.onclick = () => {
+                        if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
+                    };
+                }
                 els.buildMenu.appendChild(btn);
             }
 

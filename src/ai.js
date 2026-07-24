@@ -1014,6 +1014,50 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
+    // 1e. Critical-build starvation: a high-priority build order (HARBOR for
+    //     naval expansion / cross-water conquest, SIEGE_WORKSHOP for conquest)
+    //     that can't be afforded because a resource isn't accumulating (net
+    //     flow <= 0 — a trebuchet eating all the wood on a woodless island)
+    //     would sit in the build order forever. Disband one unit whose upkeep
+    //     consumes the missing resource so the stock can accumulate. Never
+    //     disbands specialists or drops the army below 2 units.
+    {
+        const flow = (aiState && aiState.lastFlow) || {};
+        const harborOwned = owned.some(t => (buildings.get(`${t.x},${t.z}`) || []).includes('HARBOR'));
+        const conqAcrossWater = goalKind === 'conquest' && topGoal && topGoal.meta && topGoal.meta.requiresNaval;
+        const needsHarborNow = !harborOwned && (isIslandFaction || needsNavalExpansion ||
+            goalKind === 'expand-islands' || conqAcrossWater);
+        const needsWorkshopNow = !hasSiegeWorkshop && wantsConquest && myCityCount >= 1;
+        const criticals = [];
+        if (needsHarborNow && findBuildSite('HARBOR', owned, buildings, tiles)) criticals.push('HARBOR');
+        if (needsWorkshopNow && findBuildSite('SIEGE_WORKSHOP', owned, buildings, tiles)) criticals.push('SIEGE_WORKSHOP');
+        for (const bType of criticals) {
+            // Check affordability against the turn's ORIGINAL stock, not the
+            // spending-dwindled `res` — the question is "can this build ever
+            // be afforded", not "is anything left after this turn's spree".
+            if (canAffordBuilding(bType, resources)) break; // affordable — no starvation
+            const cost = BUILDING_TYPE[bType].cost;
+            const missing = Object.entries(cost)
+                .filter(([r, amt]) => (resources[r] || 0) < amt && (flow[r] || 0) <= 0)
+                .map(([r]) => r);
+            if (!missing.length) continue;
+            // The missing resource can't accumulate on its own — free up its
+            // upkeep by disbanding the cheapest unit that consumes it (the
+            // frost-clan trebuchet eating the harbor's wood).
+            const candidate = myUnits
+                .filter(u => !['SETTLER', 'WORKER', 'ENGINEER', 'SCOUT'].includes(u.type) && !isNaval(u))
+                .filter(u => {
+                    const up = UNIT_TYPE[u.type] && UNIT_TYPE[u.type].upkeep;
+                    return up && missing.some(r => (up[r] || 0) > 0);
+                })
+                .sort((a, b) => unitValue(a) - unitValue(b))[0];
+            if (candidate && myUnits.length > 2) {
+                actions.push({ type: 'disband', unitId: candidate.id });
+                break; // one disband per turn is enough
+            }
+        }
+    }
+
     // 2. Civ6-style aggressive expansion: train settlers aggressively to
     //     claim territory. Caps are scaled by map size and existing cities, and
     //     by the global SETTLER_AGGRESSION multiplier (data-driven tuning).
