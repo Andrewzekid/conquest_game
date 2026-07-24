@@ -200,3 +200,45 @@ describe('group siege cohesion (planGroup)', () => {
             manhattan(6, 5, input.enemyCityX, 5))).toBe(true);
     });
 });
+
+// ---------------------------------------------------------------------------
+// B8 — ranged besiege from attackRange + no hold-forever without foes
+// ---------------------------------------------------------------------------
+describe('ranged besiege and hold-forever fix', () => {
+    it('trebuchet besieges an EMPTY enemy city from range 3 (no defender needed)', () => {
+        // Escorted trebuchet 3 tiles from the enemy city: block 4b must emit a
+        // besiege action even though the city has no garrison to attack.
+        const input = escortSetup([['TREBUCHET', 9, 5], ['INFANTRY', 9, 4]]);
+        const actions = runAI(input);
+        const treb = input.made[0];
+        const besieges = actions.filter(a => a.type === 'besiege' && a.unitId === treb.id);
+        expect(besieges.length).toBe(1);
+        expect(besieges[0].tileKey).toBe('12,5');
+    });
+
+    it('lone artillery with no foes near ADVANCES toward the city (no hold-forever)', () => {
+        // No escorts anywhere and no enemy units: the engine must advance on
+        // the city (a static city can't retaliate) instead of holding forever.
+        const input = escortSetup([['ARTILLERY', 6, 5]]);
+        const actions = runAI(input);
+        const art = input.made[0];
+        const moves = movesFor(actions, art);
+        expect(moves.length).toBe(1);
+        expect(moves[0].tx).toBeGreaterThan(art.x - 1); // moved toward x=12
+    });
+
+    it('siege under threat with NO escort left still advances (no permanent stall)', () => {
+        // An enemy cavalry unit 4 tiles out (beyond the trebuchet's range 3,
+        // but within its moveRange+attack threat reach) and no friendly
+        // escorts: rather than holding forever, the engine keeps advancing.
+        const input = escortSetup([['TREBUCHET', 7, 5]]);
+        const foe = makeUnit('CAVALRY', 'enemy', 11, 5, { factionId: 'azure' });
+        input.units.set(foe.id, foe);
+        const actions = runAI(input);
+        const treb = input.made[0];
+        // Either advances toward the city or besieges — but never freezes
+        // (previously: no escort → unconditional hold).
+        const relevant = actions.filter(a => (a.type === 'move' || a.type === 'besiege') && a.unitId === treb.id);
+        expect(relevant.length).toBe(1);
+    });
+});

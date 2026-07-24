@@ -4274,9 +4274,15 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     {
         for (const u of members) {
             if (acted.has(u.id) || u.hasAttackedThisTurn) continue;
-            // Besiege an adjacent fortified enemy city (siege units only).
+            // Besiege an enemy city (siege units only). Ranged siege engines
+            // shell from their attack range — no need to stand adjacent (an
+            // empty city otherwise takes zero damage from a trebuchet line).
             if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].besiege) {
-                const ec = findAdjacentEnemyCity(u, tiles, owner, isAtWar);
+                const range = UNIT_TYPE[u.type].attackRange || 1;
+                const found = range > 1
+                    ? findTargetCityWithin(u, tiles, owner, isAtWar, range)
+                    : null;
+                const ec = found ? found.city : findAdjacentEnemyCity(u, tiles, owner, isAtWar);
                 if (ec && (ec.fortification || 0) > 0) {
                     out.push({ type: 'besiege', unitId: u.id, tileKey: `${ec.x},${ec.z}` });
                     acted.add(u.id);
@@ -4566,14 +4572,27 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
         if (isFragile(u) && !hasScreen(u, units, owner)) return; // hold behind the screen
         // Siege escort rule: siege engines/towers advance on the objective only
         // while a friendly combat escort (melee/ranged/cavalry) is within
-        // SIEGE_ESCORT_RADIUS. Unescorted, they move to rejoin the nearest
-        // escort instead — or hold when the faction has none — so siege never
-        // ends the turn ahead of the army that must protect it.
+        // SIEGE_ESCORT_RADIUS. The rule only bites when a mobile enemy could
+        // actually reach the engine (a foe within threat range) — a static
+        // city can't retaliate, so with no foes near, siege advances freely.
+        // Unescorted under threat, it moves to rejoin the nearest escort; with
+        // no escort left at all it keeps advancing regardless — holding
+        // forever never takes the city (the "siege shuffles in place" bug).
         let target = objective;
         if (SIEGE_TYPES.has(u.type)) {
-            const esc = nearestEscort(u, units, owner);
-            if (!esc) return;
-            if (esc.dist > SIEGE_ESCORT_RADIUS) target = esc.unit;
+            let foeNear = false;
+            for (const e of units.values()) {
+                if (e.owner === owner || e.boarded) continue;
+                if (isAtWar && !isAtWar(e.owner)) continue;
+                if (isNaval(e)) continue;
+                const ed = Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z));
+                const reach = ((UNIT_TYPE[e.type] && UNIT_TYPE[e.type].moveRange) || 2) + 1;
+                if (ed <= reach + 2) { foeNear = true; break; }
+            }
+            if (foeNear) {
+                const esc = nearestEscort(u, units, owner);
+                if (esc && esc.dist > SIEGE_ESCORT_RADIUS) target = esc.unit;
+            }
         }
         const step = stepToward(u, target, tiles, owner, units, moved, isAtWar);
         if (step && !moved.has(`${step.x},${step.z}`)) {

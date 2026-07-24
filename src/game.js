@@ -4941,6 +4941,11 @@ export class Game {
                     const unit = this.gameState.units.get(action.unitId);
                     const tile = this.tiles.get(action.tileKey);
                     if (unit && tile) {
+                        // Range check: melee siege must be adjacent; ranged
+                        // siege shells from up to its attackRange away.
+                        const bsRange = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].attackRange) || 1;
+                        const bsDist = Math.max(Math.abs(unit.x - tile.x), Math.abs(unit.z - tile.z));
+                        if (bsDist > bsRange) break;
                         const msgs = besiegeCity(unit, tile);
                         if (tile.fortification <= 0 && !tile.breachedTurn) {
                             tile.breachedTurn = (this.gameState.turn || 0) + 1;
