@@ -382,7 +382,7 @@ describe('ranged combat vs unbreached cities', () => {
 // ---------------------------------------------------------------------------
 describe('siege tower support', () => {
     it('siege tower cost is reduced and the defense reduction is a named constant', () => {
-        expect(SIEGE_TOWER_COST).toEqual({ gold: 25, wood: 10, iron: 0, production: 10 });
+        expect(SIEGE_TOWER_COST).toEqual({ gold: 20, wood: 8, iron: 0, production: 8 });
         expect(SIEGE_TOWER_CITY_DEFENSE_REDUCTION).toBe(TERRAIN_BONUS.CITY.defense / 2);
     });
 

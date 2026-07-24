@@ -323,3 +323,57 @@ describe('battle', () => {
     });
   });
 });
+
+describe('ranged distance falloff (B9)', () => {
+  // Full damage adjacent, 80% at 2 tiles, 25% at 3 tiles.
+  const noDodge = () => vi.spyOn(Math, 'random').mockReturnValue(0.99);
+
+  it('adjacent ranged attack deals full damage', () => {
+    const spy = noDodge();
+    try {
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 0, 1, { hp: 30, maxHp: 30 });
+      const r = resolveCombat(atk, def, 'PLAINS');
+      // base: floor(4 - 2*0.3) = 3
+      expect(r.damageToDefender).toBe(3);
+    } finally { spy.mockRestore(); }
+  });
+
+  it('distance 2 deals 80% damage', () => {
+    const spy = noDodge();
+    try {
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 0, 2, { hp: 30, maxHp: 30 });
+      const r = resolveCombat(atk, def, 'PLAINS');
+      expect(r.damageToDefender).toBe(Math.floor(3 * 0.8));
+    } finally { spy.mockRestore(); }
+  });
+
+  it('distance 3 deals 25% damage', () => {
+    const spy = noDodge();
+    try {
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('INFANTRY', 'b', 0, 3, { hp: 30, maxHp: 30 });
+      const r = resolveCombat(atk, def, 'PLAINS');
+      expect(r.damageToDefender).toBe(Math.max(1, Math.floor(3 * 0.25)));
+    } finally { spy.mockRestore(); }
+  });
+});
+
+describe('B9 config tuning', () => {
+  it('artillery lines have splash; modern artillery has radius 2', async () => {
+    const { UNIT_TYPE } = await import('../src/config.js');
+    expect(UNIT_TYPE.ARTILLERY.aoe).toBe(true);
+    expect(UNIT_TYPE.ARTILLERY.aoeRadius).toBe(1);
+    for (const t of ['FIELD_GUN', 'SIEGE_CANNON', 'RAILGUN', 'HORSE_ARTILLERY']) {
+      expect(UNIT_TYPE[t].aoe).toBe(true);
+      expect(UNIT_TYPE[t].aoeRadius).toBe(2);
+    }
+  });
+
+  it('siege tower builds in 2 turns; bridges cost 3 wood', async () => {
+    const { SIEGE_TOWER_BUILD_TURNS, BRIDGE_COST } = await import('../src/config.js');
+    expect(SIEGE_TOWER_BUILD_TURNS).toBe(2);
+    expect(BRIDGE_COST.wood).toBe(3);
+  });
+});

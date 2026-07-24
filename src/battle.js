@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -339,12 +339,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
-    // Ranged distance falloff: ranged attacks deal reduced damage at range.
-    // Distance 1 (adjacent) = no penalty; each additional tile = 25% less.
+    // Ranged distance falloff (RANGED_DISTANCE_FALLOFF): full damage adjacent,
+    // 80% at 2 tiles, 25% from 3 tiles onwards.
     if (atkStats.ranged) {
         const dist = Math.max(Math.abs(attackerUnit.x - defenderUnit.x), Math.abs(attackerUnit.z - defenderUnit.z));
         if (dist > 1) {
-            const falloff = Math.pow(0.75, dist - 1);
+            const falloff = RANGED_DISTANCE_FALLOFF[dist] != null ? RANGED_DISTANCE_FALLOFF[dist] : RANGED_FALLOFF_MIN;
             damageToDefender = Math.max(1, Math.floor(damageToDefender * falloff));
             messages.push(`${combatName(attackerUnit)} ranged attack at distance ${dist}: ×${falloff.toFixed(2)} damage`);
         }

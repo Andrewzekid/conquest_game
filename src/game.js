@@ -1996,7 +1996,7 @@ export class Game {
             if (u.owner === attacker.owner) continue;
             if (u.boarded) continue;
             if (!canAttack(this.gameState.diplomacy, attacker.owner, u.owner)) continue;
-            if (Math.max(Math.abs(u.x - primary.x), Math.abs(u.z - primary.z)) <= AOE_RADIUS) {
+            if (Math.max(Math.abs(u.x - primary.x), Math.abs(u.z - primary.z)) <= (atkDef.aoeRadius || AOE_RADIUS)) {
                 splashVictims.push(u);
             }
         }

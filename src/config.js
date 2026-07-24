@@ -58,7 +58,7 @@ export const TERRAIN = {
 export const UNIT_TYPE = {
     INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
-    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 5, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 6, besiege: true, besiegePower: 2, ranged: true, attackRange: 2 },
+    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 5, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 8, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
@@ -138,17 +138,17 @@ export const UNIT_TYPE = {
     // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
     SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
     // RAILGUN: devastating railway artillery with long reload.
-    RAILGUN:     { name: 'Railgun', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true },
+    RAILGUN:     { name: 'Railgun', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
     // ARMORED_TRAIN: mobile railway fortress that can move and fire.
     ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 10, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
     // FIELD_GUN: rapid-fire artillery.
-    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 9, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true },
+    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 9, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
     // HORSE_ARTILLERY: fast-deploy mobile cannon.
-    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 2, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true },
+    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 2, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
     // DEMOLITION_SQUAD: combat engineers with bonus vs cities.
     DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 8, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
     // SIEGE_CANNON: heavy siege gun that destroys fortifications.
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
     // MODERN NAVAL: steam-powered iron warships.
     IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
     STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
@@ -251,12 +251,12 @@ export const UNIT_COST = {
 };
 
 // Cost to build a bridge across a river tile.
-export const BRIDGE_COST = { gold: 40, wood: 20 };
+export const BRIDGE_COST = { gold: 40, wood: 3 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 25, wood: 10, iron: 0, production: 10 };
-export const SIEGE_TOWER_BUILD_TURNS = 3;
+export const SIEGE_TOWER_COST = { gold: 20, wood: 8, iron: 0, production: 8 };
+export const SIEGE_TOWER_BUILD_TURNS = 2;
 export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
 // Engineers can only build Siege Towers (not CATAPULT/TREBUCHET).
@@ -309,6 +309,12 @@ export const PILLAGE_GOLD_REWARD = 15;
 export const PILLAGEABLE_BUILDINGS = ['FARM', 'LUMBERMILL', 'MINE', 'BARRACKS', 'SIEGE_WORKSHOP', 'HARBOR', 'MARKET', 'UNIVERSITY', 'BANK', 'COMMAND_POST', 'POWER_PLANT'];
 
 // AOE/fire ailment tuning for siege engines (CATAPULT, TREBUCHET).
+// Ranged attack damage multiplier by Chebyshev distance to target.
+// 100% adjacent, 80% at 2 tiles, 25% from 3 tiles onwards (artillery
+// stays lethal near the walls but can't snipe across the map).
+export const RANGED_DISTANCE_FALLOFF = { 2: 0.8, 3: 0.25, 4: 0.15 };
+export const RANGED_FALLOFF_MIN = 0.1;  // distance 5+
+
 export const AOE_RADIUS = 1;            // Chebyshev radius around the target tile for splash
 export const AOE_SPLASH_FRACTION = 0.5; // splash dmg = floor(primaryDmg * this), min 1
 export const BURN_TURNS = 2;            // how many turns a fire ailment lasts

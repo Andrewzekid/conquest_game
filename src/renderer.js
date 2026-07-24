@@ -1158,16 +1158,16 @@ export class GameRenderer {
             const ewRiver = (e && e.terrain === 'RIVER') || (w && w.terrain === 'RIVER');
             const zAligned = nsRiver && !ewRiver;
             const group = new THREE.Group();
-            // Plank deck (long axis spans the river).
-            const deck = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.08, 0.4),
-                new THREE.MeshPhongMaterial({ color: 0x8a5a2b }));
-            group.add(deck);
-            // Two side rails.
-            for (const off of [-0.18, 0.18]) {
-                const rail = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.12, 0.05),
-                    new THREE.MeshPhongMaterial({ color: 0x6a4220 }));
-                rail.position.set(0, 0.08, off);
-                group.add(rail);
+            // Wooden plank deck: individual planks laid side by side across
+            // the span, alternating two wood tones. No siderails.
+            const plankMatA = new THREE.MeshPhongMaterial({ color: 0x8a5a2b });
+            const plankMatB = new THREE.MeshPhongMaterial({ color: 0x755026 });
+            const PLANKS = 6;
+            for (let i = 0; i < PLANKS; i++) {
+                const plank = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.07, 0.7),
+                    i % 2 ? plankMatB : plankMatA);
+                plank.position.set(-0.4 + i * 0.16, 0, 0);
+                group.add(plank);
             }
             if (zAligned) group.rotation.y = Math.PI / 2;
             group.position.set(bx - GRID_SIZE / 2, baseY, bz - GRID_SIZE / 2);
