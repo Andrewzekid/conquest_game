@@ -6,6 +6,7 @@ import { regenFortification } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
          processWarWeariness } from './diplomacy.js';
 import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS } from './tech.js';
+import { applyKingTechBonuses } from './lords.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -142,6 +143,9 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             if (researchPts > 0) {
                 const completed = addResearch(gameState.techState, researchPts);
                 if (completed && completed.length > 0) {
+                    for (const lord of gameState.lords || []) {
+                        if (lord.owner === PLAYER_FACTION && lord.isKing) applyKingTechBonuses(lord, gameState.techState);
+                    }
                     for (const techId of completed) {
                         if (logger) logger(`Research complete: ${techId}!`);
                     }
@@ -169,11 +173,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 const totalResearch = researchPts + aiResearchBonus;
                 if (totalResearch > 0) {
                     const completed = addResearch(aiTs, totalResearch);
-                    if (completed && completed.length && logger) {
-                        const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;
-                        for (const techId of completed) {
-                            const tech = TECHS[techId];
-                            logger(`${fname} researched ${tech ? tech.name : techId}!`);
+                    if (completed && completed.length) {
+                        for (const lord of gameState.lords || []) {
+                            if (lord.owner === ai && lord.isKing) applyKingTechBonuses(lord, aiTs);
+                        }
+                        if (logger) {
+                            const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;
+                            for (const techId of completed) {
+                                const tech = TECHS[techId];
+                                logger(`${fname} researched ${tech ? tech.name : techId}!`);
+                            }
                         }
                     }
                 }

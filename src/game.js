@@ -37,7 +37,7 @@ import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar,
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
          lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp,
-         getAvailableSkills, investSkillPoint, getSkillEffects } from './lords.js';
+         getAvailableSkills, investSkillPoint, getSkillEffects, applyKingTechBonuses } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
 import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST, WAR_WEARINESS_RATES } from './config.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
@@ -357,6 +357,7 @@ export class Game {
             // king flag is set, recompute so the king gets its full HP (>=50).
             king.maxHp = lordMaxHp(king);
             king.hp = king.maxHp;
+            applyKingTechBonuses(king, this.gameState.techState);
             this.gameState.lords.push(king);
             assignArmy(king, unit.id);
             unit.lordId = king.id;
@@ -504,6 +505,7 @@ export class Game {
             if (typeof lord.xp !== 'number' || !Number.isFinite(lord.xp)) lord.xp = 0;
             if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
             if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
+            if (lord.isKing) applyKingTechBonuses(lord, this.gameState.techState);
             if (typeof lord.hasAttackedThisTurn !== 'boolean') lord.hasAttackedThisTurn = false;
         }
         // Backfill unit combat fields for pre-HP saves: a unit missing

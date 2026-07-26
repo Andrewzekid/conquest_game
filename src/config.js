@@ -90,12 +90,12 @@ export const UNIT_TYPE = {
     VARANGIAN_GUARD: { name: 'Varangian Guard', hp: 16, attack: 6, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1, lordGuard: true },
     // CONQUISTADOR: mounted gunpowder unit. Mobile ranged assault; +2 attack vs
     // units in cities.
-    CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 3, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
+    CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 4, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
     // WINGED_HUSSAR: shock cavalry. Charge deals 2x damage on the first attack
     // each turn; +1 move on open terrain.
     WINGED_HUSSAR: { name: 'Winged Hussar', hp: 18, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1, chargeMultiplier: 2, openTerrainMoveBonus: 1 },
     // CROSSBOWMAN: long-range infantry, a straightforward Archer upgrade.
-    CROSSBOWMAN: { name: 'Crossbowman', hp: 10, attack: 7, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
+    CROSSBOWMAN: { name: 'Crossbowman', hp: 10, attack: 8, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
@@ -112,43 +112,43 @@ export const UNIT_TYPE = {
     SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 },
     // === RENAISSANCE ERA UNITS (1700-1800) ===
     // MUSKETEER: early firearm infantry with volley fire mechanic.
-    MUSKETEER:   { name: 'Musketman', hp: 14, attack: 8, defense: 4, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
+    MUSKETEER:   { name: 'Musketman', hp: 14, attack: 8, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
     // ARQUEBUSIER: early rifle with slow reload - cannot attack turn after firing.
-    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 7, defense: 3, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
+    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 8, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
     // RENAISSANCE NAVAL: wooden warships dominate the seas.
     MAN_OF_WAR:  { name: 'Man-of-War', hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 6, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 6, flagship: true },
     GALLEASS:    { name: 'Galleass', hp: 25, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, oared: true },
     PINNACE:     { name: 'Pinnace', hp: 18, attack: 7, defense: 4, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 2, vision: 7 },
     // === ENLIGHTENMENT ERA UNITS (1800-1850) ===
     // LINE_INFANTRY: disciplined formation fighters with formation bonus.
-    LINE_INFANTRY: { name: 'Line Infantry', hp: 16, attack: 9, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
+    LINE_INFANTRY: { name: 'Line Infantry', hp: 16, attack: 10, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
     // DRAGOON: mounted ranged - hybrid cavalry that can charge or fire.
-    DRAGOON:     { name: 'Dragoon', hp: 14, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
+    DRAGOON:     { name: 'Dragoon', hp: 14, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
     // CANNON: heavy artillery with devastating siege power.
-    CANNON:      { name: 'Cannon', hp: 10, attack: 9, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
+    CANNON:      { name: 'Cannon', hp: 10, attack: 10, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
     // MORTAR: indirect fire with AOE splash damage.
-    MORTAR:      { name: 'Mortar', hp: 8, attack: 8, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
+    MORTAR:      { name: 'Mortar', hp: 8, attack: 9, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
     // ENLIGHTENMENT NAVAL: faster sailing warships.
     CORVETTE:    { name: 'Corvette', hp: 22, attack: 9, defense: 5, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 2, raider: true },
     FROLIC:      { name: 'Frolic', hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, broadside: true },
     MERCHANTMAN: { name: 'Merchantman', hp: 20, attack: 4, defense: 4, moveRange: 3, upkeep: { food: 4, gold: 6, wood: 3, iron: 1 }, naval: true, capacity: 3, tradeBonus: 10 },
     // === MODERN ERA UNITS (1850-1880) ===
     // RIFLEMAN: accurate firearm infantry that ignores defense.
-    RIFLEMAN:    { name: 'Rifleman', hp: 18, attack: 11, defense: 6, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
+    RIFLEMAN:    { name: 'Rifleman', hp: 18, attack: 12, defense: 6, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
     // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
-    SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
+    SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 13, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
     // RAILGUN: devastating railway artillery with long reload.
-    RAILGUN:     { name: 'Railgun', hp: 12, attack: 10, defense: 3, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
+    RAILGUN:     { name: 'Railgun', hp: 12, attack: 15, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
     // ARMORED_TRAIN: mobile railway fortress that can move and fire.
-    ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 10, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
+    ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
     // FIELD_GUN: rapid-fire artillery.
-    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 9, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
+    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
     // HORSE_ARTILLERY: fast-deploy mobile cannon.
-    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 2, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
+    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
     // DEMOLITION_SQUAD: combat engineers with bonus vs cities.
-    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 8, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
+    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
     // SIEGE_CANNON: heavy siege gun that destroys fortifications.
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 10, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 17, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
     // MODERN NAVAL: steam-powered iron warships.
     IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
     STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },

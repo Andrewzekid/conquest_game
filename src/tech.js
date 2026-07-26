@@ -67,6 +67,13 @@ export const TECHS = {
         bonus: { cityDefenseBonus: 2 },
         desc: 'Unlocks Walls, Crossbowman, and Varangian Guard. Cities gain +2 defense.'
     },
+    ROYAL_COURTS: {
+        id: 'ROYAL_COURTS', name: 'Royal Courts', era: 'medieval', cost: 110,
+        prerequisites: ['FORTIFICATION', 'CHIVALRY'],
+        unlocks: [],
+        bonus: { kingHpBonus: 4, kingAttackBonus: 1, kingDefenseBonus: 1 },
+        desc: 'Kings gain +4 HP, +1 attack, and +1 defense.'
+    },
     CHIVALRY: {
         id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 90,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
@@ -378,7 +385,11 @@ export function getTechBonuses(state) {
         artilleryMoveBonus: 0,
         navalHpBonus: 0,
         productionBonus: 0,
-        navalStealth: false
+        navalStealth: false,
+        kingTechScaling: 0,
+        kingHpBonus: 0,
+        kingAttackBonus: 0,
+        kingDefenseBonus: 0
     };
     for (const id of state.researched) {
         const tech = TECHS[id];
@@ -398,6 +409,18 @@ export function getTechBonuses(state) {
         }
     }
     return bonuses;
+}
+
+export function getKingTechBonuses(state) {
+    const techState = state || { researched: new Set() };
+    const bonuses = getTechBonuses(techState);
+    const researchedCount = techState.researched ? techState.researched.size : 0;
+    const extraTechs = Math.max(0, researchedCount - 3);
+    return {
+        hp: (bonuses.kingHpBonus || 0) + extraTechs,
+        attack: (bonuses.kingAttackBonus || 0) + extraTechs * 0.25,
+        defense: (bonuses.kingDefenseBonus || 0) + extraTechs * 0.25
+    };
 }
 
 /** Check if a specific unit type is unlocked. */

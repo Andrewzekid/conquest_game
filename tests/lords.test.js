@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   createLord, lordMaxHp, lordAttack, lordDefense, lordCombatant,
   awardXP, maxArmySize, canCommand, assignArmy, findCommandingLord,
-  getLordClassBonus, getLordCombatBonus, kingGuardBonus, syncLordHp
+  getLordClassBonus, getLordCombatBonus, kingGuardBonus, syncLordHp,
+  applyKingTechBonuses
 } from '../src/lords.js';
+import { createTechState } from '../src/tech.js';
 
 describe('lords', () => {
   describe('createLord', () => {
@@ -234,6 +236,30 @@ describe('lords', () => {
       lord.isKing = true;
       lord.army = [1, 2, 3, 4, 5, 6, 7];
       expect(kingGuardBonus(lord)).toBe(5);
+    });
+  });
+
+  describe('applyKingTechBonuses', () => {
+    it('increases king hp, attack, and defense as more techs are researched', () => {
+      const lord = createLord('player', 0, 0, 'Test', 'WARLORD');
+      lord.isKing = true;
+      const ts = createTechState();
+      const baselineHp = lordMaxHp(lord);
+      const baselineAtk = lordAttack(lord);
+      const baselineDef = lordDefense(lord);
+
+      ts.researched.add('MATHEMATICS');
+      ts.researched.add('ENGINEERING');
+      ts.researched.add('NAVAL_ENGINEERING');
+      ts.researched.add('SIEGE_CRAFT');
+      ts.researched.add('FORTIFICATION');
+      ts.researched.add('CHIVALRY');
+      ts.researched.add('CARTOGRAPHY');
+      applyKingTechBonuses(lord, ts);
+
+      expect(lordMaxHp(lord)).toBeGreaterThan(baselineHp);
+      expect(lordAttack(lord)).toBeGreaterThan(baselineAtk);
+      expect(lordDefense(lord)).toBeGreaterThan(baselineDef);
     });
   });
 });

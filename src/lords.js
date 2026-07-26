@@ -1,5 +1,6 @@
 /** Lords system: hero units with stats, abilities, leveling, governance, army command. */
 import { LORD_BASE_STATS, LORD_ABILITIES, LORD_XP_PER_KILL, LORD_XP_PER_LEVEL, LORD_RECRUIT_COST, LORD_CLASSES, LORD_SKILL_TREES } from './config.js';
+import { getKingTechBonuses } from './tech.js';
 
 let _lordId = 0;
 function nextLordId() { return ++_lordId; }
@@ -32,7 +33,8 @@ export function createLord(owner, x, z, name, classKey) {
         skills: [],            // ids of learned skills
         hasMovedThisTurn: false,
         hasAttackedThisTurn: false, // lords can attack once per turn (like units)
-        isKing: false
+        isKing: false,
+        kingTechBonuses: { hp: 0, attack: 0, defense: 0 }
     };
     lord.maxHp = lordMaxHp(lord);
     lord.hp = lord.maxHp;
@@ -46,21 +48,34 @@ export function createLord(owner, x, z, name, classKey) {
 export function lordMaxHp(lord) {
     if (!lord) return 1;
     const base = 18 + (lord.level - 1) * 3 + (lord.isKing ? 42 : 0);
-    return lord.isKing ? Math.max(55, base) : base;
+    const kingBonus = lord.isKing ? (lord.kingTechBonuses?.hp || 0) : 0;
+    return lord.isKing ? Math.max(55, base + kingBonus) : base;
 }
 
 /** A lord's own melee attack: combat stat + class bonus + king bonus. */
 export function lordAttack(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
-    return (lord.stats.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1);
+    const kingBonus = lord.isKing ? (lord.kingTechBonuses?.attack || 0) : 0;
+    return (lord.stats.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus;
 }
 
 /** A lord's own defense: command stat + class bonus + king bonus. */
 export function lordDefense(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
-    return (lord.stats.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1);
+    const kingBonus = lord.isKing ? (lord.kingTechBonuses?.defense || 0) : 0;
+    return (lord.stats.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+}
+
+export function applyKingTechBonuses(lord, techState) {
+    if (!lord || !lord.isKing) return null;
+    const bonuses = getKingTechBonuses(techState);
+    lord.kingTechBonuses = bonuses;
+    const previousHp = typeof lord.hp === 'number' && Number.isFinite(lord.hp) ? lord.hp : null;
+    lord.maxHp = lordMaxHp(lord);
+    lord.hp = previousHp === null ? lord.maxHp : Math.min(lord.maxHp, previousHp);
+    return bonuses;
 }
 
 /** Build a unit-like combatant for a lord so resolveCombat can fight it. The
