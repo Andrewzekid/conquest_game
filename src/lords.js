@@ -219,7 +219,11 @@ export function getLordClassBonus(lord) {
 /** Combat bonus a lord gives to its own unit (its command/combat stats). */
 export function getLordCombatBonus(lord) {
     if (!lord) return { attack: 0, defense: 0 };
-    return { attack: lord.stats.combat, defense: lord.stats.command };
+    const stats = lord.stats || {};
+    return {
+        attack: Number.isFinite(stats.combat) ? stats.combat : 0,
+        defense: Number.isFinite(stats.command) ? stats.command : 0
+    };
 }
 
 /** Adjacency auras (Chebyshev radius 1): a lord's CLASS bonus (Warlord +atk,

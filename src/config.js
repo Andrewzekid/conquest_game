@@ -902,7 +902,7 @@ export const VICTORY_TYPES = {
     SCORE: 'score'              // highest score at turn limit
 };
 
-export const SCORE_VICTORY_TURN = 200;        // turn at which score victory is checked
+export const SCORE_VICTORY_TURN = 1000;        // turn at which score victory is checked
 export const SCIENCE_VICTORY_COST = {         // resource cost for space program project
     gold: 500, food: 200, wood: 200, iron: 100, production: 300
 };

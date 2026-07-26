@@ -213,6 +213,12 @@ describe('lords', () => {
       expect(bonus.defense).toBe(lord.stats.command);
     });
 
+    it('returns zeroes when lord stat values are missing', () => {
+      const lord = createLord('player', 0, 0, 'T', 'WARLORD');
+      lord.stats = {};
+      expect(getLordCombatBonus(lord)).toEqual({ attack: 0, defense: 0 });
+    });
+
     it('null returns zeros', () => {
       expect(getLordCombatBonus(null)).toEqual({ attack: 0, defense: 0 });
     });

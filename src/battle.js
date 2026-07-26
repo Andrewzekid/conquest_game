@@ -470,8 +470,6 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 export function canCaptureTile(unitOwner, tile, resources, diploState = null, currentTurn = null) {
     // Can't capture own tile
     if (tile.owner === unitOwner) return false;
-    // Must have gold
-    if (resources.gold < 20) return false;
     // A fortified city must be besieged (fortification reduced to 0) before capture.
     if (tile.terrain === 'CITY' && (tile.fortification || 0) > 0) return false;
     // Breach delay: a freshly breached city can't be captured until the next turn.
