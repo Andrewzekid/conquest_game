@@ -186,32 +186,6 @@ describe('breach persistence', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2-3. Move into cities: siege and engineers can enter enemy cities
-// ---------------------------------------------------------------------------
-describe('move into cities', () => {
-    it('siege units and engineers can enter an unoccupied enemy city tile to operate', () => {
-        const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
-        const city = state.tiles.get('10,10');
-        city.owner = 'ai1';
-        city.fortification = 3;
-        city.fortMax = 3;
-        state.units.clear();
-
-        const siege = makeUnit('SIEGE', 'player', 10, 9);
-        const engineer = makeUnit('ENGINEER', 'player', 9, 10);
-        state.units.set(siege.id, siege);
-        state.units.set(engineer.id, engineer);
-        const g = makeGame(state);
-
-        g.moveUnit(siege, 10, 10);
-        expect([siege.x, siege.z]).toEqual([10, 10]);
-
-        g.moveUnit(engineer, 10, 10);
-        expect([engineer.x, engineer.z]).toEqual([10, 10]);
-    });
-});
-
-// ---------------------------------------------------------------------------
 // 2-3. Capture on move-in: player path and AI executor path + guards
 // ---------------------------------------------------------------------------
 describe('auto-capture on move-in', () => {

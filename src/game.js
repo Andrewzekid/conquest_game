@@ -991,16 +991,13 @@ export class Game {
                 if (other.id === unit.id) continue;
                 if (other.owner !== unit.owner) reach.delete(`${other.x},${other.z}`);
             }
-            // Exclude fortified enemy cities from move targets unless the unit
-            // can legally enter them. Siege specialists and engineers may enter
-            // to besiege or build support structures; ordinary units need the
-            // city to be capturable or stormable via a nearby siege tower.
+            // Exclude fortified enemy cities from move targets �?UNLESS a
+            // friendly Siege Tower is orthogonally adjacent (canAssault), which
+            // lets units storm the walls directly.
             for (const key of [...reach]) {
                 const t = this.tiles.get(key);
                 if (t && t.terrain === 'CITY' && t.owner !== unit.owner && (t.fortification || 0) > 0) {
-                    if (!this._canEnterCity(unit, t, this.gameState.resources[unit.owner], this.gameState.turn || 0)) {
-                        reach.delete(key);
-                    }
+                    if (!this.siegeTowerAdjacentTo(t, unit.owner)) reach.delete(key);
                 }
             }
             this.gameState.moveTargets = reach;
@@ -1214,25 +1211,24 @@ export class Game {
     moveUnit(unit, x, z) {
         const destTile = this.tiles.get(`${x},${z}`);
         const pool = this.gameState.resources[unit.owner];
-        // Civ6 territory: units capture CITIES only. Ordinary units may enter
-        // only if the city is capturable or stormable via an adjacent Siege
-        // Tower. Siege specialists and engineers may enter an unoccupied enemy
-        // city to besiege or build support structures, even when it is still
-        // fortified.
+        // Civ6 territory: units capture CITIES only. A city is captured if it's
+        // breached (fortification 0) OR stormed via an adjacent friendly Siege
+        // Tower (canAssault bypasses the fortification gate) AND no defender
+        // holds the tile. A city that can't be captured this move (walls up,
+        // breach delay, or garrisoned) can't be ENTERED either.
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner) {
-            const canEnter = this._canEnterCity(unit, destTile, pool, this.gameState.turn || 0);
-            if (!canEnter) {
+            const capturable = (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) ||
+                this.siegeTowerAdjacentTo(destTile, unit.owner)) && !this._cityOccupied(destTile, unit.id);
+            if (!capturable) {
                 this.log(`${UNIT_TYPE[unit.type].name} can't enter ${destTile.cityName || 'the city'} -- its defenses hold.`);
                 return;
             }
-            if (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, unit.owner)) {
-                pool.gold -= CAPTURE_COST;
-                const prevOwner = destTile.owner;
-                const wasNeutral = !prevOwner;
-                captureCityTerritory(this.tiles, destTile, unit.owner, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
-                sfx.capture();
-                this._awardCaptureGrievances(destTile, unit.owner, prevOwner, wasNeutral);
-            }
+            pool.gold -= CAPTURE_COST;
+            const prevOwner = destTile.owner;
+            const wasNeutral = !prevOwner;
+            captureCityTerritory(this.tiles, destTile, unit.owner, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
+            sfx.capture();
+            this._awardCaptureGrievances(destTile, unit.owner, prevOwner, wasNeutral);
         }
         unit.x = x;
         unit.z = z;
@@ -2182,20 +2178,6 @@ export class Game {
             if (Math.abs(u.x - cityTile.x) + Math.abs(u.z - cityTile.z) === 1) return true;
         }
         return false;
-    }
-
-    /** Can this unit legally enter the given enemy city tile? Ordinary units
-     *  need it to be capturable or stormable; siege specialists and engineers
-     *  may enter an unoccupied city to besiege or build support structures. */
-    _canEnterCity(unit, cityTile, resources, currentTurn = null) {
-        if (!unit || !cityTile || cityTile.terrain !== 'CITY' || cityTile.owner === unit.owner) return true;
-        const udef = UNIT_TYPE[unit.type];
-        const isSiegeSpecialist = !!(udef && (udef.besiege || udef.siegeOnly || udef.canBuildSiegeTower || udef.canBuildStructure));
-        if (isSiegeSpecialist) {
-            return !this._cityOccupied(cityTile, unit.id);
-        }
-        return (canCaptureTile(unit.owner, cityTile, resources, null, currentTurn) ||
-            this.siegeTowerAdjacentTo(cityTile, unit.owner)) && !this._cityOccupied(cityTile, unit.id);
     }
 
     /** Is a city tile occupied by any unit or living lord (optionally ignoring
@@ -5393,7 +5375,7 @@ export class Game {
                 }
             }
             // Score victory: at turn 200, highest-scoring AI wins -- but only
-            // if the leader is actually advanced (>= 31 techs researched);
+            // if the leader is actually advanced (>= 40 techs researched);
             // otherwise the game runs on until someone is.
             if (this.gameState.turn >= SCORE_VICTORY_TURN && aiAlive.length > 0) {
                 const scores = this._calculateScores();
@@ -5403,7 +5385,7 @@ export class Game {
                 }
                 const bestTs = bestFaction ? this._factionTechState(bestFaction) : null;
                 const bestTechs = (bestTs && bestTs.researched) ? bestTs.researched.size : 0;
-                if (bestFaction && bestTechs >= 31) { // 31 techs researched is the threshold for a score victory
+                if (bestFaction && bestTechs >= 40) { // 31 techs researched is the threshold for a score victory
                     const name = this.factionColors[bestFaction] ? this.factionColors[bestFaction].name : bestFaction;
                     this.log(`${name} leads at turn ${SCORE_VICTORY_TURN} with score ${Math.floor(bestScore)} and WINS!`);
                     this.endGame('victory', VICTORY_TYPES.SCORE);
