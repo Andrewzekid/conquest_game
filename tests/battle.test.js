@@ -123,9 +123,9 @@ describe('battle', () => {
   });
 
   describe('canCaptureTile', () => {
-    it('requires >= 20 gold', () => {
+    it('no gold requirement to capture (gold gate removed)', () => {
       const tile = { owner: null, terrain: 'PLAINS' };
-      expect(canCaptureTile('a', tile, { gold: 19 })).toBe(false);
+      expect(canCaptureTile('a', tile, { gold: 0 })).toBe(true);
       expect(canCaptureTile('a', tile, { gold: 20 })).toBe(true);
     });
 

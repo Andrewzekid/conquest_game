@@ -73,7 +73,7 @@ describe('new units — definitions', () => {
     const u = UNIT_TYPE.CROSSBOWMAN;
     expect(u.ranged).toBe(true);
     expect(u.attackRange).toBe(3);
-    expect(u.attack).toBe(7);
+    expect(u.attack).toBe(8);
   });
 });
 

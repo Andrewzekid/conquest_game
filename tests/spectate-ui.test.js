@@ -118,7 +118,7 @@ describe('spectate-ui', () => {
       expect(gameSrc.match(/this\._factionTechState\(f\)/g).length).toBeGreaterThanOrEqual(3);
     });
 
-    it('spectate score victory requires at least 25 techs researched', () => {
-      expect(gameSrc).toMatch(/bestTechs >= 25/);
+    it('spectate score victory requires at least 40 techs researched', () => {
+      expect(gameSrc).toMatch(/bestTechs >= 40/);
     });
   });

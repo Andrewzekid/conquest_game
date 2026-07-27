@@ -73,7 +73,7 @@ describe('victory progress calculations', () => {
     });
 
     it('score progress is turn/maxTurn', () => {
-        const turn = 100;
+        const turn = 5000;
         const progress = turn / SCORE_VICTORY_TURN;
         expect(progress).toBe(0.5);
     });
