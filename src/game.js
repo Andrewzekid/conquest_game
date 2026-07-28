@@ -5359,10 +5359,10 @@ export class Game {
             }
         }
 
-        // --- Spectate mode: check AI-only victory conditions ---
+        // --- Spectate mode: announce victory but keep the game running ---
+        // (no endGame call — that would set gameOver and stop auto-advance)
         if (this.spectateMode) {
             const aiAlive = FACTIONS.filter(f => !this.gameState.eliminated.has(f));
-            // Domination: only one AI faction remains AND owns every city.
             if (aiAlive.length === 1) {
                 const winner = aiAlive[0];
                 const allCitiesOwned = [...this.tiles.values()].filter(t => t.terrain === 'CITY');
@@ -5370,28 +5370,10 @@ export class Game {
                 if (allCitiesOwned.length > 0 && winnerCities.length === allCitiesOwned.length) {
                     const name = this.factionColors[winner] ? this.factionColors[winner].name : winner;
                     this.log(`${name} has conquered all rivals and WON!`);
-                    this.endGame('victory', VICTORY_TYPES.DOMINATION);
                     return;
                 }
             }
-            // Score victory: at turn 200, highest-scoring AI wins -- but only
-            // if the leader is actually advanced (>= 40 techs researched);
-            // otherwise the game runs on until someone is.
-            if (this.gameState.turn >= SCORE_VICTORY_TURN && aiAlive.length > 0) {
-                const scores = this._calculateScores();
-                let bestFaction = null, bestScore = -1;
-                for (const f of aiAlive) {
-                    if ((scores[f] || 0) > bestScore) { bestScore = scores[f] || 0; bestFaction = f; }
-                }
-                const bestTs = bestFaction ? this._factionTechState(bestFaction) : null;
-                const bestTechs = (bestTs && bestTs.researched) ? bestTs.researched.size : 0;
-                if (bestFaction && bestTechs >= 40) { // 31 techs researched is the threshold for a score victory
-                    const name = this.factionColors[bestFaction] ? this.factionColors[bestFaction].name : bestFaction;
-                    this.log(`${name} leads at turn ${SCORE_VICTORY_TURN} with score ${Math.floor(bestScore)} and WINS!`);
-                    this.endGame('victory', VICTORY_TYPES.SCORE);
-                }
-            }
-            return; // no human victory/defeat screen in spectate mode
+            return;
         }
 
         const playerAlive = !this.gameState.eliminated.has(PLAYER_FACTION);
@@ -5440,7 +5422,7 @@ export class Game {
             return VICTORY_TYPES.ECONOMIC;
         }
 
-        // Score Victory: highest score at turn 200.
+        // Score Victory: highest score at the configured turn.
         if (gs.turn >= SCORE_VICTORY_TURN) {
             const scores = this._calculateScores();
             const playerScore = scores[PLAYER_FACTION] || 0;

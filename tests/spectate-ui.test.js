@@ -118,7 +118,8 @@ describe('spectate-ui', () => {
       expect(gameSrc.match(/this\._factionTechState\(f\)/g).length).toBeGreaterThanOrEqual(3);
     });
 
-    it('spectate score victory requires at least 40 techs researched', () => {
-      expect(gameSrc).toMatch(/bestTechs >= 40/);
+    it('spectate mode logs victory but does not end the game', () => {
+      expect(gameSrc).toMatch(/announce victory but keep the game running/);
+      expect(gameSrc).not.toContain('bestTechs');
     });
   });
