@@ -2136,6 +2136,42 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const flankMap = new Map(); // group -> flank role
     for (const fa of flankAssignments) flankMap.set(fa.group, fa);
 
+    // Multi-target conquest: when the conquest goal carries several candidate
+    // cities (meta.targets) and there are 2+ conquest groups, each group gets
+    // a DIFFERENT target city — the strongest group always takes the primary
+    // target (fixes "no army group assigned to the main conquest objective"),
+    // the rest take their nearest unclaimed target. The shared strategic
+    // target (concentration on ONE city) is skipped in that case.
+    const multiTargets = (goalKind === 'conquest' && topGoal && topGoal.meta &&
+        Array.isArray(topGoal.meta.targets) && topGoal.meta.targets.length > 1)
+        ? topGoal.meta.targets : null;
+    const mtAssignments = new Map(); // group -> {x,z}
+    if (multiTargets && conquestGroups.length > 1) {
+        strategicTarget = null; // distribute instead of concentrating
+        flankAssignments = [];
+        const ordered = [...conquestGroups].sort((a, b) => groupPower(b) - groupPower(a));
+        const claimedTargets = new Set();
+        ordered.forEach((g, i) => {
+            if (i === 0) {
+                // Strongest group always takes the primary conquest target.
+                const primary = multiTargets[0];
+                claimedTargets.add(`${primary.x},${primary.z}`);
+                mtAssignments.set(g, primary);
+                return;
+            }
+            const c = groupCentroid(g);
+            let best = null, bestD = Infinity;
+            for (const t of multiTargets) {
+                if (claimedTargets.has(`${t.x},${t.z}`)) continue;
+                const d = manhattan(c.x, c.z, t.x, t.z);
+                if (d < bestD) { bestD = d; best = t; }
+            }
+            if (!best) best = multiTargets[0]; // more groups than targets — pile onto the primary
+            claimedTargets.add(`${best.x},${best.z}`);
+            mtAssignments.set(g, best);
+        });
+    }
+
     const REINFORCE_RANGE = 12;
     const groupObjectives = new Map();   // group -> objective tile
     const groupStances = new Map();      // group -> stance
@@ -2146,10 +2182,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         let objective, stance;
         if (conquest.has(g)) {
             stance = computeStance(g, units, owner, atWar, isAtWar);
-            // Use the shared strategic target when available (concentration of
-            // force). Fall back to per-group pickGroupObjective if no strategic
-            // target was computed (e.g. no enemy cities in range).
-            if (strategicTarget) {
+            // Multi-target conquest: this group's assigned city (strongest
+            // group took the primary). Otherwise use the shared strategic
+            // target when available (concentration of force), falling back to
+            // per-group pickGroupObjective if no strategic target was computed
+            // (e.g. no enemy cities in range).
+            const mt = mtAssignments.get(g);
+            if (mt) {
+                objective = { x: mt.x, z: mt.z };
+            } else if (strategicTarget) {
                 objective = { x: strategicTarget.x, z: strategicTarget.z };
                 // Flank group approaches from the opposite side.
                 const fa = flankMap.get(g);
@@ -3705,7 +3746,7 @@ function enemyWillPassThroughConcealTile(u, units, tiles, owner, isAtWar) {
 /** Group military units into army groups: by commanding lord's army first,
  *  then spatially cluster the rest (nearest existing group within Chebyshev 2,
  *  else a new single-unit group). Returns [{ id, lord, units: [...] }]. */
-function buildArmyGroups(myUnits, lords, owner) {
+function buildArmyGroups(myUnits, lords, owner, land = null) {
     const groups = [];
     const assigned = new Set();
     if (lords && owner) {
@@ -3724,10 +3765,39 @@ function buildArmyGroups(myUnits, lords, owner) {
         for (const g of groups) {
             const c = groupCentroid(g);
             const d = Math.max(Math.abs(c.x - u.x), Math.abs(c.z - u.z));
-            if (d <= 2 && d < bestDist) { bestDist = d; best = g; }
+            if (d <= 3 && d < bestDist) { bestDist = d; best = g; }
         }
         if (best) best.units.push(u);
         else groups.push({ id: 'cluster:' + u.id, lord: null, units: [u] });
+    }
+    // Merge pass: fold small (1-2 unit) groups into a nearby larger group so
+    // the AI fields real armies instead of scattered squads — most groups
+    // were singletons. Rules: never merge INTO a king-led group (the king's
+    // guard stays nimble), never merge across water (same landmass only,
+    // checked via the optional landmass map), and keep merged groups at
+    // most ~8 units so they stay maneuverable. Small lord-led groups MAY
+    // merge into another group — that's how a tough conquest group ends up
+    // carrying multiple lords' retinues.
+    for (const g of [...groups]) {
+        if (g.units.length > 2) continue;
+        const c = groupCentroid(g);
+        let best = null, bestD = Infinity;
+        for (const h of groups) {
+            if (h === g) continue;
+            if (h.lord && h.lord.isKing) continue;
+            if (h.units.length < g.units.length) continue; // merge upward/sideways, not into another squad
+            if (h.units.length + g.units.length > 8) continue;
+            const hc = groupCentroid(h);
+            const d = Math.max(Math.abs(hc.x - c.x), Math.abs(hc.z - c.z));
+            if (d > 4 || d >= bestD) continue;
+            if (land && land.idOf &&
+                land.idOf.get(`${c.x},${c.z}`) !== land.idOf.get(`${hc.x},${hc.z}`)) continue;
+            best = h; bestD = d;
+        }
+        if (best) {
+            best.units.push(...g.units);
+            groups.splice(groups.indexOf(g), 1);
+        }
     }
     return groups;
 }

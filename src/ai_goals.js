@@ -624,7 +624,13 @@ export function selectGoals(input) {
                 `${tgt.x},${tgt.z}`,
                 tgt.owner,
                 'short',
-                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval', neutral: !!tgt.neutral },
+                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval', neutral: !!tgt.neutral,
+                  // Multi-target conquest: the best few candidate cities (up
+                  // to 3, best first). computeAIActions distributes conquest
+                  // army groups across them — the strongest group always gets
+                  // the primary — so a large empire presses several cities at
+                  // once instead of one objective at a time.
+                  targets: scored.slice(0, 3).map(c => ({ x: c.x, z: c.z, owner: c.owner, neutral: !!c.neutral })) },
                 navalPlan);
         }
     }
