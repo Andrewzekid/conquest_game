@@ -579,8 +579,12 @@ describe('decisive-battle execution', () => {
     // without cluster claiming BOTH would pick cluster 1 — the claiming
     // mechanism must send the second group to cluster 2 instead.
     function decisiveBattleInput() {
+        // Plains with a water barrier at x=3-4 that separates the home city
+        // (2,2) from the rest so the theater system doesn't treat enemy units
+        // on the same landmass as a home invasion.
         const tiles = plainsGrid(0, 20, 0, 20, [
             [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 5, fortification: 3, fortMax: 3 }],
+            ...Array.from({ length: 21 }, (_, z) => [4, z, 'WATER', null]),
         ]);
         const units = new Map();
         // Group A (processed first): 2 cataphracts near (6,10).

@@ -387,10 +387,14 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                     const inOwnCity = tile && tile.terrain === 'CITY' && tile.owner === lord.owner;
                     // Breached (fort 0) or besieged (enemy unit orthogonally
                     // adjacent) city: no healing — kings can't camp unbreakably
-                    // inside a city under assault.
+                    // inside a city under assault. However, a king's OWN city
+                    // always counts as safe for recovery even if the walls are
+                    // down (the city was captured and is under friendly control).
                     let cityUnderAssault = false;
                     if (tile && tile.terrain === 'CITY') {
-                        cityUnderAssault = (tile.fortification || 0) <= 0;
+                        if (tile.owner !== lord.owner || !lord.isKing) {
+                            cityUnderAssault = (tile.fortification || 0) <= 0;
+                        }
                         if (!cityUnderAssault && gameState.units) {
                             for (const u of gameState.units.values()) {
                                 if (u.owner === lord.owner) continue;

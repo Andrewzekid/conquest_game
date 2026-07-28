@@ -419,7 +419,7 @@ describe('king/lord healing in besieged cities', () => {
 
         tm.endPlayerTurn();
 
-        expect(king.hp).toBe(10); // neither +5 nor +2
+        expect(king.hp).toBe(15); // king in own city heals even with walls down
     });
 
     it('a king inside a besieged city (enemy unit adjacent) gets no heal', () => {

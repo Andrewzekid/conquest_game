@@ -27,6 +27,7 @@ import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } fr
 import { getUnlockedUnits, TECHS } from './tech.js';
 import { applyObsolescence, isObsolete } from './unit_obsolescence.js';
 import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
+import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity } from './ai_theater.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
  *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
@@ -1269,6 +1270,36 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         res = spendCost(trainable, res, getUnitCostFor(trainable, factionDef));
     }
 
+    // 2b2. Theater-defense training: if a theater (e.g. the home landmass) is
+    //      under attack, train a few extra combat units in that theater's cities
+    //      so the AI doesn't keep building troops on a safe faraway island while
+    //      its capital is threatened. Uses an elevated per-theater cap so these
+    //      defensive units don't starve the main army.
+    const theaterLand = computeLandmasses(tiles);
+    const theaters = createTheaters(tiles, owner, theaterLand);
+    if (theaters.size > 0) {
+        const homeTheater = [...theaters.values()].find(t => t.homeTheater);
+        if (homeTheater && homeTheater.urgency >= 0.3) {
+            const defCap = Math.min(3, Math.ceil(homeTheater.cityCount * 1.5));
+            let defTrained = 0;
+            // Count existing + queued units on the home landmass.
+            const homeUnits = myUnits.filter(u => {
+                const m = theaterLand.idOf.get(`${u.x},${u.z}`);
+                return m === homeTheater.landmassId;
+            }).length;
+            while (homeUnits + defTrained < defCap && capRoom() && defTrained < 2) {
+                const defType = findDefensiveUnit(res, fullRoster, factionDef, myUnits, actions, owner, aiState);
+                if (!defType) break;
+                // Find a city on the home landmass specifically.
+                const homeCity = findTheaterCity(tiles, owner, homeTheater.landmassId, theaterLand, actions);
+                if (!homeCity) break;
+                actions.push({ type: 'train', unitType: defType, tileKey: `${homeCity.x},${homeCity.z}` });
+                res = spendCost(defType, res, getUnitCostFor(defType, factionDef));
+                defTrained++;
+            }
+        }
+    }
+
     // 2c. Workers: train a few if there are improvable owned tiles within a
     //     city's influence that don't yet have their terrain improvement. Cap
     //     at min(2, cityCount) so workers don't crowd out the army (raised to
@@ -1561,11 +1592,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
 
         // a2) Engineers. Offense: build a Siege Tower when within range of a
         //     valid target city — at-war enemies AND unclaimed (neutral) cities
-        //     alike (a conquest force should crack neutral cities too). Defense:
-        //     when an own city is threatened (enemy units closing in), build
-        //     traps/fortifications on owned tiles around it.
+        //     alike (a conquest force should crack neutral cities too). Siege
+        //     towers are obsolete once gunpowder (ARTILLERY) is unlocked — the
+        //     army can bombard walls from range instead of rolling a tower up.
+        //     Defense: when an own city is threatened (enemy units closing in),
+        //     build traps/fortifications on owned tiles around it.
         if (unit.type === 'ENGINEER' && !unit.hasAttackedThisTurn) {
-            const towerTarget = findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS);
+            const hasModernSiege = aiTs && aiTs.researched && (
+                aiTs.researched.has('GUNPOWDER') ||
+                aiTs.researched.has('METALLURGY') ||
+                aiTs.researched.has('EXPLOSIVES') ||
+                aiTs.researched.has('FIELD_ARTILLERY'));
+            const towerTarget = (!hasModernSiege) ? findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS) : null;
             if (towerTarget && canAffordCost(res, SIEGE_TOWER_COST)) {
                 actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${towerTarget.city.x},${towerTarget.city.z}` });
                 res = subtractCost(res, SIEGE_TOWER_COST);
@@ -1851,6 +1889,29 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                             }
                         }
                     } else if (hasMilitary) {
+                        // Theater-aware ferry: if the home theater is under attack,
+                        // return troops home instead of sailing toward the enemy.
+                        // Check whether this transport's cargo came from a safe
+                        // theater (overseas) and home needs reinforcements.
+                        const homeTheater = theaters.size > 0 ? [...theaters.values()].find(t => t.homeTheater) : null;
+                        const needHomeDefense = homeTheater && homeTheater.urgency >= 0.4;
+                        let homePort = null;
+                        if (needHomeDefense && homeTheater.portCity) {
+                            homePort = homeTheater.portCity;
+                        }
+                        if (homePort) {
+                            // Sail toward home port to return troops for defense.
+                            const unloadThere = canUnloadAt(unit, homePort, tiles);
+                            if (unloadThere) {
+                                actions.push({ type: 'disembark', unitId: unit.id });
+                            } else if (!unit.hasMovedThisTurn) {
+                                const step = stepToward(unit, homePort, tiles, owner, units, moved, isAtWar);
+                                if (step) {
+                                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                                    moved.add(`${step.x},${step.z}`);
+                                }
+                            }
+                        } else {
                         // Military cargo: at war, sail to the nearest enemy coastal
                         // city for an amphibious assault. Without an assault target
                         // (peace, or no coastal enemy city), sail to the nearest
@@ -1865,6 +1926,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                                 actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
                                 moved.add(`${step.x},${step.z}`);
                             }
+                        }
                         }
                     } else {
                         // Fallback: scout a foreign landmass.
@@ -2105,6 +2167,28 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (conquest.has(ranked[i].g)) continue;
         if (fronts.length > 0 && assignedFronts.size < fronts.length) break;
         conquest.add(ranked[i].g);
+    }
+
+    // 5a2. Theater system: group army groups by landmass for geographic command.
+    //      The home theater (where the capital sits) gets priority. An overseas
+    //      theater under attack (enemy units on its landmass) gets an urgency
+    //      boost so the AI defends it instead of idling on another continent.
+    if (theaters.size > 0) {
+        assignGroupsToTheaters(groups, theaters, tiles, theaterLand, owner);
+        computeTheaterUrgency(theaters, tiles, units, owner, isAtWar, theaterLand);
+        allocateTheaterBudgets(theaters, resources, owner);
+        // Ensure home theater gets a large urgency boost when under attack.
+        const homeTheater = [...theaters.values()].find(t => t.homeTheater);
+        if (homeTheater && homeTheater.urgency >= 0.3) {
+            // The home theater needs prompt attention — some conquest groups may
+            // need to stay home and defend. Convert a conquest group to patrol
+            // if we have more than one and home is threatened.
+            if (conquest.size >= 2) {
+                const weakest = [...conquest].sort((a, b) =>
+                    groupPower(a) - groupPower(b))[0];
+                conquest.delete(weakest);
+            }
+        }
     }
 
     // 5b. Inter-group reinforcement. A group whose king is wounded or that is
@@ -3222,6 +3306,37 @@ const ROLE_ORDER = {
  *  then fills the biggest role deficit. Falls back to the strongest affordable
  *  *combat* unit (never SCOUT — scouts are exploration units capped at 2 by the
  *  dedicated scout block, so they don't crowd out the army). */
+/** Pick the cheapest affordable combat unit for theater defense.
+ *  Prioritizes melee infantry (cheapest, fastest to produce), then
+ *  ranged, then cavalry. Returns a unit type string or null. */
+export function findDefensiveUnit(resources, roster, factionDef, units, actions, owner, aiState = null) {
+    const combatTypes = roster.filter(t => {
+        const d = UNIT_TYPE[t];
+        return d && !d.siegeOnly && !d.canBuildBridge &&
+            t !== 'SETTLER' && t !== 'WORKER' && t !== 'SCOUT' &&
+            t !== 'TRANSPORT' && t !== 'STEAM_TRANSPORT' &&
+            !NAVAL_UNITS.includes(t) && t !== 'SPY' && t !== 'DIPLOMAT';
+    });
+    // Prefer melee, then ranged, then cavalry (cheapest first in each tier).
+    const tiers = [];
+    for (const t of combatTypes) {
+        const d = UNIT_TYPE[t];
+        const cost = getUnitCostFor(t, factionDef);
+        const afford = canAfford(t, resources, cost);
+        const melee = d && !d.ranged && (!d.attackRange || d.attackRange <= 1);
+        const ranged = d && (d.ranged || (d.attackRange || 0) > 1);
+        const isCav = t === 'CAVALRY' || t === 'CHARIOT' || t === 'CATAPHRACT' || t === 'DRAGOON' || t === 'WINGED_HUSSAR';
+        if (afford) tiers.push({ t, cost: cost.gold + cost.production, melee, ranged, isCav });
+    }
+    // Sort: melee first, then ranged, then cavalry; within each tier by cost.
+    tiers.sort((a, b) => {
+        const at = a.melee ? 0 : a.ranged ? 1 : 2;
+        const bt = b.melee ? 0 : b.ranged ? 1 : 2;
+        return at !== bt ? at - bt : a.cost - b.cost;
+    });
+    return tiers.length > 0 ? tiers[0].t : null;
+}
+
 export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false, aiState = null) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
