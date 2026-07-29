@@ -2485,6 +2485,7 @@ export class Game {
         unit.hp -= dmg;
         if (stun) unit.stunnedTurns = Math.max(unit.stunnedTurns || 0, 1);
         this.gameState.structures.delete(skey); // one-shot
+        if (this.renderer) this.renderer.addTrapEffect(unit.x, unit.z, s.type);
         const name = udef.name || unit.type;
         const trapName = (STRUCTURE_TYPE[s.type] || {}).name || s.type;
         this.log(`🪤 ${name} #${unit.id} triggered a ${trapName} at [${unit.x}, ${unit.z}] — ${dmg} damage${stun ? ' and stunned for a turn' : ''}!`);
@@ -2524,6 +2525,7 @@ export class Game {
         if (s.type !== 'SPIKES') return true;
         const dmg = (STRUCTURE_TYPE.SPIKES && STRUCTURE_TYPE.SPIKES.damageVsCavalry) || 4;
         attacker.hp -= dmg;
+        if (this.renderer) this.renderer.addTrapEffect(attacker.x, attacker.z, 'SPIKES');
         const name = UNIT_TYPE[attacker.type] ? UNIT_TYPE[attacker.type].name : attacker.type;
         this.log(`🦔 ${name} #${attacker.id} charges into spiked defenses — takes ${dmg} damage! (HP ${Math.max(0, attacker.hp)}/${attacker.maxHp})`);
         if (attacker.hp <= 0) {

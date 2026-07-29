@@ -916,6 +916,80 @@ export class GameRenderer {
     }
 
     /** Explosion: fireball expanding then fading (DEMOLITION_SQUAD) */
+    /** Visual effect when a trap (SPIKES / FALL_TRAP / MINEFIELD / AT_MINE)
+     *  detonates at a tile. */
+    addTrapEffect(x, z, type) {
+        const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
+        const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;
+        if (type === 'SPIKES') {
+            // Wooden-splinter burst — brown debris rising from the tile.
+            const colors = [0x8b5e3c, 0xa0724b, 0x6b4226];
+            for (let i = 0; i < 6; i++) {
+                const d = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.04, 0.04, 0.12),
+                    new THREE.MeshBasicMaterial({ color: colors[i % colors.length], transparent: true, opacity: 0.8 }));
+                d.position.set(cx + (Math.random() - 0.5) * 0.3, y + 0.1, cz + (Math.random() - 0.5) * 0.3);
+                d.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                this.effectsGroup.add(d);
+                this._effects.push({ obj: d, born: performance.now(), life: 500, kind: 'debris' });
+            }
+            this._addImpactBurst(cx, y, cz, 0xc8a06e, 400);
+        } else if (type === 'FALL_TRAP') {
+            // Dust cloud — gray particles rising + ground ring.
+            const dust = new THREE.Mesh(
+                new THREE.SphereGeometry(0.15, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0x888877, transparent: true, opacity: 0.6 }));
+            dust.position.set(cx, y + 0.05, cz);
+            this.effectsGroup.add(dust);
+            this._effects.push({ obj: dust, born: performance.now(), life: 600, kind: 'burst' });
+            const ring = new THREE.Mesh(
+                new THREE.RingGeometry(0.2, 0.35, 18),
+                new THREE.MeshBasicMaterial({ color: 0x999988, transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.set(cx, y, cz);
+            this.effectsGroup.add(ring);
+            this._effects.push({ obj: ring, born: performance.now(), life: 500, kind: 'ring' });
+        } else if (type === 'MINEFIELD') {
+            // Orange-red explosive burst + dark smoke debris.
+            const burst = new THREE.Mesh(
+                new THREE.SphereGeometry(0.18, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xff6633, transparent: true, opacity: 0.9 }));
+            burst.position.set(cx, y + 0.1, cz);
+            this.effectsGroup.add(burst);
+            this._effects.push({ obj: burst, born: performance.now(), life: 400, kind: 'burst' });
+            for (let i = 0; i < 4; i++) {
+                const d = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.06, 6, 6),
+                    new THREE.MeshBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.7 }));
+                d.position.set(cx + (Math.random() - 0.5) * 0.4, y + 0.05, cz + (Math.random() - 0.5) * 0.4);
+                this.effectsGroup.add(d);
+                this._effects.push({ obj: d, born: performance.now(), life: 600, kind: 'debris' });
+            }
+        } else if (type === 'AT_MINE') {
+            // Shaped charge — bright white flash + large fireball + sparks.
+            const flash = new THREE.Mesh(
+                new THREE.SphereGeometry(0.22, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }));
+            flash.position.set(cx, y + 0.15, cz);
+            this.effectsGroup.add(flash);
+            this._effects.push({ obj: flash, born: performance.now(), life: 200, kind: 'burst' });
+            const fire = new THREE.Mesh(
+                new THREE.SphereGeometry(0.2, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.9 }));
+            fire.position.set(cx, y + 0.1, cz);
+            this.effectsGroup.add(fire);
+            this._effects.push({ obj: fire, born: performance.now(), life: 500, kind: 'burst' });
+            for (let i = 0; i < 6; i++) {
+                const d = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.04, 4, 4),
+                    new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.8 }));
+                d.position.set(cx + (Math.random() - 0.5) * 0.5, y + 0.05, cz + (Math.random() - 0.5) * 0.5);
+                this.effectsGroup.add(d);
+                this._effects.push({ obj: d, born: performance.now(), life: 500, kind: 'debris' });
+            }
+        }
+    }
+
     addExplosion(atkX, atkZ, defX, defZ) {
         const cx = (atkX != null ? atkX : defX) - GRID_SIZE / 2;
         const cz = (atkZ != null ? atkZ : defZ) - GRID_SIZE / 2;
