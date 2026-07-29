@@ -1381,17 +1381,92 @@ export class Game {
      */
     _playAttackAnimation(attacker, defender) {
         if (!this.renderer) return;
-        // Lord combatants don't have a rendered unit model, so skip animation.
-        if (attacker._isLord) return;
-        const def = UNIT_TYPE[attacker.type];
         const fx = this.renderer;
-        if (def && def.ranged && ['ARCHER', 'LONGBOWMAN'].includes(attacker.type)) {
-            fx.addArrowShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
-        } else if (CHARGE_UNITS.includes(attacker.type)) {
-            fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
-        } else {
-            fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        const t = attacker.type;
+
+        // Lord/king attacks — look up faction for unique visuals
+        if (attacker._isLord) {
+            const lord = attacker._lord;
+            const factionId = (this.gameState.factionAssignments && this.gameState.factionAssignments[lord.owner]) || null;
+            fx.addLordAttack(attacker.id, factionId, attacker.x, attacker.z, defender.x, defender.z);
+            return;
         }
+
+        // ---- Unit attack dispatch by type ----
+
+        // Ranged gunpowder infantry
+        if (['MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'RIFLEMAN', 'SHARPSHOOTER', 'DEMOLITION_SQUAD'].includes(t)) {
+            fx.addGunfire(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Archers
+        const def = UNIT_TYPE[t];
+        if (def && def.ranged && ['ARCHER', 'LONGBOWMAN'].includes(t)) {
+            fx.addArrowShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Cavalry charge (already existing)
+        if (CHARGE_UNITS.includes(t)) {
+            fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Chariot charge
+        if (['CHARIOT'].includes(t)) {
+            fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Battering ram
+        if (t === 'SIEGE') {
+            fx.addRamImpact(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Cannon / field gun / siege cannon
+        if (['CANNON', 'FIELD_GUN', 'SIEGE_CANNON', 'ARTILLERY'].includes(t)) {
+            fx.addCannonShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Mortar / howitzer / modern artillery
+        if (['MORTAR', 'HORSE_ARTILLERY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY'].includes(t)) {
+            fx.addMortarShell(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Railgun
+        if (t === 'RAILGUN') {
+            fx.addRailgunBolt(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Armored train
+        if (t === 'ARMORED_TRAIN') {
+            fx.addCannonShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z, { ballSize: 0.07, speed: 350 });
+            return;
+        }
+        // Naval ramming
+        if (['GALLEY', 'TRIREME'].includes(t)) {
+            fx.addRamImpact(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Naval broadside (sailing warships)
+        if (['FRIGATE', 'GALLEON', 'CARAVEL', 'GALLEASS', 'MAN_OF_WAR', 'FRIGATE_2', 'PINNACE', 'CORVETTE', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FROLIC', 'MERCHANTMAN', 'STEAM_TRANSPORT'].includes(t)) {
+            fx.addNavalBroadside(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Heavy naval shell (ironclads, battleships, destroyers)
+        if (['BATTLESHIP', 'IRONCLAD', 'DESTROYER'].includes(t)) {
+            fx.addCannonShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z, { ballSize: 0.08, speed: 350 });
+            return;
+        }
+        // Torpedo
+        if (['SUBMARINE', 'TORPEDO_BOAT'].includes(t)) {
+            fx.addTorpedo(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Pikeman stab
+        if (t === 'PIKEMAN') {
+            fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Default melee (sword lunge)
+        fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
     }
 
     /** Normalize a clicked target (a unit, a lord object, or an already-built

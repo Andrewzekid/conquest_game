@@ -470,6 +470,13 @@ export class GameRenderer {
                     const s = 0.4 + t * 1.6;
                     fx.obj.scale.set(s, s, s);
                     fx.obj.material.opacity = 0.8 * (1 - t);
+                } else if (fx.kind === 'burst') {
+                    const s = 0.3 + t * 1.5;
+                    fx.obj.scale.set(s, s, s);
+                    fx.obj.material.opacity = 0.9 * (1 - t);
+                } else if (fx.kind === 'debris') {
+                    fx.obj.position.y += 0.005;
+                    if (fx.obj.material) fx.obj.material.opacity = 0.8 * (1 - t);
                 }
                 alive.push(fx);
             }
@@ -604,7 +611,497 @@ export class GameRenderer {
         step();
     }
 
-    getIntersects(mouse, camera) {
+    /** Animate a lord model (lives in lordGroup, not unitGroup). */
+    _animateLordModel(lordId, animFn, duration = 300) {
+        let mesh = null;
+        this.lordGroup.traverse(o => {
+            if (o.userData && o.userData.lordId === lordId && !mesh) mesh = o;
+        });
+        if (!mesh) return;
+        const startPos = mesh.position.clone();
+        const startRot = mesh.rotation.clone();
+        const startTime = performance.now();
+        const loop = () => {
+            const t = Math.min(1, (performance.now() - startTime) / duration);
+            animFn(mesh, t, startPos, startRot);
+            if (t < 1) requestAnimationFrame(loop);
+            else { mesh.position.copy(startPos); mesh.rotation.copy(startRot); }
+        };
+        loop();
+    }
+
+    /** Small reusable impact burst at a world coordinate (used by projectiles). */
+    _addImpactBurst(x, y, z, color = 0xffaa33, life = 400) {
+        const burst = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+        burst.position.set(x, y, z);
+        this.effectsGroup.add(burst);
+        this._effects.push({ obj: burst, born: performance.now(), life, kind: 'burst' });
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.18, 12),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.set(x, y + 0.02, z);
+        this.effectsGroup.add(ring);
+        this._effects.push({ obj: ring, born: performance.now(), life: life + 100, kind: 'ring' });
+    }
+
+    // ===================================================================
+    //  NEW ATTACK ANIMATIONS — added for all unit ages and types
+    // ===================================================================
+
+    /** Gunfire: small fast bullet + muzzle flash + smoke (MUSKETEER, RIFLEMAN, etc.) */
+    addGunfire(attackerId, fromX, fromZ, toX, toZ, opts = {}) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.35;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.35;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        // Muzzle flash
+        const flash = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.9 }));
+        flash.position.set(x0, y0, z0);
+        this.effectsGroup.add(flash);
+        // Smoke puff
+        const smoke = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0xcccccc, transparent: true, opacity: 0.6 }));
+        smoke.position.set(x0, y0, z0);
+        this.effectsGroup.add(smoke);
+        // Bullet
+        const bullet = new THREE.Mesh(new THREE.SphereGeometry(0.025, 5, 5),
+            new THREE.MeshBasicMaterial({ color: opts.bulletColor || 0x888899 }));
+        bullet.position.set(x0, y0, z0);
+        this.effectsGroup.add(bullet);
+        const start = performance.now();
+        const life = opts.speed || 200;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !bullet.parent) {
+                if (bullet.parent) this.effectsGroup.remove(bullet);
+                if (flash.parent) this.effectsGroup.remove(flash);
+                if (smoke.parent) this.effectsGroup.remove(smoke);
+                if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcccccc, 300);
+                return;
+            }
+            bullet.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
+            flash.material.opacity = 0.9 * (1 - t * 2);
+            flash.scale.setScalar(1 + t * 3);
+            smoke.material.opacity = 0.6 * (1 - t);
+            smoke.scale.setScalar(1 + t * 2);
+            requestAnimationFrame(step);
+        };
+        step();
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const recoil = Math.sin(t * Math.PI) * 0.15;
+            m.position.set(p.x - (dx / len) * recoil, p.y, p.z - (dz / len) * recoil);
+        }, life);
+    }
+
+    /** Cannon shot: arcing cannonball with impact burst (CANNON, FIELD_GUN, etc.) */
+    addCannonShot(attackerId, fromX, fromZ, toX, toZ, opts = {}) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.3;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.1;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const flash = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0xff8822, transparent: true, opacity: 1 }));
+        flash.position.set(x0, y0, z0);
+        this.effectsGroup.add(flash);
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(opts.ballSize || 0.06, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x2a2a2a }));
+        ball.position.set(x0, y0, z0);
+        this.effectsGroup.add(ball);
+        const start = performance.now();
+        const life = opts.speed || 400;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !ball.parent) {
+                if (ball.parent) this.effectsGroup.remove(ball);
+                if (flash.parent) this.effectsGroup.remove(flash);
+                if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 500);
+                return;
+            }
+            ball.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.6, z0 + (z1 - z0) * t);
+            flash.material.opacity = 1 - t * 3;
+            flash.scale.setScalar(1 + t * 2);
+            requestAnimationFrame(step);
+        };
+        step();
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const recoil = Math.sin(t * Math.PI) * 0.2;
+            m.position.set(p.x - (dx / len) * recoil, p.y, p.z - (dz / len) * recoil);
+            m.rotation.z = r.z + Math.sin(t * Math.PI) * 0.15;
+        }, life);
+    }
+
+    /** Mortar / howitzer shell: steep high arc (MORTAR, HORSE_ARTILLERY, MOBILIZED_ARTILLERY) */
+    addMortarShell(attackerId, fromX, fromZ, toX, toZ, opts = {}) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.4;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.1;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.1, 6),
+            new THREE.MeshBasicMaterial({ color: opts.color || 0x5a5a3a }));
+        shell.position.set(x0, y0, z0);
+        this.effectsGroup.add(shell);
+        const start = performance.now();
+        const life = opts.speed || 500;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !shell.parent) {
+                if (shell.parent) this.effectsGroup.remove(shell);
+                if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
+                return;
+            }
+            shell.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 1.5, z0 + (z1 - z0) * t);
+            shell.rotation.x = t * Math.PI * 2;
+            requestAnimationFrame(step);
+        };
+        step();
+    }
+
+    /** Railgun bolt: fast bright energy bolt (RAILGUN) */
+    addRailgunBolt(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.3;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.3;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.15, 6),
+            new THREE.MeshBasicMaterial({ color: 0x44aaff }));
+        bolt.position.set(x0, y0, z0);
+        bolt.lookAt(x1, y1, z1);
+        this.effectsGroup.add(bolt);
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7 }));
+        glow.position.set(x0, y0, z0);
+        this.effectsGroup.add(glow);
+        const start = performance.now();
+        const life = 150;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !bolt.parent) {
+                if (bolt.parent) this.effectsGroup.remove(bolt);
+                if (glow.parent) this.effectsGroup.remove(glow);
+                if (t >= 1) {
+                    const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8),
+                        new THREE.MeshBasicMaterial({ color: 0xaaddff, transparent: true, opacity: 0.8 }));
+                    flash.position.set(x1, y1, z1);
+                    this.effectsGroup.add(flash);
+                    this._effects.push({ obj: flash, born: performance.now(), life: 300, kind: 'burst' });
+                }
+                return;
+            }
+            const cx = x0 + (x1 - x0) * t, cy = y0 + (y1 - y0) * t, cz = z0 + (z1 - z0) * t;
+            bolt.position.set(cx, cy, cz);
+            bolt.lookAt(x1, y1, z1);
+            glow.position.set(cx, cy, cz);
+            glow.material.opacity = 0.7 * (1 - t * 0.5);
+            requestAnimationFrame(step);
+        };
+        step();
+    }
+
+    /** Torpedo: slow underwater projectile with bubbles (SUBMARINE, TORPEDO_BOAT) */
+    addTorpedo(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = 0.08;
+        const y1 = 0.08;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const torp = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.18, 6),
+            new THREE.MeshBasicMaterial({ color: 0x8899aa }));
+        torp.position.set(x0, y0, z0);
+        torp.lookAt(x1, 0, z1);
+        this.effectsGroup.add(torp);
+        const bubbleMat = new THREE.MeshBasicMaterial({ color: 0xeeeeff, transparent: true, opacity: 0.4 });
+        const bubbles = [];
+        for (let i = 0; i < 4; i++) {
+            const b = new THREE.Mesh(new THREE.SphereGeometry(0.015, 4, 4), bubbleMat);
+            b.position.set(x0 + (Math.random() - 0.5) * 0.1, y0 + Math.random() * 0.05, z0 + (Math.random() - 0.5) * 0.1);
+            this.effectsGroup.add(b);
+            bubbles.push(b);
+        }
+        const start = performance.now();
+        const life = 500;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !torp.parent) {
+                if (torp.parent) this.effectsGroup.remove(torp);
+                for (const b of bubbles) if (b.parent) this.effectsGroup.remove(b);
+                if (t >= 1) {
+                    const burst = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8),
+                        new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6 }));
+                    burst.position.set(x1, y1, z1);
+                    this.effectsGroup.add(burst);
+                    this._effects.push({ obj: burst, born: performance.now(), life: 600, kind: 'burst' });
+                }
+                return;
+            }
+            torp.position.set(x0 + (x1 - x0) * t, y0, z0 + (z1 - z0) * t);
+            for (const b of bubbles) {
+                b.position.x += (Math.random() - 0.5) * 0.02;
+                b.position.z += (Math.random() - 0.5) * 0.02;
+                b.position.y += 0.01;
+                b.material.opacity = 0.4 * (1 - t);
+            }
+            requestAnimationFrame(step);
+        };
+        step();
+    }
+
+    /** Broadside: chain of cannonballs from naval sailing ships (FRIGATE, GALLEON, etc.) */
+    addNavalBroadside(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.2;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.1;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        for (let i = 0; i < 3; i++) {
+            const offX = (i - 1) * 0.12;
+            const ball = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6),
+                new THREE.MeshBasicMaterial({ color: 0x2a2a2a }));
+            const bx0 = x0 + offX, bz0 = z0;
+            const bx1 = x1 + offX * 0.3, bz1 = z1;
+            ball.position.set(bx0, y0, bz0);
+            this.effectsGroup.add(ball);
+            const delay = i * 60;
+            const bStart = performance.now() + delay;
+            const bStep = () => {
+                const t = Math.min(1, (performance.now() - bStart) / 350);
+                if (t >= 1 || !ball.parent) {
+                    if (ball.parent) this.effectsGroup.remove(ball);
+                    if (t >= 1) this._addImpactBurst(bx1, y1, bz1, 0xff8844, 300);
+                    return;
+                }
+                ball.position.set(bx0 + (bx1 - bx0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.3, bz0 + (bz1 - bz0) * t);
+                requestAnimationFrame(bStep);
+            };
+            setTimeout(bStep, delay);
+        }
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const recoil = Math.sin(t * Math.PI) * 0.12;
+            m.position.set(p.x - (dx / len) * recoil, p.y, p.z - (dz / len) * recoil);
+            m.rotation.z = r.z + Math.sin(t * Math.PI) * 0.08;
+        }, 400);
+    }
+
+    /** Ram impact: heavy forward thrust with debris burst (SIEGE, GALLEY, TRIREME) */
+    addRamImpact(attackerId, fromX, fromZ, toX, toZ) {
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const forward = Math.sin(t * Math.PI) * 0.5;
+            m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
+            m.rotation.z = r.z + Math.sin(t * Math.PI) * 0.15;
+        }, 350);
+        setTimeout(() => {
+            const mx = (fromX + toX) / 2 - GRID_SIZE / 2;
+            const mz = (fromZ + toZ) / 2 - GRID_SIZE / 2;
+            const my = (this.tileHeights.get(`${Math.round((fromX + toX) / 2)},${Math.round((fromZ + toZ) / 2)}`) || 0) + 0.1;
+            const burst = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6),
+                new THREE.MeshBasicMaterial({ color: 0xaa8844, transparent: true, opacity: 0.8 }));
+            burst.position.set(mx, my, mz);
+            this.effectsGroup.add(burst);
+            this._effects.push({ obj: burst, born: performance.now(), life: 400, kind: 'burst' });
+            for (let i = 0; i < 4; i++) {
+                const d = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.02),
+                    new THREE.MeshBasicMaterial({ color: 0x6a4220 }));
+                d.position.set(mx + (Math.random() - 0.5) * 0.2, my + 0.1, mz + (Math.random() - 0.5) * 0.2);
+                this.effectsGroup.add(d);
+                this._effects.push({ obj: d, born: performance.now(), life: 500, kind: 'debris' });
+            }
+        }, 175);
+    }
+
+    /** Explosion: fireball expanding then fading (DEMOLITION_SQUAD) */
+    addExplosion(atkX, atkZ, defX, defZ) {
+        const cx = (atkX != null ? atkX : defX) - GRID_SIZE / 2;
+        const cz = (atkZ != null ? atkZ : defZ) - GRID_SIZE / 2;
+        const cy = (this.tileHeights.get(`${atkX != null ? atkX : defX},${atkZ != null ? atkZ : defZ}`) || 0) + 0.1;
+        const targetX = defX - GRID_SIZE / 2, targetZ = defZ - GRID_SIZE / 2;
+        const fire = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.9 }));
+        fire.position.set(cx, cy, cz);
+        this.effectsGroup.add(fire);
+        const start = performance.now();
+        const life = 500;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !fire.parent) {
+                if (fire.parent) this.effectsGroup.remove(fire);
+                return;
+            }
+            const dx = targetX - cx, dz = targetZ - cz;
+            fire.position.set(cx + dx * t, cy + Math.sin(t * Math.PI) * 0.4, cz + dz * t);
+            fire.scale.setScalar(1 + t * 2);
+            fire.material.color.setHSL(0.08 - t * 0.08, 1, 0.5 - t * 0.3);
+            fire.material.opacity = 0.9 * (1 - t);
+            requestAnimationFrame(step);
+        };
+        step();
+        const smoke = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.5 }));
+        smoke.position.set(targetX, cy + 0.3, targetZ);
+        this.effectsGroup.add(smoke);
+        this._effects.push({ obj: smoke, born: performance.now(), life: 800, kind: 'debris' });
+    }
+
+    /** Lord/king attack with faction-specific visuals. */
+    addLordAttack(lordId, factionId, fromX, fromZ, toX, toZ) {
+        let mesh = null;
+        this.lordGroup.traverse(o => {
+            if (o.userData && o.userData.lordId === lordId && !mesh) mesh = o;
+        });
+        if (!mesh) return;
+        const startPos = mesh.position.clone();
+        const startRot = mesh.rotation.clone();
+        const y0 = startPos.y + 0.8;
+        const x0 = startPos.x, z0 = startPos.z;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.5;
+        const fid = factionId || '';
+        const colorMap = {
+            crimson: 0xff3322, verdant: 0x44cc44, violet: 0xcc66ff,
+            azure: 0x4488ff, obsidian: 0x8800cc, iron: 0x888899,
+            shadow: 0x6633aa, storm: 0x44ddff, frost: 0xaaddff,
+            golden: 0xffd700, polish: 0xeeeeff, roman: 0xcc4444,
+            byzantine: 0xff8800, spanish: 0xdd8833, viking: 0x88aacc
+        };
+        const color = colorMap[fid] || 0xffd700;
+        const isKing = mesh.scale.x > 1.1; // kings are 1.25x
+        const duration = isKing ? 380 : 320;
+        // Faction-specific projectile or visual
+        if (fid === 'storm') {
+            // Lightning bolt
+            const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.025, 0.3, 5),
+                new THREE.MeshBasicMaterial({ color: 0x44ddff }));
+            bolt.position.set(x0, y0, z0);
+            bolt.lookAt(x1, y1, z1);
+            this.effectsGroup.add(bolt);
+            const glow = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6),
+                new THREE.MeshBasicMaterial({ color: 0x88ddff, transparent: true, opacity: 0.7 }));
+            glow.position.set(x0, y0, z0);
+            this.effectsGroup.add(glow);
+            const t0 = performance.now();
+            const l0 = 180;
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / l0);
+                if (t >= 1 || !bolt.parent) {
+                    if (bolt.parent) this.effectsGroup.remove(bolt);
+                    if (glow.parent) this.effectsGroup.remove(glow);
+                    if (t >= 1) this._addImpactBurst(x1, y1, z1, 0x88ddff, 300);
+                    return;
+                }
+                bolt.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
+                bolt.lookAt(x1, y1, z1);
+                glow.position.copy(bolt.position);
+                requestAnimationFrame(step);
+            };
+            step();
+        } else if (fid === 'frost') {
+            // Ice shard
+            const shard = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.15, 5),
+                new THREE.MeshBasicMaterial({ color: 0xaaddff }));
+            shard.position.set(x0, y0, z0);
+            shard.lookAt(x1, y1, z1);
+            this.effectsGroup.add(shard);
+            const t0 = performance.now();
+            const l0 = 250;
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / l0);
+                if (t >= 1 || !shard.parent) {
+                    if (shard.parent) this.effectsGroup.remove(shard);
+                    if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xaaddff, 350);
+                    return;
+                }
+                shard.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.4, z0 + (z1 - z0) * t);
+                shard.rotation.x = t * Math.PI;
+                requestAnimationFrame(step);
+            };
+            step();
+        } else if (fid === 'iron') {
+            // Heavy hammer smash — big impact ring at target, no projectile
+            const t0 = performance.now();
+            setTimeout(() => this._addImpactBurst(x1, y1, z1, 0x888899, 500), 200);
+        } else if (fid === 'shadow') {
+            // Dagger toss — small fast projectile
+            const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1),
+                new THREE.MeshBasicMaterial({ color: 0x6633aa }));
+            dagger.position.set(x0, y0, z0);
+            dagger.lookAt(x1, y1, z1);
+            this.effectsGroup.add(dagger);
+            const t0 = performance.now();
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / 200);
+                if (t >= 1 || !dagger.parent) {
+                    if (dagger.parent) this.effectsGroup.remove(dagger);
+                    return;
+                }
+                dagger.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
+                requestAnimationFrame(step);
+            };
+            step();
+        } else if (fid === 'crimson' || fid === 'obsidian' || fid === 'roman') {
+            // Melee slash/stab — colored blade arc model animation only
+            // (no projectile, just the lunge)
+        } else if (fid === 'violet') {
+            // Magic orb
+            const orb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8),
+                new THREE.MeshBasicMaterial({ color: 0xcc66ff }));
+            orb.position.set(x0, y0, z0);
+            this.effectsGroup.add(orb);
+            const t0 = performance.now();
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / 280);
+                if (t >= 1 || !orb.parent) {
+                    if (orb.parent) this.effectsGroup.remove(orb);
+                    if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcc66ff, 350);
+                    return;
+                }
+                orb.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.3, z0 + (z1 - z0) * t);
+                orb.scale.setScalar(1 + Math.sin(t * Math.PI) * 0.5);
+                requestAnimationFrame(step);
+            };
+            step();
+        } else {
+            // Default: colored energy bolt
+            const bolt = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6),
+                new THREE.MeshBasicMaterial({ color }));
+            bolt.position.set(x0, y0, z0);
+            this.effectsGroup.add(bolt);
+            const t0 = performance.now();
+            const step = () => {
+                const t = Math.min(1, (performance.now() - t0) / 250);
+                if (t >= 1 || !bolt.parent) {
+                    if (bolt.parent) this.effectsGroup.remove(bolt);
+                    if (t >= 1) this._addImpactBurst(x1, y1, z1, color, 300);
+                    return;
+                }
+                bolt.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.3, z0 + (z1 - z0) * t);
+                requestAnimationFrame(step);
+            };
+            step();
+        }
+        // Model lunge
+        const dx = toX - fromX, dz = toZ - fromZ;
+        const len = Math.sqrt(dx * dx + dz * dz) || 1;
+        const lungeStart = performance.now();
+        const loop = () => {
+            const t = Math.min(1, (performance.now() - lungeStart) / duration);
+            if (t < 1) {
+                const forward = Math.sin(t * Math.PI) * 0.5;
+                mesh.position.set(startPos.x + (dx / len) * forward, startPos.y, startPos.z + (dz / len) * forward);
+                mesh.rotation.z = startRot.z + Math.sin(t * Math.PI) * 0.25;
+                requestAnimationFrame(loop);
+            } else {
+                mesh.position.copy(startPos);
+                mesh.rotation.copy(startRot);
+            }
+        };
+        loop();
+    }
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
         return raycaster.intersectObjects(this.scene.children, true);
