@@ -413,6 +413,13 @@
     </div>
     <div id="combat-log"></div>
 
+    <!-- Minimap: a small canvas in the bottom-right (above the combat log
+         area on wide screens) showing the whole map at a glance, with a
+         viewport rectangle for the current camera frustum. -->
+    <div id="minimap-wrap" style="position:absolute; bottom:260px; right:20px; width:180px; height:180px; background:rgba(10,14,24,0.85); border:1px solid var(--border); border-radius:8px; padding:6px; z-index:15; box-shadow:var(--shadow);">
+        <canvas id="minimap" width="168" height="168" style="width:100%; height:100%; border-radius:4px; cursor:pointer;"></canvas>
+    </div>
+
     <div id="game-over">
         <div id="game-over-text"></div>
         <button class="btn btn-primary" onclick="location.reload()">Play Again</button>

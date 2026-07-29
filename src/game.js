@@ -1,6 +1,6 @@
 /** Main game orchestrator: wires all systems together. */
 import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
-         DIPLOMACY_STATES, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
+         DIPLOMACY_STATES, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE, FACTION_UNIQUE_UNITS,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
          SIEGE_ENGINES, SIEGE_ENGINE_BUILD_COST, SIEGE_ENGINE_BUILD_TURNS, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
@@ -76,17 +76,27 @@ export class Game {
         unlockAudio();
 
         if (options && options.load) {
-            const state = loadGame();
-            if (!state) {
-                // No save to load �?fall back to a fresh medium game.
-                options = { playerFactionId: 'crimson', aiFactionIds: null, mapSize: 'medium' };
-            } else {
-                this.loadFromState(state);
-                this.start();
-                return;
-            }
+            // Async filesystem/localStorage load. We kick it off here and
+            // start once the state is ready; the constructor returns a Game
+            // instance whose renderer will spin up when the load resolves.
+            this._pendingLoad = true;
+            loadGame().then(state => {
+                this._pendingLoad = false;
+                if (!state) {
+                    // No save to load — fall back to a fresh medium game.
+                    this._initFresh({ playerFactionId: 'crimson', aiFactionIds: null, mapSize: 'medium' });
+                } else {
+                    this.loadFromState(state);
+                    this.start();
+                }
+            });
+            return;
         }
+        this._initFresh(options);
+    }
 
+    /** Initialize a fresh game from start-menu options (not a save load). */
+    _initFresh(options) {
         // Resolve faction binding + map size.
         // In spectate mode there is no human player; slot 0 is just another AI.
         const playerFactionId = this.spectateMode ? null : (options.playerFactionId || 'crimson');
@@ -548,6 +558,26 @@ export class Game {
         // flash visible at game start.
         if (this.gameState) this.renderer.renderAll(this.gameState);
         this.renderer.animate();
+        // Minimap click-to-recenter: clicking the minimap moves the camera to
+        // look at the clicked tile. The camera is orthographic (top-down), so
+        // recentering is just setting position.x/z (y stays).
+        const minimapCanvas = document.getElementById('minimap');
+        if (minimapCanvas) {
+            minimapCanvas.addEventListener('click', (e) => {
+                if (!this.renderer || !this.gameState) return;
+                const rect = minimapCanvas.getBoundingClientRect();
+                const cx = ((e.clientX - rect.left) / rect.width) * minimapCanvas.width;
+                const cy = ((e.clientY - rect.top) / rect.height) * minimapCanvas.height;
+                const tile = this.renderer.minimapClickToTile(cx, cy, this.gameState);
+                if (!tile) return;
+                // Move the camera so the clicked tile is centered. Tile (x,z)
+                // is at world (x - GRID_SIZE/2, z - GRID_SIZE/2).
+                this.renderer.camera.position.x = tile.x - GRID_SIZE / 2;
+                this.renderer.camera.position.z = tile.z - GRID_SIZE / 2;
+                this.renderer.camera.lookAt(0, 0, 0);
+                this.renderAll();
+            });
+        }
     }
 
     initUI() {
@@ -2748,6 +2778,15 @@ export class Game {
         const def = this.factionDefs[PLAYER_FACTION];
         if (!def.roster.includes(unitType) && !EXTRA_UNITS.includes(unitType) && !NAVAL_UNITS.includes(unitType) && !SIEGE_ENGINES.includes(unitType)) {
             this.log('Your faction cannot train that unit.');
+            return;
+        }
+        // Faction-unique units: only the owning faction (per
+        // FACTION_UNIQUE_UNITS) can train them, even after researching the
+        // gating tech. The unit's def id is the faction id (e.g. 'polish' for
+        // WINGED_HUSSAR); we compare against the player's assigned faction def.
+        const uniqueOwner = FACTION_UNIQUE_UNITS[unitType];
+        if (uniqueOwner && def.id !== uniqueOwner) {
+            this.log('That unit is exclusive to another faction.');
             return;
         }
         // Tech gating: EXTRA_UNITS unlocked by a tech require that tech to be
@@ -5693,12 +5732,13 @@ export class Game {
         }
     }
     resume() { if (this.gameState.paused) this.togglePause(); }
-    save() {
-        if (saveGame(this.gameState)) this.log('Game saved.');
+    async save() {
+        const ok = await saveGame(this.gameState);
+        if (ok) this.log('Game saved.');
         else this.log('Save failed.');
     }
-    load() {
-        const state = loadGame();
+    async load() {
+        const state = await loadGame();
         if (!state) { this.log('No save found.'); return; }
         hidePauseMenu();
         this.loadFromState(state);

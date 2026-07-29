@@ -61,6 +61,36 @@ export const OBSOLESCENCE = {
     IRONCLAD:     { obsoletes: ['FRIGATE', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'STEAM_ENGINE' },
     STEAM_TRANSPORT: { obsoletes: ['TRANSPORT'],                   tech: 'STEAM_ENGINE' },
     IRONCLAD_FRIGATE: { obsoletes: ['IRONCLAD', 'MAN_OF_WAR', 'FRIGATE', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'IRONCLADS' },
+    // Atomic-era naval: the dreadnought line obsoletes all the sail/ironclad
+    // warships; TRANSPORT_SHIP obsoletes STEAM_TRANSPORT; the improved sub
+    // retires the original. Carriers and battleships coexist (different roles).
+    DESTROYER:    { obsoletes: ['IRONCLAD_FRIGATE', 'MONITOR', 'IRONCLAD', 'FRIGATE_2', 'FROLIC', 'CORVETTE', 'FRIGATE', 'MAN_OF_WAR', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'DREADNOUGHT' },
+    BATTLESHIP:   { obsoletes: ['IRONCLAD_FRIGATE', 'MONITOR', 'FROLIC', 'MAN_OF_WAR', 'GALLEON'], tech: 'DREADNOUGHT' },
+    TRANSPORT_SHIP: { obsoletes: ['STEAM_TRANSPORT', 'TRANSPORT'], tech: 'DREADNOUGHT' },
+    SUBMARINE_II: { obsoletes: ['SUBMARINE'],                      tech: 'NAVAL_AVIATION' },
+
+    // Atomic-era land: mobilized units obsolete their foot-bound predecessors.
+    // MOBILIZED_INFANTRY retires RIFLEMAN/SHARPSHOOTER/LINE_INFANTRY (the
+    // motorized column replaces the marching line); MOBILIZED_ARTILLERY
+    // retires FIELD_GUN/HORSE_ARTILLERY/CANNON/MORTAR (towed guns replace the
+    // horse-drawn battery). MOTOR_ARTILLERY (self-propelled) further retires
+    // SIEGE_CANNON/RAILGUN — its shoot-and-scoot supersedes the fixed emplacement.
+    MOBILIZED_INFANTRY: { obsoletes: ['RIFLEMAN', 'SHARPSHOOTER', 'LINE_INFANTRY', 'MUSKETEER', 'ARQUEBUSIER', 'DRAGOON', 'INFANTRY', 'BERSERKER', 'LEGIONNAIRE', 'VARANGIAN_GUARD', 'WINGED_HUSSAR', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'], tech: 'INTERNAL_COMBUSTION' },
+    MOBILIZED_ARTILLERY: { obsoletes: ['FIELD_GUN', 'HORSE_ARTILLERY', 'CANNON', 'MORTAR', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE', 'SIEGE_TOWER', 'ENGINEER'], tech: 'INTERNAL_COMBUSTION' },
+    MOTOR_ARTILLERY: { obsoletes: ['SIEGE_CANNON', 'RAILGUN', 'MOBILIZED_ARTILLERY', 'FIELD_GUN', 'HORSE_ARTILLERY', 'CANNON', 'MORTAR'], tech: 'ADVANCED_ARTILLERY' },
+    // Tanks (ARMOR) obsolete all horse cavalry — they are the modern cavalry.
+    // CATAPHRACT/CHARIOT/CAVALRY/WINGED_HUSSAR/DRAGOON/CONQUISTADOR/
+    // MERCENARY_KNIGHT/FRONTIERSMAN all retire once TANK is unlocked.
+    // HEAVY_TANK is a slower, tankier alternative — it coexists with TANK
+    // (both stay trainable) so a player can mix the two.
+    TANK:         { obsoletes: ['CATAPHRACT', 'CHARIOT', 'CAVALRY', 'WINGED_HUSSAR', 'DRAGOON', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'FRONTIERSMAN', 'ARMORED_TRAIN'], tech: 'ARMOR' },
+    // Anti-armor: BAYONET_RIFLE obsoletes the older anti-cavalry line
+    // (HALBERDIER/PIKE_MASTER) — the bayonet replaces the pike against tanks.
+    BAYONET_RIFLE: { obsoletes: ['HALBERDIER', 'PIKE_MASTER', 'PIKEMAN'], tech: 'ANTI_ARMOR' },
+
+    // Anti-cavalry line: PIKE_MASTER obsoletes HALBERDIER (the enlightenment
+    // long-pike replaces the medieval halberd in the same anti-cavalry role).
+    PIKE_MASTER:  { obsoletes: ['HALBERDIER'],                      tech: 'PIKE_WARFARE' },
 };
 
 /** Given a set of researched tech ids, return the set of unit types now obsolete.

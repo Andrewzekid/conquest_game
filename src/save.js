@@ -1,183 +1,215 @@
-/** Save/load to localStorage. GameState uses Map/Set; JSON needs plain objects.
- *  Phase F: enhanced persistence with verification for growth, burn, workshop,
- *  wonders, diplomacy relationship scores, and all new state fields. */
+/** Save/load game state.
+ *
+ *  Saves persist to the FILESYSTEM (via a small server-side API exposed by
+ *  server.py at /api/save) rather than the browser's localStorage. This makes
+ *  saves survive browser data clearing and lets players back up the save file
+ *  directly. If the server API is unreachable (e.g. the game is opened from
+ *  file:// or a static host without the Python server), we fall back to
+ *  localStorage so the game is still playable.
+ *
+ *  GameState uses Map/Set; JSON needs plain objects. */
 import { serializeAIState, deserializeAIState } from './ai_goals.js';
 import { serializeTechState, deserializeTechState } from './tech.js';
 
 const SAVE_KEY = 'conquest_save';
-// Bumped 5 -> 6 for per-faction AI tech states (shared tech tree).
-const SAVE_VERSION = 6;
+// Bumped 6 -> 7 for the atomic-era tech tree + faction-unique unit fix +
+// new units. Older saves are rejected (their tech/unit state predates the
+// expanded tree and the faction-unique gate).
+const SAVE_VERSION = 7;
 
-export function saveGame(gameState) {
+const API_BASE = '/api/save';
+
+/** True if the filesystem save API is available (i.e. the Python server is
+ *  serving the game). Probed once on first use; cached so we don't re-probe
+ *  every save. localStorage is the fallback when this is false. */
+let _fsMode = null;
+async function detectFsMode() {
+    if (_fsMode !== null) return _fsMode;
     try {
-        const data = {
-            version: SAVE_VERSION,
-            turn: gameState.turn,
-            // Faction slot -> faction def id (rebuilt from FACTION_DEFS on load).
-            factionAssignments: { ...gameState.factionAssignments },
-            tiles: [...gameState.tiles.values()],
-            units: [...gameState.units.values()],
-            buildings: [...(gameState.buildings || new Map()).entries()],
-            // Military structure level/hp state (Area 6). Absent on v2 saves,
-            // which are rejected by the version check below anyway.
-            buildingState: [...(gameState.buildingState || new Map()).entries()],
-            lords: gameState.lords,
-            resources: gameState.resources,
-            diplomacy: gameState.diplomacy,
-            explored: [...(gameState.explored || [])],
-            scryRevealed: [...(gameState.scryRevealed || [])],
-            trainedThisTurn: [...(gameState.trainedThisTurn || [])],
-            production: [...(gameState.production || []).entries()],
-            construction: [...(gameState.construction || []).entries()],
-            structures: [...(gameState.structures || []).entries()],
-            bridges: [...(gameState.bridges || [])],
-            concealedUnits: [...(gameState.concealedUnits || []).entries()],
-            kingCooldowns: { ...(gameState.kingCooldowns || {}) },
-            tempBonuses: { ...(gameState.tempBonuses || {}) },
-            graveyard: gameState.graveyard || [],
-            eliminated: [...(gameState.eliminated || [])],
-            reputation: { ...(gameState.reputation || {}) },
-            gameOver: gameState.gameOver,
-            winner: gameState.winner,
-            // Tech tree state (4X feature).
-            techState: gameState.techState ? {
-                researched: gameState.techState.researched ? [...gameState.techState.researched] : [],
-                current: gameState.techState.current || null,
-                progress: gameState.techState.progress || 0
-            } : null,
-            // Victory tracking state.
-            victoryState: gameState.victoryState ? {
-                projects: { ...(gameState.victoryState.projects || {}) },
-                tradeRoutes: { ...(gameState.victoryState.tradeRoutes || {}) },
-                scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
-            } : null,
-            // AI goal-sequence state (per-faction goals + scarcity streak).
-            aiState: serializeAIState(gameState.aiState),
-            // Per-faction AI tech states (shared tech tree, per-faction research progress).
-            aiTechStates: gameState.aiTechStates ? Object.fromEntries(
-                Object.entries(gameState.aiTechStates).map(([f, ts]) => [f, serializeTechState(ts)])
-            ) : null,
-            // Trade routes (Feature 3): array of route objects + id counter.
-            tradeRoutes: gameState.tradeRoutes || [],
-            tradeRouteNextId: gameState.tradeRouteNextId || 1
-        };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+        const r = await fetch(API_BASE, { method: 'GET' });
+        _fsMode = r.ok ? true : false;
+    } catch (e) {
+        _fsMode = false;
+    }
+    return _fsMode;
+}
+
+// Allow tests to force the storage mode (so they don't hit the network).
+export function _setStorageMode(mode) { _fsMode = mode; }
+
+function serializeState(gameState) {
+    return {
+        version: SAVE_VERSION,
+        turn: gameState.turn,
+        factionAssignments: { ...gameState.factionAssignments },
+        tiles: [...gameState.tiles.values()],
+        units: [...gameState.units.values()],
+        buildings: [...(gameState.buildings || new Map()).entries()],
+        buildingState: [...(gameState.buildingState || new Map()).entries()],
+        lords: gameState.lords,
+        resources: gameState.resources,
+        diplomacy: gameState.diplomacy,
+        explored: [...(gameState.explored || [])],
+        scryRevealed: [...(gameState.scryRevealed || [])],
+        trainedThisTurn: [...(gameState.trainedThisTurn || [])],
+        production: [...(gameState.production || []).entries()],
+        construction: [...(gameState.construction || []).entries()],
+        structures: [...(gameState.structures || []).entries()],
+        bridges: [...(gameState.bridges || [])],
+        concealedUnits: [...(gameState.concealedUnits || []).entries()],
+        kingCooldowns: { ...(gameState.kingCooldowns || {}) },
+        tempBonuses: { ...(gameState.tempBonuses || {}) },
+        graveyard: gameState.graveyard || [],
+        eliminated: [...(gameState.eliminated || [])],
+        reputation: { ...(gameState.reputation || {}) },
+        gameOver: gameState.gameOver,
+        winner: gameState.winner,
+        techState: gameState.techState ? {
+            researched: gameState.techState.researched ? [...gameState.techState.researched] : [],
+            current: gameState.techState.current || null,
+            progress: gameState.techState.progress || 0
+        } : null,
+        victoryState: gameState.victoryState ? {
+            projects: { ...(gameState.victoryState.projects || {}) },
+            tradeRoutes: { ...(gameState.victoryState.tradeRoutes || {}) },
+            scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
+        } : null,
+        aiState: serializeAIState(gameState.aiState),
+        aiTechStates: gameState.aiTechStates ? Object.fromEntries(
+            Object.entries(gameState.aiTechStates).map(([f, ts]) => [f, serializeTechState(ts)])
+        ) : null,
+        tradeRoutes: gameState.tradeRoutes || [],
+        tradeRouteNextId: gameState.tradeRouteNextId || 1
+    };
+}
+
+export async function saveGame(gameState) {
+    const data = serializeState(gameState);
+    const json = JSON.stringify(data);
+    try {
+        if (await detectFsMode()) {
+            const r = await fetch(API_BASE, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: json
+            });
+            if (r.ok) return true;
+            // Server returned an error — fall back to localStorage.
+        }
+        // Fallback (no server or server error): localStorage.
+        localStorage.setItem(SAVE_KEY, json);
         return true;
     } catch (e) {
-        console.warn('save failed', e);
-        return false;
+        // Last-resort fallback: localStorage even if we intended FS mode.
+        try { localStorage.setItem(SAVE_KEY, json); return true; }
+        catch (e2) { console.warn('save failed', e, e2); return false; }
     }
 }
 
-export function loadSavedExists() {
-    try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
+export async function loadSavedExists() {
+    try {
+        if (await detectFsMode()) {
+            const r = await fetch(API_BASE, { method: 'GET' });
+            if (r.ok) {
+                const obj = await r.json();
+                return !!obj.exists;
+            }
+        }
+        return !!localStorage.getItem(SAVE_KEY);
+    } catch (e) {
+        try { return !!localStorage.getItem(SAVE_KEY); } catch (e2) { return false; }
+    }
 }
 
-export function loadGame() {
+function parseSaveData(data) {
+    if (!data || data.version !== SAVE_VERSION) {
+        console.warn(`Save version mismatch (have ${data && data.version}, need ${SAVE_VERSION}) — ignoring old save.`);
+        return null;
+    }
+    const tiles = new Map();
+    for (const t of data.tiles) tiles.set(`${t.x},${t.z}`, t);
+    const units = new Map();
+    for (const u of data.units) units.set(u.id, u);
+    const buildings = new Map(data.buildings);
+    const buildingState = new Map(data.buildingState || []);
+    const diplomacy = data.diplomacy || { relations: {}, pendingOffers: [] };
+    if (!diplomacy.diplomaticEvents) diplomacy.diplomaticEvents = [];
+    for (const rel of Object.values(diplomacy.relations)) {
+        if (rel.turnsAllied === undefined) rel.turnsAllied = 0;
+        if (rel.turnsAtWar === undefined) rel.turnsAtWar = 0;
+        if (rel.relationship === undefined) rel.relationship = 0;
+        if (rel.warsDeclared === undefined) rel.warsDeclared = 0;
+        if (rel.peaceTreaties === undefined) rel.peaceTreaties = 0;
+        if (rel.tradesMade === undefined) rel.tradesMade = 0;
+        if (rel.grievances === undefined) rel.grievances = 0;
+        if (rel.grievanceLog === undefined) rel.grievanceLog = [];
+        if (rel.expiresOn === undefined) rel.expiresOn = null;
+        if (rel.formalWar === undefined) rel.formalWar = rel.state === 'war';
+        if (rel.lastWarDeclaredTurn === undefined) rel.lastWarDeclaredTurn = 0;
+        if (rel.grudges === undefined) rel.grudges = {};
+        if (rel.trust === undefined) rel.trust = Math.max(0, 1 - (rel.brokenTreaties || 0) * 0.25);
+    }
+    return {
+        turn: data.turn,
+        factionAssignments: data.factionAssignments,
+        tiles,
+        units,
+        buildings,
+        buildingState,
+        lords: data.lords,
+        resources: data.resources,
+        diplomacy,
+        explored: new Set(data.explored || []),
+        visible: new Set(),
+        scryRevealed: new Set(data.scryRevealed || []),
+        trainedThisTurn: new Set(data.trainedThisTurn || []),
+        production: new Map(data.production || []),
+        construction: new Map(data.construction || []),
+        structures: new Map(data.structures || []),
+        bridges: new Set(data.bridges || []),
+        concealedUnits: new Map(data.concealedUnits || []),
+        kingCooldowns: data.kingCooldowns || {},
+        tempBonuses: data.tempBonuses || {},
+        graveyard: data.graveyard || [],
+        eliminated: new Set(data.eliminated || []),
+        reputation: data.reputation || null,
+        gameOver: data.gameOver || false,
+        winner: data.winner || null,
+        techState: data.techState ? {
+            researched: new Set(data.techState.researched || []),
+            current: data.techState.current || null,
+            progress: data.techState.progress || 0
+        } : null,
+        victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+        aiState: deserializeAIState(data.aiState),
+        aiTechStates: data.aiTechStates ? Object.fromEntries(
+            Object.entries(data.aiTechStates).map(([f, ts]) => [f, deserializeTechState(ts)])
+        ) : null,
+        tradeRoutes: Array.isArray(data.tradeRoutes) ? data.tradeRoutes : [],
+        tradeRouteNextId: data.tradeRouteNextId || 1
+    };
+}
+
+export async function loadGame() {
+    let raw = null;
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
+        if (await detectFsMode()) {
+            const r = await fetch(API_BASE, { method: 'GET' });
+            if (r.ok) {
+                const obj = await r.json();
+                if (obj.exists && obj.data) raw = obj.data;
+            }
+        }
+        if (raw === null) {
+            raw = localStorage.getItem(SAVE_KEY);
+        }
         if (!raw) return null;
         const data = JSON.parse(raw);
-        // Refuse incompatible save formats rather than loading a half-corrupt
-        // state. Bumping SAVE_VERSION (e.g. for a breaking state-shape change)
-        // automatically invalidates older saves.
-        if (!data || data.version !== SAVE_VERSION) {
-            console.warn(`Save version mismatch (have ${data && data.version}, need ${SAVE_VERSION}) — ignoring old save.`);
-            return null;
-        }
-        const tiles = new Map();
-        for (const t of data.tiles) {
-            // Verify tile fields: cityLevel, growth, wonder, fortification, bridge
-            // These are stored on the tile object itself and persist through JSON.
-            tiles.set(`${t.x},${t.z}`, t);
-        }
-        const units = new Map();
-        for (const u of data.units) {
-            // Verify unit fields: burn (fire ailment), level, xp, goal, boarded
-            // These are stored on the unit object itself and persist through JSON.
-            units.set(u.id, u);
-        }
-        const buildings = new Map(data.buildings);
-        // Military structure state (Area 6). Treat missing as empty (defaults to
-        // level 1 / full hp on access via getBuildingState).
-        const buildingState = new Map(data.buildingState || []);
-        // Verify buildings include SIEGE_WORKSHOP entries (stored as string arrays).
-
-        // Restore diplomacy with new Phase E fields (backward compatible).
-        const diplomacy = data.diplomacy || { relations: {}, pendingOffers: [] };
-        if (!diplomacy.diplomaticEvents) diplomacy.diplomaticEvents = [];
-        // Ensure all relations have the new fields (backward compat for v1 saves).
-        for (const rel of Object.values(diplomacy.relations)) {
-            if (rel.turnsAllied === undefined) rel.turnsAllied = 0;
-            if (rel.turnsAtWar === undefined) rel.turnsAtWar = 0;
-            if (rel.relationship === undefined) rel.relationship = 0;
-            if (rel.warsDeclared === undefined) rel.warsDeclared = 0;
-            if (rel.peaceTreaties === undefined) rel.peaceTreaties = 0;
-            if (rel.tradesMade === undefined) rel.tradesMade = 0;
-            // Civ6-style grievance/tension system fields.
-            if (rel.grievances === undefined) rel.grievances = 0;
-            if (rel.grievanceLog === undefined) rel.grievanceLog = [];
-            if (rel.expiresOn === undefined) rel.expiresOn = null;
-            // Formal-war tracking + trust/grudge memory (added after v1 saves).
-            if (rel.formalWar === undefined) rel.formalWar = rel.state === 'war';
-            if (rel.lastWarDeclaredTurn === undefined) rel.lastWarDeclaredTurn = 0;
-            if (rel.grudges === undefined) rel.grudges = {};
-            if (rel.trust === undefined) rel.trust = Math.max(0, 1 - (rel.brokenTreaties || 0) * 0.25);
-        }
-
-        const state = {
-            turn: data.turn,
-            factionAssignments: data.factionAssignments,
-            tiles,
-            units,
-            buildings,
-            buildingState,
-            lords: data.lords,
-            resources: data.resources,
-            diplomacy,
-            explored: new Set(data.explored || []),
-            visible: new Set(),            // recomputed on load
-            scryRevealed: new Set(data.scryRevealed || []),
-            trainedThisTurn: new Set(data.trainedThisTurn || []),
-            production: new Map(data.production || []),
-            construction: new Map(data.construction || []),
-            structures: new Map(data.structures || []),
-            bridges: new Set(data.bridges || []),
-            concealedUnits: new Map(data.concealedUnits || []),
-            kingCooldowns: data.kingCooldowns || {},
-            tempBonuses: data.tempBonuses || {},
-            graveyard: data.graveyard || [],
-            eliminated: new Set(data.eliminated || []),
-            reputation: data.reputation || null,
-            gameOver: data.gameOver || false,
-            winner: data.winner || null,
-            // Tech tree state (4X feature). Convert completed array back to Set.
-            techState: data.techState ? {
-                researched: new Set(data.techState.researched || []),
-                current: data.techState.current || null,
-                progress: data.techState.progress || 0
-            } : null,
-            // Victory tracking state.
-            victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
-            // AI goal-sequence state (per-faction). Absent on old saves -> null,
-            // backfilled by Game.loadFromState.
-            aiState: deserializeAIState(data.aiState),
-            // Per-faction AI tech states. Absent on old saves -> null.
-            aiTechStates: data.aiTechStates ? Object.fromEntries(
-                Object.entries(data.aiTechStates).map(([f, ts]) => [f, deserializeTechState(ts)])
-            ) : null,
-            // Trade routes (Feature 3). Absent on old saves -> empty array.
-            tradeRoutes: Array.isArray(data.tradeRoutes) ? data.tradeRoutes : [],
-            tradeRouteNextId: data.tradeRouteNextId || 1
-        };
-
-        // Sanity-check the restored state. If critical fields are missing,
-        // refuse to load rather than booting into a broken game.
+        const state = parseSaveData(data);
+        if (!state) return null;
         const issues = verifySave(state);
         if (issues && issues.length) {
             console.warn('Save verification issues:', issues);
-            // "No tiles" / "No units map" / "No buildings map" / "No lords array" /
-            // "No resources" / "No diplomacy" are critical — abort.
             if (issues.some(i => i.startsWith('No '))) return null;
         }
         return state;
@@ -185,6 +217,15 @@ export function loadGame() {
         console.warn('load failed', e);
         return null;
     }
+}
+
+export async function clearSave() {
+    try {
+        if (await detectFsMode()) {
+            await fetch(API_BASE, { method: 'DELETE' });
+        }
+    } catch (e) { /* ignore — fall through to localStorage */ }
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
 }
 
 /** Verify a loaded save has all required fields. Returns an array of issues. */
@@ -197,32 +238,20 @@ export function verifySave(state) {
     if (!state.lords || !Array.isArray(state.lords)) issues.push('No lords array');
     if (!state.resources) issues.push('No resources');
     if (!state.diplomacy || !state.diplomacy.relations) issues.push('No diplomacy');
-
-    // Check tiles for city growth fields
     for (const [key, t] of state.tiles) {
         if (t.terrain === 'CITY') {
             if (t.cityLevel === undefined) issues.push(`City ${key} missing cityLevel`);
             if (t.fortification === undefined) issues.push(`City ${key} missing fortification`);
         }
-        // Wonders are optional but if present should be an object
         if (t.wonder && typeof t.wonder !== 'object') issues.push(`Tile ${key} has invalid wonder`);
     }
-
-    // Check units for burn field
     for (const [id, u] of state.units) {
         if (u.burn !== undefined && typeof u.burn !== 'number') {
             issues.push(`Unit ${id} has invalid burn value`);
         }
     }
-
-    // Check buildings for SIEGE_WORKSHOP
     for (const [key, list] of state.buildings) {
         if (!Array.isArray(list)) issues.push(`Buildings at ${key} is not an array`);
     }
-
     return issues;
-}
-
-export function clearSave() {
-    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
 }

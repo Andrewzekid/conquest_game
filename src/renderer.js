@@ -83,8 +83,11 @@ export class GameRenderer {
         this.scene.add(this.structureGroup);
         this.effectsGroup = new THREE.Group(); // transient VFX (AOE impact rings, projectiles)
         this.scene.add(this.effectsGroup);
+        this.labelGroup = new THREE.Group(); // floating text labels (city names)
+        this.scene.add(this.labelGroup);
         this._effects = [];   // active transient effects: { obj, born, life, kind }
         this._flames = [];     // active fire-ailment flame markers (for flicker)
+        this._cityLabelCache = {}; // cityName -> SpriteMaterial (reused across renders)
 
         this.tileMeshes = new Map(); // `${x},${z}` -> base tile Mesh
         this.tileHeights = new Map();
@@ -113,7 +116,7 @@ export class GameRenderer {
     }
 
     // --- 3D scenery per terrain type (added as children of the base tile mesh) ---
-    makeScenery(terrain) {
+    makeScenery(terrain, tile) {
         const group = new THREE.Group();
         let keep = null;
         if (terrain === 'MOUNTAIN') {
@@ -157,17 +160,85 @@ export class GameRenderer {
             trunk.position.set(0.1, 0.06, -0.05);
             group.add(trunk);
         } else if (terrain === 'CITY') {
-            // Stone keep + 4 corner towers; tinted by ownership in renderAll.
+            // City meshes vary per-city so they don't all look identical.
+            // Variation axes:
+            //   - cityLevel: bigger cities get taller keeps + extra towers
+            //   - a stable per-tile hash: picks one of several "styles"
+            //     (square keep, round keep, cathedral spire, star fort) so
+            //     neighboring cities read as distinct settlements.
+            // The keep mesh is still tracked in cityProps for breach/ownership
+            // tinting in renderAll.
+            const level = (tile && tile.cityLevel) || 1;
+            const hash = (tile ? (tile.x * 73856093) ^ (tile.z * 19349663) : 0) >>> 0;
+            const style = hash % 4;
             const stone = new THREE.MeshPhongMaterial({ color: 0xb9b2a0 });
-            keep = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.42), stone);
-            keep.position.y = 0.38;
-            group.add(keep);
-            const towerGeo = new THREE.CylinderGeometry(0.1, 0.12, 0.45, 6);
-            const offsets = [[0.32, 0.32], [-0.32, 0.32], [0.32, -0.32], [-0.32, -0.32]];
-            for (const [ox, oz] of offsets) {
-                const t = new THREE.Mesh(towerGeo, stone);
-                t.position.set(ox, 0.33, oz);
-                group.add(t);
+            const roofColor = [0x8a4a2a, 0x4a6a8a, 0x6a8a4a, 0x8a6a8a][style];
+            const roof = new THREE.MeshPhongMaterial({ color: roofColor });
+            const keepH = 0.4 + Math.min(level, 6) * 0.06;
+            if (style === 0) {
+                // Square keep + 4 corner towers (classic castle).
+                keep = new THREE.Mesh(new THREE.BoxGeometry(0.42, keepH, 0.42), stone);
+                keep.position.y = keepH / 2 + 0.1;
+                group.add(keep);
+                const cap = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.18, 4), roof);
+                cap.position.y = keepH + 0.18;
+                group.add(cap);
+                const towerGeo = new THREE.CylinderGeometry(0.1, 0.12, 0.45, 6);
+                for (const [ox, oz] of [[0.32, 0.32], [-0.32, 0.32], [0.32, -0.32], [-0.32, -0.32]]) {
+                    const t = new THREE.Mesh(towerGeo, stone);
+                    t.position.set(ox, 0.33, oz);
+                    group.add(t);
+                    const tc = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.16, 6), roof);
+                    tc.position.set(ox, 0.58, oz);
+                    group.add(tc);
+                }
+            } else if (style === 1) {
+                // Round keep (cylindrical donjon) with a ring of smaller towers.
+                keep = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, keepH, 10), stone);
+                keep.position.y = keepH / 2 + 0.1;
+                group.add(keep);
+                const cap = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.22, 10), roof);
+                cap.position.y = keepH + 0.2;
+                group.add(cap);
+                const ringCount = 3 + (level >= 3 ? 1 : 0);
+                for (let i = 0; i < ringCount; i++) {
+                    const a = (i / ringCount) * Math.PI * 2;
+                    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.35, 6), stone);
+                    t.position.set(Math.cos(a) * 0.4, 0.27, Math.sin(a) * 0.4);
+                    group.add(t);
+                }
+            } else if (style === 2) {
+                // Cathedral/temple: a tall central spire + a wide base.
+                keep = new THREE.Mesh(new THREE.BoxGeometry(0.34, keepH * 0.7, 0.34), stone);
+                keep.position.y = keepH * 0.35 + 0.1;
+                group.add(keep);
+                const spire = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.5, 8), roof);
+                spire.position.y = keepH * 0.7 + 0.35;
+                group.add(spire);
+                const ball = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8),
+                    new THREE.MeshPhongMaterial({ color: 0xe8c468, emissive: 0xe8c468, emissiveIntensity: 0.4 }));
+                ball.position.y = keepH * 0.7 + 0.62;
+                group.add(ball);
+            } else {
+                // Star fort: a low wide bastion with 5 triangular bastion points.
+                keep = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, keepH * 0.6, 5), stone);
+                keep.position.y = keepH * 0.3 + 0.1;
+                group.add(keep);
+                for (let i = 0; i < 5; i++) {
+                    const a = (i / 5) * Math.PI * 2;
+                    const b = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.28, 4), roof);
+                    b.position.set(Math.cos(a) * 0.42, 0.26, Math.sin(a) * 0.42);
+                    b.rotation.y = a;
+                    group.add(b);
+                }
+            }
+            // High-level cities get a second wall ring for visual weight.
+            if (level >= 4) {
+                const wall = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.05, 6, 16),
+                    new THREE.MeshPhongMaterial({ color: 0x9a9a8a }));
+                wall.rotation.x = Math.PI / 2;
+                wall.position.y = 0.12;
+                group.add(wall);
             }
         } else if (terrain === 'DESERT') {
             const dune = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
@@ -241,7 +312,7 @@ export class GameRenderer {
             this.tileHeights.set(`${t.x},${t.z}`, y);
 
             // 3D scenery as a child (hidden with the parent in fog).
-            const { group, keep } = this.makeScenery(t.terrain);
+            const { group, keep } = this.makeScenery(t.terrain, t);
             mesh.add(group);
             if (keep) this.cityProps.set(`${t.x},${t.z}`, keep);
             // Natural Wonder: a glowing monument child marks the tile.
@@ -273,7 +344,7 @@ export class GameRenderer {
         mesh.position.y = y;
         mesh.userData = { ...TERRAIN[terrain], x: tile.x, z: tile.z };
         this.tileHeights.set(key, y);
-        const { group, keep } = this.makeScenery(terrain);
+        const { group, keep } = this.makeScenery(terrain, tile);
         mesh.add(group);
         if (keep) this.cityProps.set(key, keep); else this.cityProps.delete(key);
         if (tile.wonder) mesh.add(this.makeWonderProp(tile.wonder));
@@ -1146,6 +1217,41 @@ export class GameRenderer {
         return sprite;
     }
 
+    /** A crisp text label rendered to a canvas and shown as a sprite. Used for
+     *  city names floating above each city. The material is cached per-text
+     *  string so repeated cities don't re-rasterize. The sprite is sized in
+     *  world units (scale) and placed at an absolute world position by the
+     *  caller. */
+    makeTextSprite(text, opts = {}) {
+        if (!this._textMatCache) this._textMatCache = {};
+        const key = text + '|' + (opts.color || '') + '|' + (opts.bg || '');
+        if (!this._textMatCache[key]) {
+            const canvas = document.createElement('canvas');
+            const fontSize = opts.fontSize || 48;
+            canvas.width = 256; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            if (opts.bg) {
+                ctx.fillStyle = opts.bg;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            ctx.font = `bold ${fontSize}px Rajdhani, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = opts.color || '#ffffff';
+            ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+            ctx.lineWidth = 6;
+            ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.anisotropy = 4;
+            this._textMatCache[key] = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+        }
+        const sprite = new THREE.Sprite(this._textMatCache[key]);
+        const scale = opts.scale || 1.6;
+        sprite.scale.set(scale * 4, scale, scale);
+        return sprite;
+    }
+
     // --- Building 3D props (per BUILDING_TYPE) ---
     makeBuildingProp(type) {
         const g = new THREE.Group();
@@ -1507,6 +1613,33 @@ export class GameRenderer {
         this.highlightMoveTargets(gameState.moveTargets || []);
         this.highlightAttackTargets(gameState.attackTargets || []);
 
+        // City name labels: one floating text sprite per visible/explored city.
+        // Rebuilt each render (cheap — sprites reuse cached materials). The
+        // label sits above the keep and is tinted by the owner's faction color
+        // so ownership is readable at a glance.
+        this.labelGroup.clear();
+        for (const [key, tile] of gameState.tiles) {
+            if (tile.terrain !== 'CITY') continue;
+            const isExp = !!(explored && explored.has(key));
+            const isVis = !!(visible && visible.has(key));
+            if (!isExp && !isVis) continue;
+            const name = tile.cityName || `City ${tile.x},${tile.z}`;
+            const owner = tile.owner;
+            let color = '#ffffff';
+            if (owner) {
+                const fc = this.fcolor(gameState, owner);
+                const hex = '#' + (fc.tile >>> 0).toString(16).padStart(6, '0');
+                // Lighten dark faction colors so the text stays legible against
+                // the dark map background.
+                color = hex;
+            }
+            const lvl = tile.cityLevel || 1;
+            const label = this.makeTextSprite(name, { color, scale: 0.55 + Math.min(lvl, 5) * 0.04 });
+            const y = (this.tileHeights.get(key) || 0) + 1.1;
+            label.position.set(tile.x - GRID_SIZE / 2, y, tile.z - GRID_SIZE / 2);
+            this.labelGroup.add(label);
+        }
+
         // Rebuild unit markers (distinct shape per unit type) — enemy units
         // only render on tiles the player can currently see.
         this.unitGroup.clear();
@@ -1589,5 +1722,99 @@ export class GameRenderer {
         this.renderAuras(gameState);
         this.renderBridges(gameState);
         this.renderStructures(gameState);
+        this.renderMinimap(gameState);
     }
-}
+
+    // --- Minimap ---
+    // Draws the whole map onto the #minimap canvas: terrain colors dimmed by
+    // fog, ownership tint, city dots, and a viewport rectangle for the current
+    // camera frustum. Clicking the minimap recenters the camera on the clicked
+    // tile (wired up in game.js via setMinimapClickHandler).
+    renderMinimap(gameState) {
+        const canvas = document.getElementById('minimap');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width, H = canvas.height;
+        const tiles = gameState.tiles;
+        if (!tiles || tiles.size === 0) return;
+        // Determine map bounds from the tile set (GRID_WIDTH/HEIGHT may not be
+        // set yet on first render).
+        let maxX = 0, maxZ = 0;
+        for (const t of tiles.values()) {
+            if (t.x > maxX) maxX = t.x;
+            if (t.z > maxZ) maxZ = t.z;
+        }
+        const gw = maxX + 1, gh = maxZ + 1;
+        const sx = W / gw, sz = H / gh;
+        ctx.fillStyle = '#0e1320';
+        ctx.fillRect(0, 0, W, H);
+        const explored = gameState.explored || null;
+        const visible = gameState.visible || null;
+        for (const t of tiles.values()) {
+            const key = `${t.x},${t.z}`;
+            const isExp = !!(explored && explored.has(key));
+            const isVis = !!(visible && visible.has(key));
+            if (!isExp && !isVis) continue;
+            const terr = TERRAIN[t.terrain] || TERRAIN.PLAINS;
+            let c = new THREE.Color(terr.color);
+            if (t.owner) {
+                const fc = this.fcolor(gameState, t.owner);
+                c = c.lerp(new THREE.Color(fc.tile), 0.55);
+            }
+            if (!isVis) c = c.multiplyScalar(0.4);
+            const hex = '#' + (c.getHexString ? c.getHexString() : c.toString(16).padStart(6, '0'));
+            ctx.fillStyle = hex;
+            ctx.fillRect(t.x * sx, t.z * sz, Math.ceil(sx), Math.ceil(sz));
+        }
+        // City dots (brighter, so cities pop on the minimap).
+        for (const t of tiles.values()) {
+            if (t.terrain !== 'CITY') continue;
+            const key = `${t.x},${t.z}`;
+            const isExp = !!(explored && explored.has(key));
+            const isVis = !!(visible && visible.has(key));
+            if (!isExp && !isVis) continue;
+            ctx.fillStyle = t.owner ? '#ffe070' : '#c9b06b';
+            ctx.beginPath();
+            ctx.arc(t.x * sx + sx / 2, t.z * sz + sz / 2, Math.max(1.5, sx * 0.6), 0, Math.PI * 2);
+            ctx.fill();
+        }
+        // Viewport rectangle: project the camera's world-space bounds back to
+        // tile space. The orthographic camera spans [left,right] x [top,bottom]
+        // in world units; tile (x,z) sits at world (x - GRID_SIZE/2, z - GRID_SIZE/2).
+        const cam = this.camera;
+        const halfW = (cam.right - cam.left) / 2;
+        const halfH = (cam.top - cam.bottom) / 2;
+        const cx = cam.position.x, cz = cam.position.z;
+        const gs = GRID_SIZE;
+        // World -> tile: tileX = worldX + gs/2. Invert the tile->world translation.
+        const tileMinX = (cx - halfW) + gs / 2;
+        const tileMaxX = (cx + halfW) + gs / 2;
+        const tileMinZ = (cz - halfH) + gs / 2;
+        const tileMaxZ = (cz + halfH) + gs / 2;
+        ctx.strokeStyle = 'rgba(232,196,104,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(
+            Math.max(0, tileMinX * sx),
+            Math.max(0, tileMinZ * sz),
+            Math.min(W, (tileMaxX - tileMinX) * sx),
+            Math.min(H, (tileMaxZ - tileMinZ) * sz)
+        );
+    }
+
+    /** Convert a minimap canvas click (in canvas pixel coords) to a tile
+     *  coordinate, for the click-to-recenter handler in game.js. */
+    minimapClickToTile(canvasX, canvasY, gameState) {
+        const tiles = gameState.tiles;
+        if (!tiles || tiles.size === 0) return null;
+        let maxX = 0, maxZ = 0;
+        for (const t of tiles.values()) {
+            if (t.x > maxX) maxX = t.x;
+            if (t.z > maxZ) maxZ = t.z;
+        }
+        const gw = maxX + 1, gh = maxZ + 1;
+        const canvas = document.getElementById('minimap');
+        const W = canvas ? canvas.width : 168, H = canvas ? canvas.height : 168;
+        const tx = Math.floor((canvasX / W) * gw);
+        const tz = Math.floor((canvasY / H) * gh);
+        return { x: tx, z: tz };
+    }

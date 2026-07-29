@@ -2,7 +2,7 @@
 import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
           FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
           EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
-          STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
+          STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST, FACTION_UNIQUE_UNITS,
           cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
           TRADE_ROUTE_MIN_CITY_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
@@ -853,6 +853,19 @@ export function bindUI(gameState, callbacks) {
                 const def = defOf(PLAYER_FACTION);
                 const roster = (def && def.roster) || Object.keys(UNIT_TYPE);
                 const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
+                // Faction-unique units: only the owning faction (per
+                // FACTION_UNIQUE_UNITS) sees them in its build menu. Other
+                // factions research the tech but never get the unit — the
+                // generic replacement (RAIDER, HOUSEHOLD_GUARD, etc.) is shown
+                // instead.
+                if (def && def.id) {
+                    for (let i = fullRoster.length - 1; i >= 0; i--) {
+                        const uniqueOwner = FACTION_UNIQUE_UNITS[fullRoster[i]];
+                        if (uniqueOwner && uniqueOwner !== def.id) {
+                            fullRoster.splice(i, 1);
+                        }
+                    }
+                }
                 // Tech gating: faction-roster units are always available, but
                 // EXTRA_UNITS that are unlocked by a tech are only shown once
                 // that tech is researched. Mirrors the AI's filter in ai.js. This

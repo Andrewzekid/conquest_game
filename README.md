@@ -13,13 +13,18 @@ generated world of continents, rivers, mountains, and passes.
 
 The game runs entirely in the browser. Because it uses native ES modules, it
 needs to be served over HTTP (opening `index.html` directly via `file://` won't
-load the modules). Any static server works:
+load the modules). The included `server.py` adds a filesystem-backed save API
+(so saves persist to disk instead of `localStorage`); any static server works
+too, in which case saves fall back to `localStorage`.
 
 ```bash
-# Option 1 — Python's built-in server
+# Option 1 — bundled Python server (recommended; enables filesystem saves)
+python3 server.py 8000
+
+# Option 2 — plain static server (saves use localStorage fallback)
 python3 -m http.server 8000
 
-# Option 2 — Node
+# Option 3 — Node
 npx serve .
 ```
 
@@ -132,6 +137,7 @@ All 593 tests pass. Pure-logic modules are tested directly; the DOM/WebGL-bound
 
 ## Save games
 
-Saves persist to `localStorage` automatically and are versioned (currently
-save format v5). The loader backfills any fields added by newer features, so
-old saves keep working without a version bump.
+Saves persist to the filesystem (`saves/conquest_save.json`, written by
+`server.py`'s `/api/save` endpoint) when the bundled Python server is used, and
+fall back to `localStorage` on plain static hosts. The save format is versioned
+(currently v7); the loader rejects incompatible older saves.

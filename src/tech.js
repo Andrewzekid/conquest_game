@@ -17,9 +17,13 @@ export const TECHS = {
     BRONZE_WORKING: {
         id: 'BRONZE_WORKING', name: 'Bronze Working', era: 'ancient', cost: 25,
         prerequisites: [],
-        unlocks: [{ type: 'unit', id: 'PIKEMAN' }, { type: 'unit', id: 'LEGIONNAIRE' }],
+        // PIKEMAN is generic; LEGIONNAIRE is the roman faction-unique unit. The
+        // owning faction (roman) gates it via FACTION_UNIQUE_UNITS at train
+        // time, so the tech must still list it (otherwise the roman player
+        // could never research-to-unlock their own unique unit).
+        unlocks: [{ type: 'unit', id: 'PIKEMAN' }, { type: 'unit', id: 'LEGIONNAIRE' }, { type: 'unit', id: 'HOUSEHOLD_GUARD' }],
         bonus: {},
-        desc: 'Unlocks Pikeman and Legionnaire units and Mine improvement efficiency.'
+        desc: 'Unlocks Pikeman, Legionnaire (roman unique), and Household Guard.'
     },
     ANIMAL_HUSBANDRY: {
         id: 'ANIMAL_HUSBANDRY', name: 'Animal Husbandry', era: 'ancient', cost: 25,
@@ -63,9 +67,11 @@ export const TECHS = {
     FORTIFICATION: {
         id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 90,
         prerequisites: ['ENGINEERING'],
-        unlocks: [{ type: 'building', id: 'WALLS' }, { type: 'unit', id: 'CROSSBOWMAN' }, { type: 'unit', id: 'VARANGIAN_GUARD' }],
+        // VARANGIAN_GUARD is the byzantine faction-unique; HOUSEHOLD_GUARD is
+        // the generic replacement available to everyone else.
+        unlocks: [{ type: 'building', id: 'WALLS' }, { type: 'unit', id: 'CROSSBOWMAN' }, { type: 'unit', id: 'VARANGIAN_GUARD' }, { type: 'unit', id: 'HOUSEHOLD_GUARD' }],
         bonus: { cityDefenseBonus: 2 },
-        desc: 'Unlocks Walls, Crossbowman, and Varangian Guard. Cities gain +2 defense.'
+        desc: 'Unlocks Walls, Crossbowman, Varangian Guard (byzantine unique), and Household Guard. Cities gain +2 defense.'
     },
     ROYAL_COURTS: {
         id: 'ROYAL_COURTS', name: 'Royal Courts', era: 'medieval', cost: 110,
@@ -77,9 +83,12 @@ export const TECHS = {
     CHIVALRY: {
         id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 90,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
-        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }],
+        // BERSERKER (viking unique) and WINGED_HUSSAR (polish unique) are
+        // faction-locked at train time; RAIDER and MERCENARY_KNIGHT are the
+        // generic replacements so other factions still get a unit from this tech.
+        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }, { type: 'unit', id: 'RAIDER' }, { type: 'unit', id: 'MERCENARY_KNIGHT' }],
         bonus: { lordXpBonus: 0.25 },
-        desc: 'Unlocks Cataphract, Chariot, Berserker, and Winged Hussar. Lords gain 25% more XP.'
+        desc: 'Unlocks Cataphract, Chariot, Berserker (viking unique), Winged Hussar (polish unique), Raider, and Mercenary Knight. Lords gain 25% more XP.'
     },
     CARTOGRAPHY: {
         id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 90,
@@ -100,9 +109,11 @@ export const TECHS = {
     GUNPOWDER: {
         id: 'GUNPOWDER', name: 'Gunpowder', era: 'industrial', cost: 150,
         prerequisites: ['SIEGE_CRAFT', 'CHIVALRY'],
-        unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'CONQUISTADOR' }],
+        // CONQUISTADOR is the spanish faction-unique; FRONTIERSMAN is the
+        // generic replacement for every other faction.
+        unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'CONQUISTADOR' }, { type: 'unit', id: 'FRONTIERSMAN' }],
         bonus: { rangedDamageBonus: 1 },
-        desc: 'Unlocks Artillery and Conquistador. Ranged units deal +1 damage.'
+        desc: 'Unlocks Artillery, Conquistador (spanish unique), and Frontiersman. Ranged units deal +1 damage.'
     },
     MEDICINE: {
         id: 'MEDICINE', name: 'Medicine', era: 'industrial', cost: 150,
@@ -242,11 +253,79 @@ export const TECHS = {
         unlocks: [{ type: 'unit', id: 'SUBMARINE' }, { type: 'unit', id: 'TORPEDO_BOAT' }],
         bonus: { navalStealth: true },
         desc: 'Unlocks Submarine and Torpedo Boat. Naval units can stealth.'
+    },
+
+    // === ATOMIC ERA (1880-1940, cost 800 pts) ===
+    // The internal combustion engine unlocks mobilized units and tanks — the
+    // motorized successors to foot infantry and horse cavalry. Old units are
+    // obsoleted as these come online (see unit_obsolescence.js).
+    INTERNAL_COMBUSTION: {
+        id: 'INTERNAL_COMBUSTION', name: 'Internal Combustion', era: 'atomic', cost: 800,
+        prerequisites: ['STEAM_ENGINE', 'ELECTRICITY'],
+        unlocks: [{ type: 'unit', id: 'MOBILIZED_INFANTRY' }, { type: 'unit', id: 'MOBILIZED_ARTILLERY' }, { type: 'unit', id: 'ARMORED_CAR' }],
+        bonus: { artilleryMoveBonus: 1 },
+        desc: 'Unlocks Mobilized Infantry, Mobilized Artillery, and Armored Car. Artillery gain +1 move.'
+    },
+    ARMOR: {
+        id: 'ARMOR', name: 'Armor', era: 'atomic', cost: 800,
+        prerequisites: ['INTERNAL_COMBUSTION', 'RIFLED_MUSKET'],
+        unlocks: [{ type: 'unit', id: 'TANK' }, { type: 'unit', id: 'HEAVY_TANK' }],
+        bonus: { cityDamageBonus: 3 },
+        desc: 'Unlocks Tank and Heavy Tank. Tanks are the modern cavalry — they obsolete horse cavalry. +3 damage vs cities.'
+    },
+    DREADNOUGHT: {
+        id: 'DREADNOUGHT', name: 'Dreadnought', era: 'atomic', cost: 800,
+        prerequisites: ['IRONCLADS', 'INTERNAL_COMBUSTION'],
+        unlocks: [{ type: 'unit', id: 'DESTROYER' }, { type: 'unit', id: 'BATTLESHIP' }, { type: 'unit', id: 'TRANSPORT_SHIP' }],
+        bonus: { navalHpBonus: 4 },
+        desc: 'Unlocks Destroyer, Battleship, and Transport Ship. Naval units gain +4 HP.'
+    },
+    NAVAL_AVIATION: {
+        id: 'NAVAL_AVIATION', name: 'Naval Aviation', era: 'atomic', cost: 800,
+        prerequisites: ['DREADNOUGHT', 'TELEGRAPH'],
+        unlocks: [{ type: 'unit', id: 'AIRCRAFT_CARRIER' }, { type: 'unit', id: 'SUBMARINE_II' }],
+        bonus: { navalVisionBonus: 3 },
+        desc: 'Unlocks Aircraft Carrier and Submarine II. Naval units gain +3 vision.'
+    },
+    ADVANCED_ARTILLERY: {
+        id: 'ADVANCED_ARTILLERY', name: 'Advanced Artillery', era: 'atomic', cost: 800,
+        prerequisites: ['FIELD_ARTILLERY', 'INTERNAL_COMBUSTION'],
+        unlocks: [{ type: 'unit', id: 'MOTOR_ARTILLERY' }],
+        bonus: { siegePowerBonus: 3 },
+        desc: 'Unlocks Motor Artillery (self-propelled guns). Siege units gain +3 siege power.'
+    },
+    ANTI_ARMOR: {
+        id: 'ANTI_ARMOR', name: 'Anti-Armor', era: 'atomic', cost: 800,
+        prerequisites: ['RIFLED_MUSKET', 'INTERNAL_COMBUSTION'],
+        unlocks: [{ type: 'unit', id: 'BAYONET_RIFLE' }],
+        bonus: { rangedDamageBonus: 1 },
+        desc: 'Unlocks Bayonet Rifle (modern anti-cavalry/anti-tank). Ranged units deal +1 damage.'
+    },
+
+    // === ANTI-CAVALRY UNITS, distributed across earlier eras ===
+    // HALBERDIER: a medieval Pikeman upgrade, gated behind FORTIFICATION (same
+    // era as the CROSSBOWMAN). Unlocked via a dedicated tech so it doesn't
+    // crowd the existing medieval unlocks.
+    POLEARM: {
+        id: 'POLEARM', name: 'Polearm', era: 'medieval', cost: 90,
+        prerequisites: ['BRONZE_WORKING', 'FORTIFICATION'],
+        unlocks: [{ type: 'unit', id: 'HALBERDIER' }],
+        bonus: { cityDefenseBonus: 1 },
+        desc: 'Unlocks Halberdier, an anti-cavalry specialist. Cities gain +1 defense.'
+    },
+    // PIKE_MASTER: enlightenment-era long-pike, gated behind FLINTLOCK (so it
+    // appears alongside the musket line it must protect).
+    PIKE_WARFARE: {
+        id: 'PIKE_WARFARE', name: 'Pike Warfare', era: 'enlightenment', cost: 350,
+        prerequisites: ['FLINTLOCK', 'FORTIFICATION'],
+        unlocks: [{ type: 'unit', id: 'PIKE_MASTER' }],
+        bonus: { cityDefenseBonus: 2 },
+        desc: 'Unlocks Pike Master, the premier anti-cavalry infantry of the gunpowder era. Cities gain +2 defense.'
     }
 };
 
 // Era progression order
-export const ERA_ORDER = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern'];
+export const ERA_ORDER = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern', 'atomic'];
 
 // Era display names
 export const ERA_NAMES = {
@@ -256,7 +335,8 @@ export const ERA_NAMES = {
     industrial: 'Industrial Era',
     renaissance: 'Renaissance Era',
     enlightenment: 'Enlightenment Era',
-    modern: 'Modern Era'
+    modern: 'Modern Era',
+    atomic: 'Atomic Era'
 };
 
 // --- State management ---
@@ -512,7 +592,11 @@ export function autoSelectResearch(state, personality) {
                      'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
                      // Modern
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
-                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE'],
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
+                     // Atomic
+                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'NAVAL_AVIATION',
+                     // Anti-cavalry
+                     'POLEARM', 'PIKE_WARFARE'],
         DEFENSIVE:  ['FORTIFICATION', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
                      'BRONZE_WORKING', 'SIEGE_CRAFT', 'MATHEMATICS', 'ARCHERY',
                      'ANIMAL_HUSBANDRY', 'NAVAL_ENGINEERING', 'CHIVALRY', 'GUNPOWDER',
@@ -523,7 +607,11 @@ export function autoSelectResearch(state, personality) {
                      'METALLURGY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
                      // Modern
                      'EXPLOSIVES', 'RIFLED_MUSKET', 'IRONCLADS', 'TELEGRAPH',
-                     'STEAM_ENGINE', 'RAILROAD', 'FIELD_ARTILLERY', 'ELECTRICITY', 'SUBMARINE'],
+                     'STEAM_ENGINE', 'RAILROAD', 'FIELD_ARTILLERY', 'ELECTRICITY', 'SUBMARINE',
+                     // Atomic (defensive factions prioritize anti-armor to repel tanks)
+                     'ANTI_ARMOR', 'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'DREADNOUGHT', 'NAVAL_AVIATION', 'ARMOR',
+                     // Anti-cavalry (defensive factions love these)
+                     'POLEARM', 'PIKE_WARFARE'],
         ECONOMIC:   ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
                      'CARTOGRAPHY', 'ARCHERY', 'ANIMAL_HUSBANDRY', 'BRONZE_WORKING',
                      'SIEGE_CRAFT', 'FORTIFICATION', 'CHIVALRY', 'GUNPOWDER',
@@ -534,7 +622,11 @@ export function autoSelectResearch(state, personality) {
                      'BANKING', 'ACADEMY', 'FLINTLOCK', 'METALLURGY',
                      // Modern
                      'ELECTRICITY', 'TELEGRAPH', 'STEAM_ENGINE', 'RAILROAD',
-                     'RIFLED_MUSKET', 'IRONCLADS', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'SUBMARINE'],
+                     'RIFLED_MUSKET', 'IRONCLADS', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'SUBMARINE',
+                     // Atomic
+                     'DREADNOUGHT', 'INTERNAL_COMBUSTION', 'NAVAL_AVIATION', 'ARMOR', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR',
+                     // Anti-cavalry
+                     'POLEARM', 'PIKE_WARFARE'],
         BALANCED:   ['ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
                      'ENGINEERING', 'NAVAL_ENGINEERING', 'SIEGE_CRAFT', 'FORTIFICATION',
                      'CHIVALRY', 'CARTOGRAPHY', 'FEUDALISM', 'GUNPOWDER',
@@ -545,7 +637,11 @@ export function autoSelectResearch(state, personality) {
                      'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
                      // Modern
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
-                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE']
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
+                     // Atomic
+                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'NAVAL_AVIATION',
+                     // Anti-cavalry
+                     'POLEARM', 'PIKE_WARFARE']
     };
     const list = priorities[personality] || priorities.BALANCED;
     for (const id of list) {

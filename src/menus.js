@@ -75,9 +75,13 @@ export function showStartMenu(onStart) {
         };
     }
 
-    const hasSave = loadSavedExists();
+    // Filesystem save presence is checked async (the server API or
+    // localStorage fallback). Show the Continue button once the check resolves.
     const cont = el('start-continue');
-    if (cont) cont.style.display = hasSave ? 'inline-block' : 'none';
+    if (cont) cont.style.display = 'none';
+    loadSavedExists().then(hasSave => {
+        if (cont) cont.style.display = hasSave ? 'inline-block' : 'none';
+    });
 
     renderFactionCards();
     menu.style.display = 'flex';

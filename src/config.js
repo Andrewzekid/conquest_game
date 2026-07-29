@@ -99,7 +99,10 @@ export const UNIT_TYPE = {
     // Long-range siege engines (unlocked by a Siege Workshop building in a city).
     // Both deal AOE splash to enemy units adjacent to the target and can set the
     // area ablaze (a burn DoT on primary + splash victims).
-    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 5, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
+    // Medieval siege engines are slow — only 1 tile/turn. Modern artillery
+    // (CANNON/FIELD_GUN/HORSE_ARTILLERY) gets more mobility to reflect its
+    // wheeled carriages and horse teams (see the modern-era entries below).
+    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 5, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
     TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 7, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
     // Naval units (unlocked by a Harbor building in a coastal/river city).
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
@@ -157,7 +160,76 @@ export const UNIT_TYPE = {
     MONITOR:     { name: 'Monitor', hp: 35, attack: 16, defense: 14, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true },
     FRIGATE_2:   { name: 'Frigate II', hp: 38, attack: 13, defense: 9, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 3, fastSail: true },
     SUBMARINE:   { name: 'Submarine', hp: 25, attack: 12, defense: 6, moveRange: 3, upkeep: { food: 4, gold: 10, wood: 1, iron: 5 }, naval: true, ranged: true, attackRange: 3, stealth: true },
-    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 15, attack: 18, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true }
+    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 15, attack: 18, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true },
+    // === ANTI-CAVALRY UNITS ===
+    // HALBERDIER: medieval anti-cavalry specialist. Strong bonus vs cavalry and
+    // chariots; slower than a Pikeman but tankier. A straight Pikeman upgrade
+    // for the medieval era, especially vs mounted-heavy factions.
+    HALBERDIER:  { name: 'Halberdier', hp: 14, attack: 6, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 4, iron: 2 }, ranged: false, attackRange: 1, antiCavalry: true },
+    // PIKE_MASTER: enlightenment-era long-pike infantry. The hardest counter to
+    // cavalry charges (Winged Hussar, Cataphract, Dragoon) — takes reduced
+    // charge damage and deals +2 vs mounted.
+    PIKE_MASTER: { name: 'Pike Master', hp: 18, attack: 8, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 3 }, ranged: false, attackRange: 1, antiCavalry: true },
+    // BAYONET_RIFLE: a rifleman with a fixed bayonet — modern anti-cavalry.
+    // Slightly less raw ranged power than RIFLEMAN, but the bayonet gives a
+    // big bonus when charged by tanks/cavalry.
+    BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 20, attack: 11, defense: 9, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
+    // === MOBILIZED UNITS (Atomic Era, 1880-1940) ===
+    // Mobilized units are motorized/motor-trained versions of the base line:
+    // they give up a bit of raw combat power for much higher move range, which
+    // lets them cross the map rapidly and respond to threats. They are the
+    // natural successors to RIFLEMAN/FIELD_GUN once INTERNAL_COMBUSTION is
+    // researched, and obsolete their foot-bound predecessors.
+    // MOBILIZED_INFANTRY: motorized riflemen — trucks grant +2 move over
+    // RIFLEMAN and a larger HP pool, at the cost of ranged attack range.
+    MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 24, attack: 14, defense: 9, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
+    // MOBILIZED_ARTILLERY: towed field guns moved by trucks. Far more mobile
+    // than the foot-bound FIELD_GUN (+2 move), same devastating bombardment.
+    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 14, attack: 18, defense: 8, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
+    // MOTOR_ARTILLERY: self-propelled guns — the heaviest mobile artillery. Can
+    // move and fire the same turn (mobile: true like ARMORED_TRAIN), giving it
+    // true shoot-and-scoot capability.
+    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 18, attack: 20, defense: 10, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
+    // TANK: the modern successor to cavalry. Tracks give it the charge bonus of
+    // cavalry (canCharge) but with massively better HP/ATK/DEF. Its tread charge
+    // replaces the horse charge in the modern era — old cavalry (CAVALRY,
+    // CATAPHRACT, WINGED_HUSSAR) are obsoleted once ARMOR is researched.
+    TANK:        { name: 'Tank', hp: 32, attack: 20, defense: 14, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
+    // HEAVY_TANK: a breakthrough tank — slower but even more durable, with a
+    // bigger gun. The ultimate land unit of the era.
+    HEAVY_TANK:  { name: 'Heavy Tank', hp: 42, attack: 24, defense: 18, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
+    // ARMORED_CAR: a fast, light mechanized scout/raider. High move range, low
+    // cost — the spiritual successor to the Chariot/Scout line in the modern era.
+    ARMORED_CAR: { name: 'Armored Car', hp: 18, attack: 12, defense: 8, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
+    // === GENERIC REPLACEMENTS for faction-unique units ===
+    // These exist so that non-owning factions still get a unit from the tech
+    // that used to unlock a faction-unique unit (e.g. CHIVALRY used to unlock
+    // WINGED_HUSSAR for everyone). They are intentionally weaker than the
+    // faction-unique originals — the unique unit is the premium version.
+    // MERCENARY_KNIGHT: generic heavy cavalry, the non-roman/non-polish stand-in
+    // for the medieval knightly orders. Slightly weaker than CATAPHRACT.
+    MERCENARY_KNIGHT: { name: 'Mercenary Knight', hp: 15, attack: 7, defense: 5, moveRange: 2, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1 },
+    // HOUSEHOLD_GUARD: generic elite bodyguard infantry (stand-in for the
+    // VARANGIAN_GUARD). Durable, no lord-aura bonus.
+    HOUSEHOLD_GUARD: { name: 'Household Guard', hp: 15, attack: 5, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1 },
+    // FRONTIERSMAN: generic mounted gunpowder skirmisher (stand-in for
+    // CONQUISTADOR). Mobile ranged, no city bonus.
+    FRONTIERSMAN: { name: 'Frontiersman', hp: 11, attack: 6, defense: 3, moveRange: 3, upkeep: { food: 3, gold: 5, iron: 1 }, ranged: true, attackRange: 2 },
+    // RAIDER: generic light infantry shock-trooper (stand-in for BERSERKER).
+    // No frenzy, just a solid melee striker.
+    RAIDER:      { name: 'Raider', hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1 },
+    // === ATOMIC-ERA NAVAL ===
+    // DESTROYER: fast steam-turbine warship, the successor to IRONCLAD.
+    DESTROYER:   { name: 'Destroyer', hp: 50, attack: 18, defense: 12, moveRange: 5, upkeep: { food: 7, gold: 14, iron: 8 }, naval: true, ranged: true, attackRange: 3, vision: 7, fastSail: true },
+    // BATTLESHIP: the heaviest gun ship afloat — long-range shore bombardment.
+    BATTLESHIP:  { name: 'Battleship', hp: 70, attack: 24, defense: 18, moveRange: 4, upkeep: { food: 10, gold: 22, iron: 14 }, naval: true, ranged: true, attackRange: 4, vision: 7, besiege: true, besiegePower: 4, heavyArmor: true },
+    // AIRCRAFT_CARRIER: a mobile air base. Carries a small attack bonus to
+    // adjacent friendly naval units (flagship-style) and extends naval vision.
+    AIRCRAFT_CARRIER: { name: 'Aircraft Carrier', hp: 60, attack: 14, defense: 16, moveRange: 4, upkeep: { food: 12, gold: 26, iron: 12 }, naval: true, ranged: true, attackRange: 3, vision: 9, flagship: true },
+    // TRANSPORT_SHIP: modern steam transport, larger capacity than STEAM_TRANSPORT.
+    TRANSPORT_SHIP: { name: 'Transport Ship', hp: 30, attack: 4, defense: 8, moveRange: 5, upkeep: { food: 6, gold: 12, iron: 4 }, naval: true, capacity: 6, steamPowered: true },
+    // SUBMARINE_II: improved submarine — more HP, better stealth, torpedo bonus.
+    SUBMARINE_II: { name: 'Submarine II', hp: 35, attack: 18, defense: 10, moveRange: 4, upkeep: { food: 5, gold: 14, iron: 7 }, naval: true, ranged: true, attackRange: 3, stealth: true, torpedo: true }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
@@ -169,11 +241,25 @@ export const UNIT_TYPE = {
 // ARTILLERY/CANNON/MORTAR are also shared (tech-gated by GUNPOWDER/METALLURGY)
 // so every faction's siege line stays upgradeable; factions with them in their
 // roster (e.g. Iron Empire) get them WITHOUT the tech as their signature perk.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON'];
-export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'];
+export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT', 'DESTROYER', 'BATTLESHIP', 'AIRCRAFT_CARRIER', 'TRANSPORT_SHIP', 'SUBMARINE_II'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
 export const SIEGE_ENGINES = ['CATAPULT', 'TREBUCHET'];
+
+// Faction-unique units: only the listed faction can train these. Other
+// factions can research the tech that gates them (e.g. CHIVALRY), but the unit
+// stays exclusive to its owner. This fixes the bug where every faction could
+// train e.g. WINGED_HUSSAR after researching CHIVALRY. The owning faction's
+// roster already lists the unit, so the check is `factionDef.roster.includes(u)
+// || !FACTION_UNIQUE_UNITS[u]`.
+export const FACTION_UNIQUE_UNITS = {
+    LEGIONNAIRE:     'roman',
+    BERSERKER:       'viking',
+    VARANGIAN_GUARD: 'byzantine',
+    CONQUISTADOR:    'spanish',
+    WINGED_HUSSAR:   'polish'
+};
 
 // Terrain bonuses: bonus_defense or bonus_attack added in combat
 export const TERRAIN_BONUS = {
@@ -247,7 +333,28 @@ export const UNIT_COST = {
     MONITOR:     { gold: 135, food: 18, wood: 12, iron: 38, production: 36 },
     FRIGATE_2:   { gold: 95, food: 15, wood: 30, iron: 15, production: 25 },
     SUBMARINE:   { gold: 115, food: 10, wood: 8,  iron: 32, production: 30 },
-    TORPEDO_BOAT: { gold: 75, food: 6,  wood: 8,  iron: 22, production: 22 }
+    TORPEDO_BOAT: { gold: 75, food: 6,  wood: 8,  iron: 22, production: 22 },
+    // === ANTI-CAVALRY UNIT COSTS ===
+    HALBERDIER:  { gold: 55, food: 10, wood: 5,  iron: 10, production: 16 },
+    PIKE_MASTER: { gold: 85, food: 14, wood: 8,  iron: 16, production: 22 },
+    BAYONET_RIFLE: { gold: 115, food: 16, wood: 8,  iron: 20, production: 28 },
+    // === MOBILIZED / ATOMIC-ERA UNIT COSTS ===
+    MOBILIZED_INFANTRY: { gold: 130, food: 18, wood: 8,  iron: 26, production: 32 },
+    MOBILIZED_ARTILLERY: { gold: 135, food: 14, wood: 10, iron: 30, production: 34 },
+    MOTOR_ARTILLERY: { gold: 160, food: 16, wood: 12, iron: 36, production: 38 },
+    TANK:        { gold: 170, food: 18, wood: 8,  iron: 42, production: 40 },
+    HEAVY_TANK:  { gold: 210, food: 22, wood: 10, iron: 52, production: 46 },
+    ARMORED_CAR: { gold: 100, food: 12, wood: 6,  iron: 22, production: 24 },
+    // Generic replacement unit costs (weaker than the faction-unique originals)
+    MERCENARY_KNIGHT: { gold: 60, food: 15, wood: 0,  iron: 12, production: 18 },
+    HOUSEHOLD_GUARD: { gold: 55, food: 8,  wood: 0,  iron: 10, production: 16 },
+    FRONTIERSMAN: { gold: 55, food: 10, wood: 5,  iron: 10, production: 15 },
+    RAIDER:      { gold: 40, food: 8,  wood: 5,  iron: 5,  production: 13 },
+    DESTROYER:   { gold: 170, food: 20, wood: 12, iron: 42, production: 40 },
+    BATTLESHIP:  { gold: 240, food: 26, wood: 14, iron: 60, production: 52 },
+    AIRCRAFT_CARRIER: { gold: 280, food: 30, wood: 16, iron: 56, production: 56 },
+    TRANSPORT_SHIP: { gold: 130, food: 16, wood: 22, iron: 26, production: 34 },
+    SUBMARINE_II: { gold: 160, food: 14, wood: 8,  iron: 42, production: 36 }
 };
 
 // Cost to build a bridge across a river tile.
@@ -298,7 +405,30 @@ export const TYPE_ADVANTAGE = {
     MONITOR:     { strongAgainst: 'IRONCLAD',  multiplier: 1.4 },
     RAILGUN:     { strongAgainst: 'CANNON',    multiplier: 1.5 },
     SUBMARINE:   { strongAgainst: 'MAN_OF_WAR', multiplier: 1.5 },
-    TORPEDO_BOAT: { strongAgainst: 'IRONCLAD', multiplier: 1.8 }
+    TORPEDO_BOAT: { strongAgainst: 'IRONCLAD', multiplier: 1.8 },
+    // Anti-cavalry specialists: very strong vs all mounted units (cavalry,
+    // cataphract, chariot, hussar, dragoon, tank, armored car). Their whole
+    // role is to break cavalry charges.
+    HALBERDIER:  { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR'], multiplier: 1.8 },
+    PIKE_MASTER: { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON'], multiplier: 2.0 },
+    BAYONET_RIFLE: { strongAgainst: ['TANK', 'ARMORED_CAR', 'HEAVY_TANK', 'CAVALRY'], multiplier: 1.7 },
+    // Atomic era: tanks crush old infantry and artillery (modern cavalry role).
+    TANK:        { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY', 'MUSKETEER', 'FIELD_GUN', 'MORTAR'], multiplier: 1.6 },
+    HEAVY_TANK:  { strongAgainst: ['TANK', 'RIFLEMAN', 'FIELD_GUN', 'MORTAR', 'CANNON'], multiplier: 1.5 },
+    ARMORED_CAR: { strongAgainst: ['INFANTRY', 'ARCHER', 'SCOUT'], multiplier: 1.5 },
+    // Mobilized units outmaneuver the foot-bound line but are themselves
+    // vulnerable to entrenched defenders (a motorized column takes extra
+    // damage from fortification/anti-tank weapons — represented here by
+    // BAYONET_RIFLE's advantage over them).
+    MOBILIZED_INFANTRY: { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY'], multiplier: 1.4 },
+    MOBILIZED_ARTILLERY: { strongAgainst: ['FIELD_GUN', 'CANNON', 'MORTAR'], multiplier: 1.5 },
+    MOTOR_ARTILLERY: { strongAgainst: ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN'], multiplier: 1.5 },
+    // Naval: destroyers counter submarines, battleships dominate cruisers,
+    // carriers boost adjacent fleets. Submarine II is deadlier vs capital ships.
+    DESTROYER:   { strongAgainst: ['SUBMARINE', 'SUBMARINE_II', 'TORPEDO_BOAT'], multiplier: 1.7 },
+    BATTLESHIP:  { strongAgainst: ['IRONCLAD_FRIGATE', 'MONITOR', 'DESTROYER'], multiplier: 1.5 },
+    AIRCRAFT_CARRIER: { strongAgainst: ['BATTLESHIP', 'IRONCLAD'], multiplier: 1.4 },
+    SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 1.8 }
 };
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
@@ -354,7 +484,7 @@ export const COUNTER_ATTACK_MULTIPLIER = 0.6;
 // enemy's tile and attacking with a bonus. After charging, the unit cannot move
 // for the rest of the turn (hasMovedThisTurn is set). Charge range is 1 tile
 // (orthogonal or diagonal adjacent).
-export const CHARGE_UNITS = ['CAVALRY', 'CATAPHRACT'];  // unit types that can charge
+export const CHARGE_UNITS = ['CAVALRY', 'CATAPHRACT', 'TANK', 'HEAVY_TANK'];  // unit types that can charge
 export const CHARGE_ATTACK_BONUS = 2;     // bonus attack when charging
 export const CHARGE_RANGE = 1;            // Chebyshev distance for charge target
 // After charging, cavalry is exhausted: it cannot move on its next turn and
@@ -409,7 +539,7 @@ export const SIEGE_PRESSURE_MAX = 4;
 // the city's fortification is chipped as well as damaging the defender: heavy
 // siege artillery chips by its besiegePower, all other ranged units (archers
 // and the like) chip by RANGED_BOMBARD_FORT_DAMAGE.
-export const HEAVY_SIEGE_FORT_CHIP_TYPES = ['ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'CATAPULT', 'TREBUCHET'];
+export const HEAVY_SIEGE_FORT_CHIP_TYPES = ['ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'CATAPULT', 'TREBUCHET', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'BATTLESHIP'];
 
 // --- Siege Tower assault support ---
 // A friendly SIEGE_TOWER adjacent to an unbreached city undermines its

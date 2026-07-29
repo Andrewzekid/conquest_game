@@ -33,9 +33,9 @@ describe('Tech Tree Module', () => {
             }
         });
 
-        it('has 7 eras', () => {
+        it('has 8 eras', () => {
             const eras = new Set(Object.values(TECHS).map(t => t.era));
-            expect(eras.size).toBe(7);
+            expect(eras.size).toBe(8);
             expect(eras.has('ancient')).toBe(true);
             expect(eras.has('classical')).toBe(true);
             expect(eras.has('medieval')).toBe(true);
@@ -43,19 +43,18 @@ describe('Tech Tree Module', () => {
             expect(eras.has('renaissance')).toBe(true);
             expect(eras.has('enlightenment')).toBe(true);
             expect(eras.has('modern')).toBe(true);
+            expect(eras.has('atomic')).toBe(true);
         });
 
         it('has no circular prerequisites', () => {
-            const visited = new Set();
-            function checkCircular(id) {
-                if (visited.has(id)) return true;
-                visited.add(id);
+            function checkCircular(id, seen = new Set()) {
+                if (seen.has(id)) return true;
+                const next = new Set(seen); next.add(id);
                 const tech = TECHS[id];
                 if (!tech || !tech.prerequisites) return false;
                 for (const pre of tech.prerequisites) {
-                    if (checkCircular(pre)) return true;
+                    if (checkCircular(pre, next)) return true;
                 }
-                visited.delete(id);
                 return false;
             }
             for (const id of Object.keys(TECHS)) {

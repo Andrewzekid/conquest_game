@@ -92,7 +92,7 @@ describe('integration — combat → capture → turn → save → load', () => 
         expect(state.resources.player.gold).not.toBe(goldBefore);
     });
 
-    it('full lifecycle: combat → kill → capture → turn → save → load', () => {
+    it('full lifecycle: combat → kill → capture → turn → save → load', async () => {
         const state = makeGameState();
 
         // 1. Place units for combat
@@ -117,10 +117,10 @@ describe('integration — combat → capture → turn → save → load', () => 
         expect(state.turn).toBe(2);
 
         // 5. Save
-        expect(saveGame(state)).toBe(true);
+        expect(await saveGame(state)).toBe(true);
 
         // 6. Load
-        const loaded = loadGame();
+        const loaded = await loadGame();
         expect(loaded).not.toBeNull();
 
         // 7. Verify critical fields survived
