@@ -363,6 +363,7 @@ export class Game {
             const king = createLord(slot, start.x, start.z, def.king.name, def.king.class);
             king.isKing = true;
             king.active = def.king.active;
+            if (def.king.mobilized) king.mobilized = true;
             // createLord computed maxHp with isKing=false (12 HP). Now that the
             // king flag is set, recompute so the king gets its full HP (>=50).
             king.maxHp = lordMaxHp(king);
@@ -4598,19 +4599,18 @@ export class Game {
             lord.campTurns = 0;
         }
 
-        // 5b) Early-game exploration: when there are no enemies to fight and the
-        //     army is still tiny (< 3 military), the king pushes outward toward
-        //     the nearest unowned land tile to scout and claim territory. This
-        //     gets the king off the capital at game start instead of idling.
-        if (!hasEnemy && military.length < 3) {
+        // 5b) Early-game exploration: push the king outward to scout and claim
+        //     unowned territory. Mobilized kings (Iron Empire) keep scouting
+        //     even after the army grows — their mechanical nature lets them
+        //     range farther. Also explore when the army is still tiny (<5).
+        if (!hasEnemy && (military.length < 5 || lord.mobilized)) {
             let explore = null, bestD = Infinity;
+            const maxDist = lord.mobilized ? 16 : 10;
             for (const t of this.tiles.values()) {
                 if (t.owner === faction) continue;
                 if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
                 const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
-                // Prefer tiles a few steps away (not the immediate ring) so the
-                // king actually travels, but keep within ~6 so it can return home.
-                if (d > 2 && d < 6 && d < bestD) { bestD = d; explore = t; }
+                if (d > 2 && d < maxDist && d < bestD) { bestD = d; explore = t; }
             }
             if (explore) {
                 this._aiStepLord(lord, explore.x, explore.z, faction, pool, factionName);
@@ -4619,9 +4619,12 @@ export class Game {
         }
 
         // 6) No objective / tiny army: stay within a few tiles of the nearest
-        //    own city so the king is available to defend.
+        //    own city so the king is available to defend. During the early
+        //    exploration phase (no enemies, tiny army) the leash is much
+        //    longer so the king can roam and claim territory.
         const home = nearestOwnCity();
-        if (home && Math.max(Math.abs(lord.x - home.x), Math.abs(lord.z - home.z)) > 3) {
+        const homeRadius = (!hasEnemy && military.length < 5) ? 10 : 3;
+        if (home && Math.max(Math.abs(lord.x - home.x), Math.abs(lord.z - home.z)) > homeRadius) {
             this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
             return;
         }

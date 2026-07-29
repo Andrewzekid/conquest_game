@@ -342,8 +342,9 @@ describe('King early-game exploration', () => {
         const m = src.match(/_aiMoveKing\(lord, faction, atWar, pool\)\s*\{([\s\S]*?)\n    _aiStepLord/);
         expect(m, '_aiMoveKing body not found').not.toBeNull();
         const body = m[1];
-        // Should contain an exploration step that activates when military < 3.
-        expect(body).toMatch(/military\.length\s*<\s*3/);
+        // Should contain an exploration step that activates when military < 5
+        // (or when the king is mobilized, e.g. Iron Empire).
+        expect(body).toMatch(/military\.length\s*<\s*5/);
         expect(body).toMatch(/explor/i);
     });
 });

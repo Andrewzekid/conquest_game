@@ -764,6 +764,69 @@ export class GameRenderer {
         return tall;
     }
 
+    /** Create a small decorative animal companion at ground level. */
+    _makeAnimal(type) {
+        const g = new THREE.Group();
+        if (type === 'BEAR') {
+            const fur = new THREE.MeshPhongMaterial({ color: 0x5a3a1a });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.18), fur);
+            body.position.y = 0.04; g.add(body);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), fur);
+            head.position.set(0, 0.08, 0.1); g.add(head);
+            for (const sx of [-0.03, 0.03]) {
+                const ear = new THREE.Mesh(new THREE.SphereGeometry(0.015, 5, 5), fur);
+                ear.position.set(sx, 0.1, 0.08); g.add(ear);
+            }
+        } else if (type === 'BOAR') {
+            const hide = new THREE.MeshPhongMaterial({ color: 0x4a3a2a });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.14), hide);
+            body.position.y = 0.03; g.add(body);
+            const snout = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.06, 6), hide);
+            snout.rotation.x = -Math.PI / 2;
+            snout.position.set(0, 0.05, 0.08); g.add(snout);
+            for (const sx of [-0.02, 0.02]) {
+                const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.006, 0.02, 4), new THREE.MeshPhongMaterial({ color: 0xf2f2f0 }));
+                tusk.position.set(sx, 0.04, 0.1); tusk.rotation.x = 0.5; g.add(tusk);
+            }
+        } else if (type === 'WOLF') {
+            const pelt = new THREE.MeshPhongMaterial({ color: 0x6a6a7a });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.18), pelt);
+            body.position.y = 0.03; g.add(body);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), pelt);
+            head.position.set(0, 0.07, 0.1); g.add(head);
+            for (const sx of [-0.015, 0.015]) {
+                const ear = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.025, 4), pelt);
+                ear.position.set(sx, 0.085, 0.08); g.add(ear);
+            }
+            const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.01, 0.06, 4), pelt);
+            tail.position.set(0, 0.04, -0.1); g.add(tail);
+        } else if (type === 'RAVEN') {
+            const body = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), new THREE.MeshPhongMaterial({ color: 0x1a1a1a }));
+            body.position.y = 0.05; g.add(body);
+            const beak = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.03, 4), new THREE.MeshPhongMaterial({ color: 0xcc8833 }));
+            beak.position.set(0, 0.055, 0.04); g.add(beak);
+        } else if (type === 'EAGLE') {
+            const white = new THREE.MeshPhongMaterial({ color: 0xf2f2f0 });
+            const body = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), white);
+            body.position.y = 0.06; g.add(body);
+            const beak = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.03, 4), new THREE.MeshPhongMaterial({ color: 0xcc8833 }));
+            beak.position.set(0, 0.07, 0.04); g.add(beak);
+            for (const sx of [-0.06, 0.06]) {
+                const wing = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.01, 0.04), white);
+                wing.position.set(sx, 0.06, 0); g.add(wing);
+            }
+        } else if (type === 'LION') {
+            const mane = new THREE.MeshPhongMaterial({ color: 0xcc8833 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.07, 0.16), mane);
+            body.position.y = 0.035; g.add(body);
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), mane);
+            head.position.set(0, 0.085, 0.09); g.add(head);
+            const maneRing = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 6, 12), mane);
+            maneRing.position.set(0, 0.09, 0.07); maneRing.rotation.x = 0.3; g.add(maneRing);
+        }
+        return g;
+    }
+
     _addShield(g, P, side) {
         const s = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.02, 8), P.metal);
         s.rotation.x = Math.PI / 2;
@@ -910,6 +973,35 @@ export class GameRenderer {
             cape.position.set(0, 0.36 * tall, -0.1); g.add(cape);
         };
 
+        // King-specific jewelry, 3D crown, and regalia. Adds to targetGroup
+        // (rider for mounted lords, g for foot lords) so coordinates are
+        // relative to the humanoid body.
+        const addKingRegalia = (tall, targetGroup) => {
+            if (!isKing) return;
+            const kg = targetGroup || g;
+            // Gold gorget (collar ring at neck level)
+            const gorget = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.015, 8, 16), goldMat);
+            gorget.position.y = 0.49 * tall; kg.add(gorget);
+            // Gold arm rings
+            for (const sx of [-0.13, 0.13]) {
+                const armRing = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.008, 6, 12), goldMat);
+                armRing.position.set(sx, 0.38 * tall, 0); kg.add(armRing);
+            }
+            // 3D crown (ring + spikes + gem)
+            const crownRing = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 8, 16), goldMat);
+            crownRing.position.y = 0.56 * tall; kg.add(crownRing);
+            for (let i = 0; i < 5; i++) {
+                const angle = (i / 5) * Math.PI * 2;
+                const spike = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.04, 5), goldMat);
+                spike.position.set(Math.cos(angle) * 0.06, 0.59 * tall, Math.sin(angle) * 0.06);
+                kg.add(spike);
+            }
+            // Crown gem
+            const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.02),
+                new THREE.MeshPhongMaterial({ color: bodyColor, emissive: bodyColor, emissiveIntensity: 0.7 }));
+            gem.position.y = 0.6 * tall; kg.add(gem);
+        };
+
         // Build the lord body + faction-specific decoration
         const fid = factionId || '';
         const tall = 1;
@@ -921,6 +1013,7 @@ export class GameRenderer {
             rider.position.set(0, 0.46, -0.05); g.add(rider);
             addClassWeapon(rt);
             addCape(rt);
+            addKingRegalia(rt, rider);
             // Faction-specific rider weapon
             if (fid === 'golden' || fid === 'polish') {
                 // Lance
@@ -954,6 +1047,7 @@ export class GameRenderer {
             const t = this._addHumanoid(g, P, { armor: true, helmet: true, tall: true });
             addClassWeapon(t);
             addCape(t);
+            addKingRegalia(t, g);
             // Faction-specific weapon/decoration
             if (fid === 'crimson') {
                 // Greatsword (two-handed)
@@ -1002,6 +1096,28 @@ export class GameRenderer {
                 head.position.set(0.16, 0.6 * t, 0.04); g.add(head);
                 const cog = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12), P.metal);
                 cog.position.set(-0.16, 0.46 * t, 0); g.add(cog);
+                // Mobilized king: tracks, drive wheels, and mechanical armor
+                if (isKing) {
+                    const trackMat = new THREE.MeshPhongMaterial({ color: 0x3a3a4a });
+                    for (const sx of [-0.12, 0.12]) {
+                        const track = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.26), trackMat);
+                        track.position.set(sx, -0.01, 0); g.add(track);
+                        for (const sz of [-0.09, 0, 0.09]) {
+                            const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.05, 8), trackMat);
+                            wheel.rotation.x = Math.PI / 2;
+                            wheel.position.set(sx, -0.005, sz); g.add(wheel);
+                        }
+                    }
+                    // Mechanical back-mount gears
+                    const bigGear = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.012, 8, 16), P.metal);
+                    bigGear.position.set(0, 0.38 * t, 0); g.add(bigGear);
+                    const smallGear = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.01, 6, 12), P.metal);
+                    smallGear.position.set(-0.08, 0.44 * t, 0); smallGear.rotation.y = 0.3; g.add(smallGear);
+                    // Boiler / steam cylinder on the back
+                    const boiler = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.16, 8),
+                        new THREE.MeshPhongMaterial({ color: 0x888899 }));
+                    boiler.position.set(0.08, 0.28 * t, 0); boiler.rotation.z = 0.2; g.add(boiler);
+                }
             } else if (fid === 'shadow') {
                 // Hooded cloak + daggers
                 const hood = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8, 0, Math.PI * 2, 0, Math.PI / 1.6),
@@ -1046,6 +1162,23 @@ export class GameRenderer {
                     const horn = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.12, 6), P.white);
                     horn.position.set(sx, 0.58 * t, 0); horn.rotation.z = sx > 0 ? 0.5 : -0.5; g.add(horn);
                 }
+            }
+        }
+
+        // King-only ground effects: animal companion + expanded base glow
+        if (isKing) {
+            const companionMap = {
+                crimson: null, verdant: null, violet: 'RAVEN', azure: 'EAGLE',
+                obsidian: 'WOLF', iron: 'BOAR', shadow: 'RAVEN', storm: null,
+                frost: 'BEAR', golden: 'EAGLE', polish: 'EAGLE', roman: 'EAGLE',
+                byzantine: 'RAVEN', spanish: 'WOLF', viking: 'BEAR'
+            };
+            const animal = companionMap[fid];
+            if (animal) {
+                const beast = this._makeAnimal(animal);
+                const angle = Math.PI * 1.7 + (fid.length * 0.25);
+                beast.position.set(Math.cos(angle) * 0.26, 0.005, Math.sin(angle) * 0.26);
+                g.add(beast);
             }
         }
 
