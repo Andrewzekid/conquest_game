@@ -146,12 +146,19 @@ describe('new unit type recognition', () => {
     expect(pick).toBe('RAILGUN');
   });
 
-  it('DEMOLITION_SQUAD is recognized as melee', () => {
+  it('DEMOLITION_SQUAD is recognized as support (engineer upgrade)', () => {
     const def = FACTION_DEFS.golden;
     const roster = [...def.roster, 'DEMOLITION_SQUAD'];
-    const units = makeUnits(['ARCHER', 'ARCHER', 'ARCHER', 'ARCHER',
+    // Fill every combat role heavily so the support role has the biggest
+    // deficit: 6 melee, 6 ranged, 8 cavalry (golden wants ~20% support).
+    const units = makeUnits(['INFANTRY', 'INFANTRY', 'INFANTRY', 'INFANTRY',
+      'INFANTRY', 'INFANTRY',
+      'ARCHER', 'ARCHER', 'ARCHER', 'ARCHER', 'ARCHER', 'ARCHER',
+      'CAVALRY', 'CAVALRY', 'CAVALRY', 'CAVALRY',
       'CAVALRY', 'CAVALRY', 'CAVALRY', 'CAVALRY'], 'golden');
     const pick = findAffordableUnit(AMPLE_RES, roster, def, units, [], 'golden', null, false);
+    // DEMOLITION_SQUAD is an engineer-line upgrade (canBuildBridge +
+    // canBuildStructure), so it fills the support deficit.
     expect(pick).toBe('DEMOLITION_SQUAD');
   });
 

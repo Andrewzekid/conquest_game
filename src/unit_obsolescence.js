@@ -76,17 +76,31 @@ export const OBSOLESCENCE = {
     // horse-drawn battery). MOTOR_ARTILLERY (self-propelled) further retires
     // SIEGE_CANNON/RAILGUN — its shoot-and-scoot supersedes the fixed emplacement.
     MOBILIZED_INFANTRY: { obsoletes: ['RIFLEMAN', 'SHARPSHOOTER', 'LINE_INFANTRY', 'MUSKETEER', 'ARQUEBUSIER', 'DRAGOON', 'INFANTRY', 'BERSERKER', 'LEGIONNAIRE', 'VARANGIAN_GUARD', 'WINGED_HUSSAR', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'], tech: 'INTERNAL_COMBUSTION' },
-    MOBILIZED_ARTILLERY: { obsoletes: ['FIELD_GUN', 'HORSE_ARTILLERY', 'CANNON', 'MORTAR', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE', 'SIEGE_TOWER', 'ENGINEER'], tech: 'INTERNAL_COMBUSTION' },
+    // NOTE: MOBILIZED_ARTILLERY no longer obsoletes ENGINEER — the engineer
+    // line has its own modern upgrade (COMBAT_ENGINEER) that retires the
+    // classical ENGINEER while keeping the bridge/structure utility the AI
+    // relies on. Removing ENGINEER here would leave a faction with no
+    // structure-builder until COMBAT_ENGINEER is researched.
+    MOBILIZED_ARTILLERY: { obsoletes: ['FIELD_GUN', 'HORSE_ARTILLERY', 'CANNON', 'MORTAR', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE', 'SIEGE_TOWER'], tech: 'INTERNAL_COMBUSTION' },
     MOTOR_ARTILLERY: { obsoletes: ['SIEGE_CANNON', 'RAILGUN', 'MOBILIZED_ARTILLERY', 'FIELD_GUN', 'HORSE_ARTILLERY', 'CANNON', 'MORTAR'], tech: 'ADVANCED_ARTILLERY' },
+    // Combat engineer: the modern engineer upgrade. Obsoletes the classical
+    // ENGINEER and the DEMOLITION_SQUAD (it absorbs both roles — structure/
+    // bridge utility + demolish bonus — with better stats and mobility).
+    COMBAT_ENGINEER: { obsoletes: ['ENGINEER', 'DEMOLITION_SQUAD'], tech: 'INTERNAL_COMBUSTION' },
     // Tanks (ARMOR) obsolete all horse cavalry — they are the modern cavalry.
     // CATAPHRACT/CHARIOT/CAVALRY/WINGED_HUSSAR/DRAGOON/CONQUISTADOR/
     // MERCENARY_KNIGHT/FRONTIERSMAN all retire once TANK is unlocked.
     // HEAVY_TANK is a slower, tankier alternative — it coexists with TANK
     // (both stay trainable) so a player can mix the two.
     TANK:         { obsoletes: ['CATAPHRACT', 'CHARIOT', 'CAVALRY', 'WINGED_HUSSAR', 'DRAGOON', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'FRONTIERSMAN', 'ARMORED_TRAIN'], tech: 'ARMOR' },
-    // Anti-armor: BAYONET_RIFLE obsoletes the older anti-cavalry line
-    // (HALBERDIER/PIKE_MASTER) — the bayonet replaces the pike against tanks.
+    // Anti-armor chain: BAYONET_RIFLE obsoletes the medieval/enlightenment
+    // anti-cavalry line (the bayonet replaces the pike). ANTI_TANK_GUN and
+    // RPG_TEAM are successive upgrades — RPG_TEAM (ROCKETRY) is the capstone,
+    // retiring ANTI_TANK_GUN and BAYONET_RIFLE so the line converges on one
+    // modern anti-tank unit.
     BAYONET_RIFLE: { obsoletes: ['HALBERDIER', 'PIKE_MASTER', 'PIKEMAN'], tech: 'ANTI_ARMOR' },
+    ANTI_TANK_GUN: { obsoletes: ['BAYONET_RIFLE', 'HALBERDIER', 'PIKE_MASTER', 'PIKEMAN'], tech: 'ANTI_ARMOR' },
+    RPG_TEAM:     { obsoletes: ['ANTI_TANK_GUN', 'BAYONET_RIFLE', 'HALBERDIER', 'PIKE_MASTER', 'PIKEMAN'], tech: 'ROCKETRY' },
 
     // Anti-cavalry line: PIKE_MASTER obsoletes HALBERDIER (the enlightenment
     // long-pike replaces the medieval halberd in the same anti-cavalry role).

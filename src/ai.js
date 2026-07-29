@@ -24,7 +24,7 @@ import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
 import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } from './ai_goals.js';
-import { getUnlockedUnits, TECHS } from './tech.js';
+import { getUnlockedUnits, getUnlockedStructures, TECHS } from './tech.js';
 import { applyObsolescence, isObsolete } from './unit_obsolescence.js';
 import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
 import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity, garrisonNeeds, findTheaterTarget, planFerries } from './ai_theater.js';
@@ -1009,20 +1009,30 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             });
             engCap = Math.min(engCap, riverNearCity ? 1 : 0);
         }
-        const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
-            actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
+        // Engineer-type training: prefer the modern upgrade (COMBAT_ENGINEER
+        // once INTERNAL_COMBUSTION is researched, else DEMOLITION_SQUAD once
+        // EXPLOSIVES is researched) over the basic ENGINEER. The modern
+        // variants keep the bridge/structure utility the AI relies on, with
+        // better combat stats. Obsolescence already hides the old ones from
+        // the roster, but this block trains engineers directly (not via the
+        // roster) so it needs its own modern-first pick.
+        const engineerUnitType = aiUnlocked.has('COMBAT_ENGINEER') ? 'COMBAT_ENGINEER'
+            : aiUnlocked.has('DEMOLITION_SQUAD') ? 'DEMOLITION_SQUAD'
+            : 'ENGINEER';
+        const engNow = myUnits.filter(u => UNIT_TYPE[u.type] && UNIT_TYPE[u.type].canBuildBridge && UNIT_TYPE[u.type].canBuildStructure).length +
+            actions.filter(a => a.type === 'train' && a.unitType === engineerUnitType).length;
         if (engNow < engCap && capRoom()) {
-            const ec = getUnitCostFor('ENGINEER', factionDef);
-            if (canAfford('ENGINEER', res, ec)) {
+            const ec = getUnitCostFor(engineerUnitType, factionDef);
+            if (canAfford(engineerUnitType, res, ec)) {
                 const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
                 if (spawnTile) {
-                    actions.push({ type: 'train', unitType: 'ENGINEER', tileKey: `${spawnTile.x},${spawnTile.z}` });
-                    res = spendCost('ENGINEER', res, ec);
+                    actions.push({ type: 'train', unitType: engineerUnitType, tileKey: `${spawnTile.x},${spawnTile.z}` });
+                    res = spendCost(engineerUnitType, res, ec);
                 }
             } else if (engNow < 1) {
                 // No engineers at all yet: reserve the cost so the spending
                 // spree can't keep pushing the first engineer out of reach
-                // (ENGINEER costs iron, which iron-poor factions never stock).
+                // (engineers cost iron, which iron-poor factions never stock).
                 res = subtractCost(res, ec);
             }
         }
@@ -1656,7 +1666,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         //     army can bombard walls from range instead of rolling a tower up.
         //     Defense: when an own city is threatened (enemy units closing in),
         //     build traps/fortifications on owned tiles around it.
-        if (unit.type === 'ENGINEER' && !unit.hasAttackedThisTurn) {
+        // Engineer-types: ENGINEER, DEMOLITION_SQUAD, COMBAT_ENGINEER (all
+        // carry canBuildStructure + canBuildBridge). LEGIONNAIRE has
+        // canBuildStructure but NOT canBuildBridge, so it only joins the
+        // defensive-structure branch below — not the siege-tower/bridge/field-
+        // siege branches that need the full engineer kit.
+        const udef = UNIT_TYPE[unit.type];
+        const isEngineerType = !!(udef && udef.canBuildBridge && udef.canBuildStructure);
+        if (isEngineerType && !unit.hasAttackedThisTurn) {
             const towerTarget = (!hasModernSiegeTech) ? findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS) : null;
             if (towerTarget && canAffordCost(res, SIEGE_TOWER_COST)) {
                 actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${towerTarget.city.x},${towerTarget.city.z}` });
@@ -1703,11 +1720,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     (!influence || influence.has(`${unit.x},${unit.z}`));
                 if (canSite && distCity >= 1 && distCity <= 3) {
                     // Inner ring (adjacent to the city): fortify the defenders.
-                    // Outer ring: traps — spikes if the enemy brings cavalry,
-                    // fall traps otherwise.
+                    // Outer ring: traps — anti-cavalry if the enemy brings
+                    // cavalry, anti-tank if they bring armor, else a general
+                    // trap. Modern variants (BUNKER/MINEFIELD/AT_MINE) are
+                    // preferred when their tech is researched.
                     let sType;
-                    if (distCity === 1) sType = 'FORTIFICATION';
-                    else sType = threat.cavalry >= 2 ? 'SPIKES' : 'FALL_TRAP';
+                    if (distCity === 1) sType = pickStructure('fort', aiTs);
+                    else if (threat.armor >= 2) sType = pickStructure('antitank', aiTs);
+                    else if (threat.cavalry >= 2) sType = pickStructure('anticav', aiTs);
+                    else sType = pickStructure('trap', aiTs);
                     const sCost = STRUCTURE_COST[sType] || {};
                     if (canAffordCost(res, sCost)) {
                         actions.push({ type: 'buildStructure', unitId: unit.id, structureType: sType });
@@ -1739,17 +1760,22 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     !structures.has(`${unit.x},${unit.z}`) &&
                     (!influence || influence.has(`${unit.x},${unit.z}`));
                 if (canSite) {
-                    let nearEnemy = 0, nearCavalry = 0;
+                    let nearEnemy = 0, nearCavalry = 0, nearArmor = 0;
                     for (const o of units.values()) {
                         if (o.owner === owner || !isAtWar(o.owner)) continue;
                         const d = Math.abs(o.x - unit.x) + Math.abs(o.z - unit.z);
                         if (d <= 3) {
                             nearEnemy++;
                             if (CAVALRY_TYPES.has(o.type)) nearCavalry++;
+                            const odef = UNIT_TYPE[o.type];
+                            if (odef && (odef.armored || o.type === 'TANK' || o.type === 'HEAVY_TANK' || o.type === 'ARMORED_CAR')) nearArmor++;
                         }
                     }
                     if (nearEnemy > 0) {
-                        const sType = nearCavalry >= 2 ? 'SPIKES' : 'FALL_TRAP';
+                        let sType;
+                        if (nearArmor >= 2) sType = pickStructure('antitank', aiTs);
+                        else if (nearCavalry >= 2) sType = pickStructure('anticav', aiTs);
+                        else sType = pickStructure('trap', aiTs);
                         const sCost = STRUCTURE_COST[sType] || {};
                         if (canAffordCost(res, sCost)) {
                             actions.push({ type: 'buildStructure', unitId: unit.id, structureType: sType });
@@ -2723,6 +2749,33 @@ function bestSiegePick(options, factionDef) {
     return best;
 }
 
+/** Pick the best defensive structure the AI can build, given its tech state.
+ *  Categories: 'fort' (fortification line: FORTIFICATION -> BUNKER), 'trap'
+ *  (FALL_TRAP -> MINEFIELD/AT_MINE), 'anticav' (SPIKES -> MINEFIELD).
+ *  Modern variants are preferred when their tech is researched. Returns a
+ *  structure type string the caller can pass to STRUCTURE_COST. */
+function pickStructure(category, aiTs) {
+    const unlocked = (aiTs && aiTs.researched) ? getUnlockedStructures(aiTs) : new Set();
+    const has = (id) => unlocked.has(id);
+    if (category === 'fort') {
+        // BUNKER (modern) > FORTIFICATION (medieval).
+        return has('BUNKER') ? 'BUNKER' : 'FORTIFICATION';
+    }
+    if (category === 'anticav') {
+        // MINEFIELD damages all unit types (better than SPIKES which only hits
+        // cavalry). AT_MINE is anti-armor specifically — prefer MINEFIELD as a
+        // general-purpose upgrade, AT_MINE only when the enemy is armor-heavy
+        // (the caller passes 'antitank' for that).
+        return has('MINEFIELD') ? 'MINEFIELD' : 'SPIKES';
+    }
+    if (category === 'antitank') {
+        // AT_MINE (anti-armor shaped charge) > MINEFIELD > FALL_TRAP.
+        return has('AT_MINE') ? 'AT_MINE' : (has('MINEFIELD') ? 'MINEFIELD' : 'FALL_TRAP');
+    }
+    // Default trap: MINEFIELD > FALL_TRAP.
+    return has('MINEFIELD') ? 'MINEFIELD' : 'FALL_TRAP';
+}
+
 /** Subtract a cost object from a resource pool, clamped at 0 (for saving). */
 function subtractCost(res, cost) {
     const out = { ...res };
@@ -3214,13 +3267,16 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence, resources
 }
 
 /** Composition role buckets for the AI army. */
-const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER']);
+const MELEE_TYPES = new Set(['INFANTRY', 'PIKEMAN', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM', 'MOBILIZED_INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER']);
 const RANGED_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'ARMORED_CAR', 'FRONTIERSMAN', 'TANK', 'HEAVY_TANK']);
 const CAVALRY_TYPES = new Set(['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'CONQUISTADOR', 'DRAGOON', 'HORSE_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'FRONTIERSMAN']);
 const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'SIEGE_TOWER', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'ARMORED_TRAIN', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY']);
-const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER']);
+// Support = engineers + medics. DEMOLITION_SQUAD and COMBAT_ENGINEER are
+// engineer upgrades (canBuildBridge/canBuildStructure), so they're support,
+// not melee — keeps the AI from throwing them into the front line as melee.
+const SUPPORT_TYPES = new Set(['MEDIC', 'ENGINEER', 'DEMOLITION_SQUAD', 'COMBAT_ENGINEER']);
 const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT', 'DESTROYER', 'BATTLESHIP', 'AIRCRAFT_CARRIER', 'TRANSPORT_SHIP', 'SUBMARINE_II']);
-const FRAGILE_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'RAILGUN', 'SIEGE_CANNON', 'RIFLEMAN', 'SHARPSHOOTER', 'WORKER', 'SETTLER', 'SCOUT', 'ARMORED_CAR', 'FRONTIERSMAN', 'MOBILIZED_ARTILLERY', 'SUBMARINE_II']);
+const FRAGILE_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'RAILGUN', 'SIEGE_CANNON', 'RIFLEMAN', 'SHARPSHOOTER', 'WORKER', 'SETTLER', 'SCOUT', 'ARMORED_CAR', 'FRONTIERSMAN', 'MOBILIZED_ARTILLERY', 'SUBMARINE_II', 'ANTI_TANK_GUN', 'RPG_TEAM']);
 
 function unitRole(type) {
     if (MELEE_TYPES.has(type)) return 'melee';
@@ -3476,11 +3532,11 @@ function roleDeficit(roster, counts, total, target) {
  *  a faction lacks); the canAfford gate means early/cheap armies still fall
  *  back to cheaper units when the signature is too expensive. */
 const ROLE_ORDER = {
-    melee:   ['HEAVY_TANK', 'TANK', 'MOTOR_ARTILLERY', 'MOBILIZED_INFANTRY', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'DEMOLITION_SQUAD', 'PIKEMAN', 'INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER'],
+    melee:   ['HEAVY_TANK', 'TANK', 'MOTOR_ARTILLERY', 'MOBILIZED_INFANTRY', 'RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'PIKEMAN', 'INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER'],
     ranged:  ['RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'ARQUEBUSIER', 'LONGBOWMAN', 'DRAGOON', 'ARCHER', 'ARMORED_CAR', 'FRONTIERSMAN'],
     cavalry: ['HEAVY_TANK', 'TANK', 'ARMORED_CAR', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'MERCENARY_KNIGHT', 'CAVALRY', 'CHARIOT'],
     siege:   ['MOTOR_ARTILLERY', 'MOBILIZED_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY'],
-    support: ['ENGINEER', 'MEDIC'],
+    support: ['COMBAT_ENGINEER', 'DEMOLITION_SQUAD', 'ENGINEER', 'MEDIC'],
     naval:   ['AIRCRAFT_CARRIER', 'BATTLESHIP', 'SUBMARINE_II', 'DESTROYER', 'MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT_SHIP', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN'],
 };
 /** Pick an affordable unit from this faction's roster, biased toward a
@@ -5371,16 +5427,20 @@ function findNearestBesiegeableCity(unit, tiles, owner, isAtWar) {
 /** How threatened is an own city? Counts at-war enemy units within 5 (and how
  *  many are cavalry — drives the spikes-vs-fall-trap choice). */
 function cityThreatLevel(city, units, tiles, owner, isAtWar) {
-    let enemies = 0, cavalry = 0;
+    let enemies = 0, cavalry = 0, armor = 0;
     for (const u of units.values()) {
         if (u.owner === owner) continue;
         if (isAtWar && !isAtWar(u.owner)) continue;
         const d = manhattan(u.x, u.z, city.x, city.z);
         if (d > 5) continue;
         enemies++;
+        const udef = UNIT_TYPE[u.type];
         if (u.type === 'CAVALRY' || u.type === 'CATAPHRACT') cavalry++;
+        // Armor: tanks, heavy tanks, armored cars, motor artillery — the
+        // modern "cavalry" that AT mines are built to stop.
+        if (udef && (udef.armored || u.type === 'TANK' || u.type === 'HEAVY_TANK' || u.type === 'ARMORED_CAR')) armor++;
     }
-    return { enemies, cavalry };
+    return { enemies, cavalry, armor };
 }
 
 /** Count friendly units defending a city (on or adjacent). Used to judge

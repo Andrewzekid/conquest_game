@@ -15,7 +15,7 @@ import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAv
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
-import { getUnlockedUnits, isUnitUnlocked, TECHS } from './tech.js';
+import { getUnlockedUnits, getUnlockedStructures, isUnitUnlocked, TECHS } from './tech.js';
 import { applyObsolescence } from './unit_obsolescence.js';
 
 // Map building types to their icon names in src/icons.js.
@@ -487,8 +487,12 @@ export function bindUI(gameState, callbacks) {
                         !(gameState.structures && gameState.structures.has(`${unit.x},${unit.z}`));
                     if (canSite) {
                         html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
+                        const unlockedStructs = (gameState.techState && gameState.techState.researched) ? getUnlockedStructures(gameState.techState) : new Set();
                         for (const sType of Object.keys(STRUCTURE_TYPE)) {
                             const s = STRUCTURE_TYPE[sType];
+                            // Tech gating: modern structures (MINEFIELD/BUNKER/AT_MINE)
+                            // require their unlocking tech; medieval ones are always available.
+                            if (s.techRequired && !unlockedStructs.has(sType)) continue;
                             html += `<button class="build-structure-btn btn btn-sm" data-structure="${sType}" style="display:block; width:100%; margin:2px 0;" title="${s.desc} (${s.buildTurns || 2} turns)">${svgIcon('spikes', { size: 13 })} ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
                         }
                     }
@@ -508,8 +512,10 @@ export function bindUI(gameState, callbacks) {
                         !(gameState.structures && gameState.structures.has(`${unit.x},${unit.z}`));
                     if (canSite) {
                         html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
+                        const unlockedStructs = (gameState.techState && gameState.techState.researched) ? getUnlockedStructures(gameState.techState) : new Set();
                         for (const sType of Object.keys(STRUCTURE_TYPE)) {
                             const s = STRUCTURE_TYPE[sType];
+                            if (s.techRequired && !unlockedStructs.has(sType)) continue;
                             html += `<button class="build-structure-btn btn btn-sm" data-structure="${sType}" style="display:block; width:100%; margin:2px 0;" title="${s.desc} (${s.buildTurns || 2} turns)">${svgIcon('spikes', { size: 13 })} ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
                         }
                     }

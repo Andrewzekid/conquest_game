@@ -244,11 +244,15 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // building defense bonus is gone too.
     const buildingDef = (buildings && !defenderCityBreached) ? getBuildingDefenseBonus(tileKey, buildings) : 0;
     if (defenderCityBreached) messages.push(`The city is breached — its defenses are down!`);
-    // Engineer-built FORTIFICATION on the defender's tile (must belong to the
-    // defender's faction — structures of the attacker don't help the defender).
+    // Engineer-built FORTIFICATION/BUNKER on the defender's tile (must belong
+    // to the defender's faction — structures of the attacker don't help the
+    // defender). BUNKER grants both a defense bonus and a flat damage
+    // reduction (its hpBonus absorbs incoming hits), modeling reinforced
+    // concrete that soaks firepower.
     const fort = (structures && structures.get(tileKey)) || null;
-    const structureDef = (fort && fort.owner === defenderUnit.owner && STRUCTURE_TYPE[fort.type])
-        ? (STRUCTURE_TYPE[fort.type].defenseBonus || 0) : 0;
+    const fortTypeDef = (fort && fort.owner === defenderUnit.owner && STRUCTURE_TYPE[fort.type]) || null;
+    const structureDef = fortTypeDef ? (fortTypeDef.defenseBonus || 0) : 0;
+    const structureDmgReduce = fortTypeDef ? (fortTypeDef.hpBonus || 0) : 0;
     const defLordBonus = getLordCombatBonus(defenderLord);
     const defClass = getLordClassBonus(defenderLord);
     const defAdj = getAdjacentLordBonuses(lords, defenderUnit);
@@ -265,7 +269,7 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         messages.push(`${combatName(attackerUnit)} rifled accuracy: target defense halved!`);
     }
     if (structureDef > 0) {
-        messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
+        messages.push(`${combatName(defenderUnit)} is protected by a ${(fortTypeDef && fortTypeDef.name) || 'Fortification'} (+${structureDef} def${structureDmgReduce > 0 ? `, -${structureDmgReduce} dmg` : ''})`);
     }
     // Siege Tower support: a friendly SIEGE_TOWER adjacent to an unbreached
     // city undermines its defenses — the garrison can't fully man the walls
@@ -372,6 +376,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     if (defenderUnit.chargeExhausted && defenderUnit.chargeExhausted > 0 && atkStats.ranged) {
         damageToDefender = Math.max(1, Math.floor(damageToDefender * CHARGE_EXHAUST_RANGED_VULN));
         messages.push(`${defenderUnit.type} is exhausted — ranged fire deals ${damageToDefender} (×${CHARGE_EXHAUST_RANGED_VULN})!`);
+    }
+    // BUNKER hpBonus: a reinforced bunker absorbs incoming firepower —
+    // reduce the final damage by the structure's hpBonus (min 1).
+    if (structureDmgReduce > 0 && damageToDefender > 0) {
+        damageToDefender = Math.max(1, damageToDefender - structureDmgReduce);
     }
     defenderUnit.hp -= damageToDefender;
     messages.push(`${combatName(attackerUnit)} attacks ${combatName(defenderUnit)} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);

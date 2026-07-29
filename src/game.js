@@ -56,7 +56,7 @@ import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
 import { nextStepToward, goalValid } from './path.js';
 import { createTechState, serializeTechState, deserializeTechState,
          addResearch, selectResearch, getResearchProgress, calculateResearchOutput,
-         getUnlockedUnits, getUnlockedBuildings, getTechBonuses, getCurrentEra,
+         getUnlockedUnits, getUnlockedBuildings, getUnlockedStructures, getTechBonuses, getCurrentEra,
          isUnitUnlocked,
          TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
 import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
@@ -2309,6 +2309,16 @@ export class Game {
         if (!usd || !usd.canBuildStructure) return;
         const sdef = STRUCTURE_TYPE[structureType];
         if (!sdef) { this.log('Invalid structure type.'); return; }
+        // Tech gating: modern structures (MINEFIELD/BUNKER/AT_MINE) require
+        // their unlocking tech. Medieval ones have no techRequired.
+        if (sdef.techRequired) {
+            const unlocked = this.gameState.techState && this.gameState.techState.researched
+                ? getUnlockedStructures(this.gameState.techState) : new Set();
+            if (!unlocked.has(structureType)) {
+                this.log(`That structure requires ${sdef.techRequired} research.`);
+                return;
+            }
+        }
         if (engineer.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
         if (this.gameState.construction && this.gameState.construction.has(engineer.id)) {
             this.log('This engineer is already building something.'); return;
@@ -2345,24 +2355,45 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
-    /** Fall-trap check after a unit enters a tile by any means (move, goal
-     *  auto-step, charge). An enemy FALL_TRAP on the tile springs: the unit
-     *  takes damage and is stunned (skips its next turn), and the trap is
-     *  consumed. Friendly structures do nothing. */
+    /** Trap check after a unit enters a tile by any means (move, goal
+     *  auto-step, charge). Handles the one-shot trap structures:
+     *    - FALL_TRAP: damages + stuns any enemy (medieval).
+     *    - MINEFIELD: damages any enemy (modern, bigger hit, no stun).
+     *    - AT_MINE: heavy damage + stun to ARMOR units; light damage to
+     *      others (modern anti-tank mine).
+     *  Each is consumed on detonation. Friendly structures do nothing. */
     _checkFallTrap(unit) {
         if (!unit || !this.gameState.structures) return;
         const skey = `${unit.x},${unit.z}`;
         const s = this.gameState.structures.get(skey);
-        if (!s || s.type !== 'FALL_TRAP' || s.owner === unit.owner) return;
-        const dmg = (STRUCTURE_TYPE.FALL_TRAP && STRUCTURE_TYPE.FALL_TRAP.damage) || 3;
+        if (!s || s.owner === unit.owner) return;
+        const isTrap = s.type === 'FALL_TRAP' || s.type === 'MINEFIELD' || s.type === 'AT_MINE';
+        if (!isTrap) return;
+        const sdef = STRUCTURE_TYPE[s.type] || {};
+        const udef = UNIT_TYPE[unit.type] || {};
+        const isArmor = !!(udef.armored || udef.mobilized);
+        let dmg = 0;
+        let stun = false;
+        if (s.type === 'FALL_TRAP') {
+            dmg = sdef.damage || 3;
+            stun = !!sdef.stun;
+        } else if (s.type === 'MINEFIELD') {
+            dmg = sdef.damage || 8;
+            // Mines don't stun — they're a pure damage burst.
+        } else if (s.type === 'AT_MINE') {
+            // Shaped charge: devastating vs armor, light vs infantry.
+            dmg = isArmor ? (sdef.damageVsArmor || 18) : (sdef.damage || 5);
+            stun = !!sdef.stun;
+        }
         unit.hp -= dmg;
-        unit.stunnedTurns = Math.max(unit.stunnedTurns || 0, 1);
-        this.gameState.structures.delete(skey); // a fall trap is one-shot
-        const name = UNIT_TYPE[unit.type] ? UNIT_TYPE[unit.type].name : unit.type;
-        this.log(`🪤 ${name} #${unit.id} triggered a fall trap at [${unit.x}, ${unit.z}] �?${dmg} damage and stunned for a turn!`);
+        if (stun) unit.stunnedTurns = Math.max(unit.stunnedTurns || 0, 1);
+        this.gameState.structures.delete(skey); // one-shot
+        const name = udef.name || unit.type;
+        const trapName = (STRUCTURE_TYPE[s.type] || {}).name || s.type;
+        this.log(`🪤 ${name} #${unit.id} triggered a ${trapName} at [${unit.x}, ${unit.z}] — ${dmg} damage${stun ? ' and stunned for a turn' : ''}!`);
         if (unit.hp <= 0) {
             this._onUnitDeath(unit);
-            this.log(`${name} #${unit.id} was killed by the fall trap!`);
+            this.log(`${name} #${unit.id} was killed by the ${trapName}!`);
         }
     }
 
@@ -2379,17 +2410,25 @@ export class Game {
         return false;
     }
 
-    /** Spikes check for a cavalry charge: if the tile the charger storms onto
-     *  has enemy SPIKES, the charger is impaled before its blow lands.
-     *  Returns true if the charger survives (false if the spikes killed it). */
+    /** Spikes/mines check for a cavalry charge: if the tile the charger storms
+     *  onto has enemy SPIKES, the charger is impaled before its blow lands.
+     *  MINEFIELD and AT_MINE also detonate on a charge (a charging tank runs
+     *  over the mine). Returns true if the charger survives (false if killed). */
     _applySpikesOnCharge(attacker) {
         if (!attacker || !this.gameState.structures) return true;
         const s = this.gameState.structures.get(`${attacker.x},${attacker.z}`);
-        if (!s || s.type !== 'SPIKES' || s.owner === attacker.owner) return true;
+        if (!s || s.owner === attacker.owner) return true;
+        if (s.type === 'MINEFIELD' || s.type === 'AT_MINE') {
+            // Mines detonate on a charge just like a normal entry — defer to
+            // the trap check so damage/stun logic stays in one place.
+            this._checkFallTrap(attacker);
+            return attacker.hp > 0;
+        }
+        if (s.type !== 'SPIKES') return true;
         const dmg = (STRUCTURE_TYPE.SPIKES && STRUCTURE_TYPE.SPIKES.damageVsCavalry) || 4;
         attacker.hp -= dmg;
         const name = UNIT_TYPE[attacker.type] ? UNIT_TYPE[attacker.type].name : attacker.type;
-        this.log(`🦔 ${name} #${attacker.id} charges into spiked defenses �?takes ${dmg} damage! (HP ${Math.max(0, attacker.hp)}/${attacker.maxHp})`);
+        this.log(`🦔 ${name} #${attacker.id} charges into spiked defenses — takes ${dmg} damage! (HP ${Math.max(0, attacker.hp)}/${attacker.maxHp})`);
         if (attacker.hp <= 0) {
             this._onUnitDeath(attacker);
             this.log(`${name} #${attacker.id} was impaled on the spikes!`);

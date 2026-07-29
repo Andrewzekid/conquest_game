@@ -163,16 +163,15 @@ export class GameRenderer {
             // City meshes vary per-city so they don't all look identical.
             // Variation axes:
             //   - cityLevel: bigger cities get taller keeps + extra towers
-            //   - a stable per-tile hash: picks one of several "styles"
-            //     (square keep, round keep, cathedral spire, star fort) so
+            //   - a stable per-tile hash: picks one of 8 "styles" so
             //     neighboring cities read as distinct settlements.
             // The keep mesh is still tracked in cityProps for breach/ownership
             // tinting in renderAll.
             const level = (tile && tile.cityLevel) || 1;
             const hash = (tile ? (tile.x * 73856093) ^ (tile.z * 19349663) : 0) >>> 0;
-            const style = hash % 4;
+            const style = hash % 8;
             const stone = new THREE.MeshPhongMaterial({ color: 0xb9b2a0 });
-            const roofColor = [0x8a4a2a, 0x4a6a8a, 0x6a8a4a, 0x8a6a8a][style];
+            const roofColor = [0x8a4a2a, 0x4a6a8a, 0x6a8a4a, 0x8a6a8a, 0x6a4a2a, 0x4a8a8a, 0x8a8a4a, 0x5a6a9a][style];
             const roof = new THREE.MeshPhongMaterial({ color: roofColor });
             const keepH = 0.4 + Math.min(level, 6) * 0.06;
             if (style === 0) {
@@ -219,7 +218,7 @@ export class GameRenderer {
                     new THREE.MeshPhongMaterial({ color: 0xe8c468, emissive: 0xe8c468, emissiveIntensity: 0.4 }));
                 ball.position.y = keepH * 0.7 + 0.62;
                 group.add(ball);
-            } else {
+            } else if (style === 3) {
                 // Star fort: a low wide bastion with 5 triangular bastion points.
                 keep = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, keepH * 0.6, 5), stone);
                 keep.position.y = keepH * 0.3 + 0.1;
@@ -231,6 +230,96 @@ export class GameRenderer {
                     b.rotation.y = a;
                     group.add(b);
                 }
+            } else if (style === 4) {
+                // Industrial town: a squat main building with two chimneys
+                // belching smoke (a faint dark cone). Reads as a 19th-c factory
+                // town — distinct from the medieval castles.
+                keep = new THREE.Mesh(new THREE.BoxGeometry(0.46, keepH * 0.55, 0.36), stone);
+                keep.position.y = keepH * 0.275 + 0.1;
+                group.add(keep);
+                const brick = new THREE.MeshPhongMaterial({ color: 0x8a4a2a });
+                for (const [ox, oz] of [[-0.14, -0.12], [0.14, -0.12]]) {
+                    const ch = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.5, 6), brick);
+                    ch.position.set(ox, 0.45, oz);
+                    group.add(ch);
+                    const smoke = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.22, 6),
+                        new THREE.MeshBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.5 }));
+                    smoke.position.set(ox, 0.78, oz);
+                    group.add(smoke);
+                }
+                const roofSlab = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.05, 0.36), roof);
+                roofSlab.position.y = keepH * 0.55 + 0.12;
+                group.add(roofSlab);
+            } else if (style === 5) {
+                // Modern city: a cluster of tall blocky towers (skyscrapers)
+                // with a glass-blue tint. Scales aggressively with level so
+                // high-level modern cities look like real metropolises.
+                const glassColor = new THREE.MeshPhongMaterial({ color: 0x9ab4d4, shininess: 60 });
+                const towers = [
+                    [0, 0, 0.5 + keepH],
+                    [0.22, 0.18, 0.35 + keepH * 0.7],
+                    [-0.2, 0.16, 0.3 + keepH * 0.6],
+                    [0.18, -0.2, 0.28 + keepH * 0.5]
+                ];
+                let firstMesh = null;
+                for (const [ox, oz, h] of towers) {
+                    const w = 0.16 + (h > 0.5 ? 0.04 : 0);
+                    const t = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), glassColor);
+                    t.position.set(ox, h / 2 + 0.1, oz);
+                    group.add(t);
+                    if (!firstMesh) firstMesh = t;
+                }
+                keep = firstMesh; // tint the tallest tower for breach/owner
+                // A faint emissive cap on the tallest tower so it reads at night.
+                const cap = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.18),
+                    new THREE.MeshPhongMaterial({ color: roofColor, emissive: roofColor, emissiveIntensity: 0.3 }));
+                cap.position.set(0, 0.5 + keepH + 0.14, 0);
+                group.add(cap);
+            } else if (style === 6) {
+                // Harbor town: a row of gabled warehouses facing the coast + a
+                // small lighthouse. Distinct silhouette from inland cities.
+                keep = new THREE.Mesh(new THREE.BoxGeometry(0.5, keepH * 0.5, 0.3), stone);
+                keep.position.y = keepH * 0.25 + 0.1;
+                group.add(keep);
+                // Gabled roof (a triangular prism along the long axis).
+                const gable = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 4), roof);
+                gable.rotation.z = Math.PI / 4;
+                gable.scale.set(1, 0.5, 1);
+                gable.position.y = keepH * 0.5 + 0.18;
+                group.add(gable);
+                // Lighthouse: a thin striped tower.
+                const lh = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.6, 8),
+                    new THREE.MeshPhongMaterial({ color: 0xece4d0 }));
+                lh.position.set(0.3, 0.4, 0.3);
+                group.add(lh);
+                const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8),
+                    new THREE.MeshPhongMaterial({ color: 0xffe070, emissive: 0xffe070, emissiveIntensity: 0.7 }));
+                lamp.position.set(0.3, 0.74, 0.3);
+                group.add(lamp);
+            } else {
+                // Hillfort / steppe camp: a terraced ring of small huts with a
+                // central banner pole. Reads as a tribal/regional capital —
+                // distinct from the masonry of the other styles.
+                const earthMat = new THREE.MeshPhongMaterial({ color: 0x9a7a5a });
+                keep = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, keepH * 0.4, 8), earthMat);
+                keep.position.y = keepH * 0.2 + 0.1;
+                group.add(keep);
+                const hutCount = 4 + (level >= 3 ? 1 : 0);
+                for (let i = 0; i < hutCount; i++) {
+                    const a = (i / hutCount) * Math.PI * 2;
+                    const hut = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.24, 5), roof);
+                    hut.position.set(Math.cos(a) * 0.34, 0.22, Math.sin(a) * 0.34);
+                    group.add(hut);
+                }
+                // Central banner pole.
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 5),
+                    new THREE.MeshPhongMaterial({ color: 0x5a3b1a }));
+                pole.position.y = 0.35;
+                group.add(pole);
+                const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.12),
+                    new THREE.MeshPhongMaterial({ color: roofColor, side: THREE.DoubleSide }));
+                flag.position.set(0.09, 0.52, 0);
+                group.add(flag);
             }
             // High-level cities get a second wall ring for visual weight.
             if (level >= 4) {
@@ -239,6 +328,22 @@ export class GameRenderer {
                 wall.rotation.x = Math.PI / 2;
                 wall.position.y = 0.12;
                 group.add(wall);
+            }
+            // Level-6+ cities get a third outer ring + corner markers — they
+            // read as major capitals at a glance.
+            if (level >= 6) {
+                const outer = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.04, 6, 20),
+                    new THREE.MeshPhongMaterial({ color: 0xb0a888 }));
+                outer.rotation.x = Math.PI / 2;
+                outer.position.y = 0.1;
+                group.add(outer);
+                for (let i = 0; i < 4; i++) {
+                    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+                    const m = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.22, 5),
+                        new THREE.MeshPhongMaterial({ color: roofColor, emissive: roofColor, emissiveIntensity: 0.2 }));
+                    m.position.set(Math.cos(a) * 0.6, 0.21, Math.sin(a) * 0.6);
+                    group.add(m);
+                }
             }
         } else if (terrain === 'DESERT') {
             const dune = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2),
@@ -1486,10 +1591,64 @@ export class GameRenderer {
             const wall2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, 0.7), mat);
             wall2.position.y = 0.2; g.add(wall2);
             g.add(this.makeIconSprite('walls', 0.4, 0.55));
-        } else { // FALL_TRAP
+        } else if (type === 'FALL_TRAP') {
             const pit = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.06, 10),
                 new THREE.MeshPhongMaterial({ color: 0x2a1f14 }));
             pit.position.y = 0.12; g.add(pit);
+            g.add(this.makeIconSprite('trap', 0.4, 0.5));
+        } else if (type === 'MINEFIELD') {
+            // A scatter of small dark discs (buried mines) + a warning sign.
+            const discMat = new THREE.MeshPhongMaterial({ color: 0x2a2a30, emissive: 0x1a1a20, emissiveIntensity: 0.2 });
+            for (let i = 0; i < 5; i++) {
+                const a = (i / 5) * Math.PI * 2;
+                const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 8), discMat);
+                disc.position.set(Math.cos(a) * 0.26, 0.1, Math.sin(a) * 0.26);
+                g.add(disc);
+                // A tiny red marker nub on each mine.
+                const nub = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6),
+                    new THREE.MeshPhongMaterial({ color: 0xcc2222, emissive: 0xcc2222, emissiveIntensity: 0.5 }));
+                nub.position.set(Math.cos(a) * 0.26, 0.14, Math.sin(a) * 0.26);
+                g.add(nub);
+            }
+            g.add(this.makeIconSprite('trap', 0.4, 0.5));
+        } else if (type === 'BUNKER') {
+            // A squat reinforced-concrete pillbox: a low wide box with a slit
+            // (darker stripe) and a small flag. Reads as a hardened fortification.
+            const mat = new THREE.MeshPhongMaterial({ color: 0x6a6a72 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.34, 0.5), mat);
+            body.position.y = 0.27; g.add(body);
+            // Slit (a thin dark inset on the front face).
+            const slit = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.02),
+                new THREE.MeshPhongMaterial({ color: 0x1a1a1e }));
+            slit.position.set(0, 0.34, 0.26);
+            g.add(slit);
+            // Corner stubs for a chunky silhouette.
+            for (const [ox, oz] of [[0.24, 0.24], [-0.24, 0.24], [0.24, -0.24], [-0.24, -0.24]]) {
+                const stub = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.4, 0.1), mat);
+                stub.position.set(ox, 0.3, oz);
+                g.add(stub);
+            }
+            g.add(this.makeIconSprite('walls', 0.42, 0.6));
+        } else if (type === 'AT_MINE') {
+            // Anti-tank mine: a single larger shaped-charge disc with a red
+            // sensor stripe, plus a couple of small rocks for camouflage.
+            const mat = new THREE.MeshPhongMaterial({ color: 0x3a3a42, emissive: 0x202028, emissiveIntensity: 0.3 });
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.1, 10), mat);
+            body.position.y = 0.12; g.add(body);
+            const stripe = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.02, 6, 12),
+                new THREE.MeshPhongMaterial({ color: 0xcc2222, emissive: 0xcc2222, emissiveIntensity: 0.6 }));
+            stripe.rotation.x = Math.PI / 2;
+            stripe.position.y = 0.17;
+            g.add(stripe);
+            for (const [ox, oz] of [[-0.22, 0.18], [0.2, -0.2]]) {
+                const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.06),
+                    new THREE.MeshPhongMaterial({ color: 0x8a8a82 }));
+                rock.position.set(ox, 0.1, oz);
+                g.add(rock);
+            }
+            g.add(this.makeIconSprite('trap', 0.4, 0.5));
+        } else {
+            // Unknown structure: a generic marker.
             g.add(this.makeIconSprite('trap', 0.4, 0.5));
         }
         return g;
@@ -1507,7 +1666,12 @@ export class GameRenderer {
         for (const [key, s] of structures) {
             const tile = gameState.tiles.get(key);
             if (!tile) continue;
-            if (s.type === 'FALL_TRAP' && s.owner !== PLAYER_FACTION && visible) continue;
+            // Trap-type structures (FALL_TRAP/MINEFIELD/AT_MINE) are hidden
+            // from other factions — a mine you can see is useless. BUNKER and
+            // FORTIFICATION are visible to everyone (they're fortifications,
+            // not concealed). In spectate mode everything is shown.
+            const isTrap = s.type === 'FALL_TRAP' || s.type === 'MINEFIELD' || s.type === 'AT_MINE';
+            if (isTrap && s.owner !== PLAYER_FACTION && visible) continue;
             if (tile.owner !== PLAYER_FACTION && visible && !visible.has(key)) continue;
             const [bx, bz] = key.split(',').map(Number);
             const baseY = (this.tileHeights.get(key) || 0) + 0.1;
@@ -1818,3 +1982,4 @@ export class GameRenderer {
         const tz = Math.floor((canvasY / H) * gh);
         return { x: tx, z: tz };
     }
+}

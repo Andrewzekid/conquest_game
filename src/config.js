@@ -148,8 +148,20 @@ export const UNIT_TYPE = {
     FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
     // HORSE_ARTILLERY: fast-deploy mobile cannon.
     HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
-    // DEMOLITION_SQUAD: combat engineers with bonus vs cities.
-    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true },
+    // DEMOLITION_SQUAD: combat engineers with bonus vs cities. In the modern
+    // era this is the ENGINEER line's upgrade — it keeps the engineer's
+    // canBuildStructure/canBuildBridge utility (so it can lay modern mines &
+    // bunkers once the tech is researched) but trades the SIEGE_TOWER build
+    // for a strong demolish bonus vs cities/buildings. Obsoletes the basic
+    // ENGINEER once EXPLOSIVES is researched.
+    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
+    // COMBAT_ENGINEER: the atomic-era engineer. Faster (motorized), tankier,
+    // and builds the modern structure line (MINEFIELD / BUNKER / AT_MINE) once
+    // the relevant techs are researched. Obsoletes DEMOLITION_SQUAD once
+    // INTERNAL_COMBUSTION is researched — it's the proper modern equivalent of
+    // the classical ENGINEER, keeping the bridge/structure utility the AI
+    // relies on for river crossings and defensive fortifications.
+    COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 14, attack: 12, defense: 9, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
     // SIEGE_CANNON: heavy siege gun that destroys fortifications.
     SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 17, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
     // MODERN NAVAL: steam-powered iron warships.
@@ -174,6 +186,17 @@ export const UNIT_TYPE = {
     // Slightly less raw ranged power than RIFLEMAN, but the bayonet gives a
     // big bonus when charged by tanks/cavalry.
     BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 20, attack: 11, defense: 9, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
+    // ANTI_TANK_GUN: a towed anti-tank gun — the transitional step between the
+    // bayonet rifle and the RPG. High damage vs armored units, low mobility.
+    ANTI_TANK_GUN: { name: 'Anti-Tank Gun', hp: 14, attack: 16, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 5 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true },
+    // RPG_TEAM: the modern anti-armor specialist. A two-man team with a
+    // rocket-propelled-grenade launcher. Devastating vs tanks/heavy tanks/
+    // armored cars (the modern "cavalry"), with a small AOE splash. This is
+    // the atomic-era capstone of the anti-cavalry line — the spiritual
+    // successor to the Pikeman's long pike, now pointed at armor instead of
+    // horses. infantry anti-tank teams are the canonical counter to massed
+    // armor in this era.
+    RPG_TEAM:     { name: 'RPG Team', hp: 16, attack: 22, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 12, iron: 6 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true, aoe: true, aoeRadius: 1 },
     // === MOBILIZED UNITS (Atomic Era, 1880-1940) ===
     // Mobilized units are motorized/motor-trained versions of the base line:
     // they give up a bit of raw combat power for much higher move range, which
@@ -241,7 +264,7 @@ export const UNIT_TYPE = {
 // ARTILLERY/CANNON/MORTAR are also shared (tech-gated by GUNPOWDER/METALLURGY)
 // so every faction's siege line stays upgradeable; factions with them in their
 // roster (e.g. Iron Empire) get them WITHOUT the tech as their signature perk.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'SIEGE_CANNON', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'COMBAT_ENGINEER', 'SIEGE_CANNON', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT', 'DESTROYER', 'BATTLESHIP', 'AIRCRAFT_CARRIER', 'TRANSPORT_SHIP', 'SUBMARINE_II'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
@@ -325,6 +348,7 @@ export const UNIT_COST = {
     FIELD_GUN:   { gold: 100, food: 12, wood: 10, iron: 25, production: 30 },
     HORSE_ARTILLERY: { gold: 105, food: 15, wood: 10, iron: 25, production: 30 },
     DEMOLITION_SQUAD: { gold: 65, food: 8,  wood: 12, iron: 8,  production: 20 },
+    COMBAT_ENGINEER: { gold: 90, food: 10, wood: 10, iron: 12, production: 26 },
     SIEGE_CANNON: { gold: 110, food: 8,  wood: 12, iron: 28, production: 30 },
     IRONCLAD:    { gold: 130, food: 18, wood: 15, iron: 35, production: 35 },
     STEAM_TRANSPORT: { gold: 90, food: 12, wood: 18, iron: 22, production: 28 },
@@ -338,6 +362,8 @@ export const UNIT_COST = {
     HALBERDIER:  { gold: 55, food: 10, wood: 5,  iron: 10, production: 16 },
     PIKE_MASTER: { gold: 85, food: 14, wood: 8,  iron: 16, production: 22 },
     BAYONET_RIFLE: { gold: 115, food: 16, wood: 8,  iron: 20, production: 28 },
+    ANTI_TANK_GUN: { gold: 130, food: 14, wood: 8,  iron: 24, production: 30 },
+    RPG_TEAM:     { gold: 150, food: 14, wood: 8,  iron: 28, production: 34 },
     // === MOBILIZED / ATOMIC-ERA UNIT COSTS ===
     MOBILIZED_INFANTRY: { gold: 130, food: 18, wood: 8,  iron: 26, production: 32 },
     MOBILIZED_ARTILLERY: { gold: 135, food: 14, wood: 10, iron: 30, production: 34 },
@@ -412,6 +438,13 @@ export const TYPE_ADVANTAGE = {
     HALBERDIER:  { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR'], multiplier: 1.8 },
     PIKE_MASTER: { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON'], multiplier: 2.0 },
     BAYONET_RIFLE: { strongAgainst: ['TANK', 'ARMORED_CAR', 'HEAVY_TANK', 'CAVALRY'], multiplier: 1.7 },
+    // Anti-tank gun: transitional anti-armor — strong vs tanks, decent vs
+    // armored cars, but less effective vs infantry (specialist).
+    ANTI_TANK_GUN: { strongAgainst: ['TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MOTOR_ARTILLERY'], multiplier: 1.9 },
+    // RPG team: the premier anti-armor unit. Devastating vs all armored
+    // vehicles (tanks, heavy tanks, armored cars, motor artillery) and still
+    // good vs old cavalry. The AOE splash means a hit can chip adjacent armor.
+    RPG_TEAM:     { strongAgainst: ['TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MOTOR_ARTILLERY', 'MOBILIZED_ARTILLERY', 'CAVALRY', 'CATAPHRACT'], multiplier: 2.2 },
     // Atomic era: tanks crush old infantry and artillery (modern cavalry role).
     TANK:        { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY', 'MUSKETEER', 'FIELD_GUN', 'MORTAR'], multiplier: 1.6 },
     HEAVY_TANK:  { strongAgainst: ['TANK', 'RIFLEMAN', 'FIELD_GUN', 'MORTAR', 'CANNON'], multiplier: 1.5 },
@@ -659,18 +692,46 @@ export const BUILDING_MAX_LEVEL = 3;
 export const MILITARY_PILLAGE_GOLD = 40;
 
 // --- Engineer Structures (traps / defensive structures) ---
-// Engineers can build one of three structure types on owned tiles within city
-// influence. Structures are removed when an enemy captures the tile.
+// Engineers (and their modern upgrades DEMOLITION_SQUAD / COMBAT_ENGINEER) can
+// build one of several structure types on owned tiles within city influence.
+// Structures are removed when an enemy captures the tile.
+//
+// The structure lineup is tech-gated: engineers always know the medieval
+// SPIKES/FORTIFICATION/FALL_TRAP, but the modern MINEFIELD/BUNKER/AT_MINE
+// require their unlocking techs (see getBuildableStructures in game.js /
+// ui.js). Modern variants are strictly better and obsolete the old ones once
+// their tech is researched, mirroring the unit obsolescence system.
 export const STRUCTURE_TYPE = {
+    // --- Medieval (always available) ---
     SPIKES:       { name: 'Spikes',       desc: 'Damages charging cavalry that moves onto/adjacent to this tile.', damageVsCavalry: 4, buildTurns: 2 },
     FORTIFICATION:{ name: 'Fortification',desc: '+3 defense to friendly units on this tile. Protects against infantry/artillery.', defenseBonus: 3, buildTurns: 2 },
-    FALL_TRAP:    { name: 'Fall Trap',    desc: 'Damages and stuns (skip next turn) any enemy that walks onto this tile.', damage: 3, stun: true, buildTurns: 2 }
+    FALL_TRAP:    { name: 'Fall Trap',    desc: 'Damages and stuns (skip next turn) any enemy that walks onto this tile.', damage: 3, stun: true, buildTurns: 2 },
+    // --- Modern (tech-gated) ---
+    // MINEFIELD: the modern successor to SPIKES. Damages ALL moving units
+    // (not just cavalry) — infantry, tanks, and vehicles alike — with a
+    // bigger hit. One-shot like the fall trap (a mine is consumed when it
+    // detonates), but cheaper to lay. Tech: EXPLOSIVES.
+    MINEFIELD:    { name: 'Minefield',    desc: 'Damages any enemy unit (infantry, cavalry, or armor) that enters this tile. One-shot.', damage: 8, buildTurns: 2, techRequired: 'EXPLOSIVES' },
+    // BUNKER: the modern successor to FORTIFICATION. Reinforced concrete,
+    // grants a bigger defense bonus and a small HP bonus to the defender.
+    // Tech: FORTIFICATION + INTERNAL_COMBUSTION (reinforced concrete needs
+    // modern engineering).
+    BUNKER:       { name: 'Bunker',       desc: '+6 defense and +2 max HP to friendly units on this tile. Reinforced concrete fortification.', defenseBonus: 6, hpBonus: 2, buildTurns: 2, techRequired: 'INTERNAL_COMBUSTION' },
+    // AT_MINE: the anti-tank mine — the modern successor to FALL_TRAP. A
+    // one-shot shaped-charge mine that deals heavy damage to ARMOR units
+    // (tanks/heavy tanks/armored cars) and stuns the survivor. Infantry
+    // triggers it too but takes less damage. Tech: ARMOR (you need armor
+    // tech to build a shaped charge that defeats it).
+    AT_MINE:      { name: 'AT Mine',      desc: 'One-shot anti-tank mine. Heavy damage + stun to armor that enters this tile; light damage to infantry.', damageVsArmor: 18, damage: 5, stun: true, buildTurns: 2, techRequired: 'ARMOR' }
 };
 
 export const STRUCTURE_COST = {
     SPIKES:        { gold: 20, wood: 10, iron: 0 },
     FORTIFICATION: { gold: 30, wood: 20, iron: 5 },
-    FALL_TRAP:     { gold: 25, wood: 5,  iron: 0 }
+    FALL_TRAP:     { gold: 25, wood: 5,  iron: 0 },
+    MINEFIELD:     { gold: 35, wood: 5,  iron: 10 },
+    BUNKER:        { gold: 60, wood: 10, iron: 20 },
+    AT_MINE:       { gold: 50, wood: 5,  iron: 15 }
 };
 
 // --- Natural Wonders ---

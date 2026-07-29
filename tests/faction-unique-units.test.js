@@ -181,3 +181,166 @@ describe('atomic-era tech tree expansion', () => {
         expect(obsoleted).toContain('MOBILIZED_ARTILLERY');
     });
 });
+
+describe('anti-armor line: RPG / anti-tank gun', () => {
+    it('ANTI_TANK_GUN and RPG_TEAM exist with the antiCavalry + antiArmor flags', () => {
+        expect(UNIT_TYPE.ANTI_TANK_GUN).toBeDefined();
+        expect(UNIT_TYPE.ANTI_TANK_GUN.antiCavalry).toBe(true);
+        expect(UNIT_TYPE.ANTI_TANK_GUN.antiArmor).toBe(true);
+        expect(UNIT_TYPE.RPG_TEAM).toBeDefined();
+        expect(UNIT_TYPE.RPG_TEAM.antiCavalry).toBe(true);
+        expect(UNIT_TYPE.RPG_TEAM.antiArmor).toBe(true);
+        // RPG team has AOE splash (shaped-charge spray).
+        expect(UNIT_TYPE.RPG_TEAM.aoe).toBe(true);
+    });
+
+    it('RPG_TEAM is the strongest anti-armor unit (more attack than ANTI_TANK_GUN)', () => {
+        expect(UNIT_TYPE.RPG_TEAM.attack).toBeGreaterThan(UNIT_TYPE.ANTI_TANK_GUN.attack);
+    });
+
+    it('ANTI_TANK_GUN and RPG_TEAM are in EXTRA_UNITS and have costs', async () => {
+        const { EXTRA_UNITS, UNIT_COST } = await import('../src/config.js');
+        expect(EXTRA_UNITS).toContain('ANTI_TANK_GUN');
+        expect(EXTRA_UNITS).toContain('RPG_TEAM');
+        expect(UNIT_COST.ANTI_TANK_GUN).toBeDefined();
+        expect(UNIT_COST.RPG_TEAM).toBeDefined();
+        expect(UNIT_COST.RPG_TEAM.gold).toBeGreaterThan(UNIT_COST.ANTI_TANK_GUN.gold);
+    });
+
+    it('ROCKETRY tech unlocks RPG_TEAM and requires ANTI_ARMOR + EXPLOSIVES', async () => {
+        const { TECHS } = await import('../src/tech.js');
+        expect(TECHS.ROCKETRY).toBeDefined();
+        expect(TECHS.ROCKETRY.unlocks.some(u => u.id === 'RPG_TEAM')).toBe(true);
+        expect(TECHS.ROCKETRY.prerequisites).toContain('ANTI_ARMOR');
+        expect(TECHS.ROCKETRY.prerequisites).toContain('EXPLOSIVES');
+    });
+
+    it('ANTI_ARMOR tech unlocks ANTI_TANK_GUN', async () => {
+        const { TECHS } = await import('../src/tech.js');
+        expect(TECHS.ANTI_ARMOR.unlocks.some(u => u.id === 'ANTI_TANK_GUN')).toBe(true);
+    });
+
+    it('RPG_TEAM has strong type advantages vs all armored units', async () => {
+        const { TYPE_ADVANTAGE } = await import('../src/config.js');
+        const adv = TYPE_ADVANTAGE.RPG_TEAM;
+        expect(adv).toBeDefined();
+        const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+        expect(targets).toContain('TANK');
+        expect(targets).toContain('HEAVY_TANK');
+        expect(targets).toContain('ARMORED_CAR');
+        expect(adv.multiplier).toBeGreaterThan(1.5);
+    });
+
+    it('researching ROCKETRY obsoletes ANTI_TANK_GUN and BAYONET_RIFLE (RPG replaces them)', () => {
+        const ts = createTechState();
+        ts.researched.add('ROCKETRY');
+        const roster = ['BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM'];
+        const obsoleted = applyObsolescence(roster, ts.researched);
+        expect(obsoleted).not.toContain('BAYONET_RIFLE');
+        expect(obsoleted).not.toContain('ANTI_TANK_GUN');
+        expect(obsoleted).toContain('RPG_TEAM');
+    });
+});
+
+describe('combat engineer line (engineer upgrade)', () => {
+    it('COMBAT_ENGINEER exists with canBuildBridge + canBuildStructure + demolish', () => {
+        expect(UNIT_TYPE.COMBAT_ENGINEER).toBeDefined();
+        expect(UNIT_TYPE.COMBAT_ENGINEER.canBuildBridge).toBe(true);
+        expect(UNIT_TYPE.COMBAT_ENGINEER.canBuildStructure).toBe(true);
+        expect(UNIT_TYPE.COMBAT_ENGINEER.demolish).toBe(true);
+        expect(UNIT_TYPE.COMBAT_ENGINEER.mobilized).toBe(true);
+    });
+
+    it('DEMOLITION_SQUAD keeps engineer utility (canBuildBridge + canBuildStructure)', () => {
+        expect(UNIT_TYPE.DEMOLITION_SQUAD.canBuildBridge).toBe(true);
+        expect(UNIT_TYPE.DEMOLITION_SQUAD.canBuildStructure).toBe(true);
+    });
+
+    it('COMBAT_ENGINEER is faster than the basic ENGINEER', () => {
+        expect(UNIT_TYPE.COMBAT_ENGINEER.moveRange).toBeGreaterThan(UNIT_TYPE.ENGINEER.moveRange);
+    });
+
+    it('INTERNAL_COMBUSTION obsoletes ENGINEER and DEMOLITION_SQUAD (COMBAT_ENGINEER replaces them)', () => {
+        const ts = createTechState();
+        ts.researched.add('INTERNAL_COMBUSTION');
+        const roster = ['ENGINEER', 'DEMOLITION_SQUAD', 'COMBAT_ENGINEER'];
+        const obsoleted = applyObsolescence(roster, ts.researched);
+        expect(obsoleted).not.toContain('ENGINEER');
+        expect(obsoleted).not.toContain('DEMOLITION_SQUAD');
+        expect(obsoleted).toContain('COMBAT_ENGINEER');
+    });
+});
+
+describe('modern engineer structures (mines / bunkers)', () => {
+    it('STRUCTURE_TYPE defines MINEFIELD, BUNKER, and AT_MINE', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.MINEFIELD).toBeDefined();
+        expect(STRUCTURE_TYPE.BUNKER).toBeDefined();
+        expect(STRUCTURE_TYPE.AT_MINE).toBeDefined();
+    });
+
+    it('modern structures are tech-gated (techRequired set)', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.MINEFIELD.techRequired).toBe('EXPLOSIVES');
+        expect(STRUCTURE_TYPE.BUNKER.techRequired).toBe('INTERNAL_COMBUSTION');
+        expect(STRUCTURE_TYPE.AT_MINE.techRequired).toBe('ARMOR');
+    });
+
+    it('medieval structures have no techRequired (always available)', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.SPIKES.techRequired).toBeUndefined();
+        expect(STRUCTURE_TYPE.FORTIFICATION.techRequired).toBeUndefined();
+        expect(STRUCTURE_TYPE.FALL_TRAP.techRequired).toBeUndefined();
+    });
+
+    it('MINEFIELD damages all units (not just cavalry) and is one-shot', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.MINEFIELD.damage).toBeGreaterThan(0);
+        // MINEFIELD has no damageVsCavalry-only field — it's a general damage.
+        expect(STRUCTURE_TYPE.MINEFIELD.damageVsCavalry).toBeUndefined();
+    });
+
+    it('AT_MINE has a heavy damageVsArmor and a light infantry damage', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.AT_MINE.damageVsArmor).toBeGreaterThan(STRUCTURE_TYPE.AT_MINE.damage);
+        expect(STRUCTURE_TYPE.AT_MINE.stun).toBe(true);
+    });
+
+    it('BUNKER grants a bigger defense bonus than FORTIFICATION + an hpBonus', async () => {
+        const { STRUCTURE_TYPE } = await import('../src/config.js');
+        expect(STRUCTURE_TYPE.BUNKER.defenseBonus).toBeGreaterThan(STRUCTURE_TYPE.FORTIFICATION.defenseBonus);
+        expect(STRUCTURE_TYPE.BUNKER.hpBonus).toBeGreaterThan(0);
+    });
+
+    it('EXPLOSIVES tech unlocks the MINEFIELD structure', async () => {
+        const { TECHS, getUnlockedStructures, createTechState } = await import('../src/tech.js');
+        expect(TECHS.EXPLOSIVES.unlocks.some(u => u.type === 'structure' && u.id === 'MINEFIELD')).toBe(true);
+        const ts = createTechState();
+        ts.researched.add('EXPLOSIVES');
+        expect(getUnlockedStructures(ts).has('MINEFIELD')).toBe(true);
+    });
+
+    it('INTERNAL_COMBUSTION unlocks the BUNKER structure', async () => {
+        const { TECHS, getUnlockedStructures, createTechState } = await import('../src/tech.js');
+        expect(TECHS.INTERNAL_COMBUSTION.unlocks.some(u => u.type === 'structure' && u.id === 'BUNKER')).toBe(true);
+        const ts = createTechState();
+        ts.researched.add('INTERNAL_COMBUSTION');
+        expect(getUnlockedStructures(ts).has('BUNKER')).toBe(true);
+    });
+
+    it('ARMOR unlocks the AT_MINE structure', async () => {
+        const { TECHS, getUnlockedStructures, createTechState } = await import('../src/tech.js');
+        expect(TECHS.ARMOR.unlocks.some(u => u.type === 'structure' && u.id === 'AT_MINE')).toBe(true);
+        const ts = createTechState();
+        ts.researched.add('ARMOR');
+        expect(getUnlockedStructures(ts).has('AT_MINE')).toBe(true);
+    });
+
+    it('modern structures have STRUCTURE_COST entries', async () => {
+        const { STRUCTURE_COST } = await import('../src/config.js');
+        expect(STRUCTURE_COST.MINEFIELD).toBeDefined();
+        expect(STRUCTURE_COST.BUNKER).toBeDefined();
+        expect(STRUCTURE_COST.AT_MINE).toBeDefined();
+        expect(STRUCTURE_COST.BUNKER.gold).toBeGreaterThan(STRUCTURE_COST.FORTIFICATION.gold);
+    });
+});

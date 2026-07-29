@@ -222,9 +222,13 @@ export const TECHS = {
     EXPLOSIVES: {
         id: 'EXPLOSIVES', name: 'Explosives', era: 'modern', cost: 500,
         prerequisites: ['METALLURGY', 'FLINTLOCK'],
-        unlocks: [{ type: 'unit', id: 'DEMOLITION_SQUAD' }, { type: 'unit', id: 'SIEGE_CANNON' }],
+        // DEMOLITION_SQUAD is the engineer-line upgrade (it keeps the
+        // engineer's structure/bridge utility and gains a demolish bonus).
+        // SIEGE_CANNON is the heavy gun. The MINEFIELD structure is also
+        // gated on this tech (engineers lay it once explosives are understood).
+        unlocks: [{ type: 'unit', id: 'DEMOLITION_SQUAD' }, { type: 'unit', id: 'SIEGE_CANNON' }, { type: 'structure', id: 'MINEFIELD' }],
         bonus: { cityDamageBonus: 3 },
-        desc: 'Unlocks Demolition Squad and Siege Cannon. +3 damage vs cities.'
+        desc: 'Unlocks Demolition Squad, Siege Cannon, and Minefield structures. +3 damage vs cities.'
     },
     FIELD_ARTILLERY: {
         id: 'FIELD_ARTILLERY', name: 'Field Artillery', era: 'modern', cost: 500,
@@ -262,16 +266,20 @@ export const TECHS = {
     INTERNAL_COMBUSTION: {
         id: 'INTERNAL_COMBUSTION', name: 'Internal Combustion', era: 'atomic', cost: 800,
         prerequisites: ['STEAM_ENGINE', 'ELECTRICITY'],
-        unlocks: [{ type: 'unit', id: 'MOBILIZED_INFANTRY' }, { type: 'unit', id: 'MOBILIZED_ARTILLERY' }, { type: 'unit', id: 'ARMORED_CAR' }],
+        // COMBAT_ENGINEER is the modern engineer upgrade (motorized, builds
+        // BUNKER structures). The BUNKER structure is gated on this tech too.
+        unlocks: [{ type: 'unit', id: 'MOBILIZED_INFANTRY' }, { type: 'unit', id: 'MOBILIZED_ARTILLERY' }, { type: 'unit', id: 'ARMORED_CAR' }, { type: 'unit', id: 'COMBAT_ENGINEER' }, { type: 'structure', id: 'BUNKER' }],
         bonus: { artilleryMoveBonus: 1 },
-        desc: 'Unlocks Mobilized Infantry, Mobilized Artillery, and Armored Car. Artillery gain +1 move.'
+        desc: 'Unlocks Mobilized Infantry, Mobilized Artillery, Armored Car, Combat Engineer, and Bunker structures. Artillery gain +1 move.'
     },
     ARMOR: {
         id: 'ARMOR', name: 'Armor', era: 'atomic', cost: 800,
         prerequisites: ['INTERNAL_COMBUSTION', 'RIFLED_MUSKET'],
-        unlocks: [{ type: 'unit', id: 'TANK' }, { type: 'unit', id: 'HEAVY_TANK' }],
+        // ARMOR unlocks tanks AND the AT_MINE structure (a shaped-charge mine
+        // that defeats the armor it gates — you need armor tech to build one).
+        unlocks: [{ type: 'unit', id: 'TANK' }, { type: 'unit', id: 'HEAVY_TANK' }, { type: 'structure', id: 'AT_MINE' }],
         bonus: { cityDamageBonus: 3 },
-        desc: 'Unlocks Tank and Heavy Tank. Tanks are the modern cavalry — they obsolete horse cavalry. +3 damage vs cities.'
+        desc: 'Unlocks Tank, Heavy Tank, and AT Mine structures. Tanks are the modern cavalry — they obsolete horse cavalry. +3 damage vs cities.'
     },
     DREADNOUGHT: {
         id: 'DREADNOUGHT', name: 'Dreadnought', era: 'atomic', cost: 800,
@@ -297,9 +305,21 @@ export const TECHS = {
     ANTI_ARMOR: {
         id: 'ANTI_ARMOR', name: 'Anti-Armor', era: 'atomic', cost: 800,
         prerequisites: ['RIFLED_MUSKET', 'INTERNAL_COMBUSTION'],
-        unlocks: [{ type: 'unit', id: 'BAYONET_RIFLE' }],
+        // BAYONET_RIFLE is the entry modern anti-armor; ANTI_TANK_GUN is the
+        // transitional towed gun. RPG_TEAM comes later via ROCKETRY.
+        unlocks: [{ type: 'unit', id: 'BAYONET_RIFLE' }, { type: 'unit', id: 'ANTI_TANK_GUN' }],
         bonus: { rangedDamageBonus: 1 },
-        desc: 'Unlocks Bayonet Rifle (modern anti-cavalry/anti-tank). Ranged units deal +1 damage.'
+        desc: 'Unlocks Bayonet Rifle and Anti-Tank Gun (modern anti-cavalry/anti-tank). Ranged units deal +1 damage.'
+    },
+    // ROCKETRY: the capstone of the anti-armor line. Rocket-propelled grenades
+    // give infantry a man-portable weapon that can kill any tank — the RPG_TEAM
+    // is the definitive atomic-era counter to massed armor.
+    ROCKETRY: {
+        id: 'ROCKETRY', name: 'Rocketry', era: 'atomic', cost: 800,
+        prerequisites: ['ANTI_ARMOR', 'EXPLOSIVES'],
+        unlocks: [{ type: 'unit', id: 'RPG_TEAM' }],
+        bonus: { rangedDamageBonus: 2, cityDamageBonus: 2 },
+        desc: 'Unlocks RPG Team (man-portable anti-tank rocket). Ranged units deal +2 damage, +2 vs cities.'
     },
 
     // === ANTI-CAVALRY UNITS, distributed across earlier eras ===
@@ -435,6 +455,22 @@ export function getUnlockedBuildings(state) {
         }
     }
     return buildings;
+}
+
+/** Get all engineer-structure types (MINEFIELD, BUNKER, AT_MINE, ...) unlocked
+ *  by researched techs. Medieval structures (SPIKES/FORTIFICATION/FALL_TRAP)
+ *  are always available and never appear in tech unlocks, so they're not in
+ *  this set — callers add them unconditionally. */
+export function getUnlockedStructures(state) {
+    const structures = new Set();
+    for (const id of state.researched) {
+        const tech = TECHS[id];
+        if (!tech) continue;
+        for (const u of tech.unlocks) {
+            if (u.type === 'structure') structures.add(u.id);
+        }
+    }
+    return structures;
 }
 
 /** Get aggregate bonuses from all researched techs. */
@@ -594,7 +630,7 @@ export function autoSelectResearch(state, personality) {
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
                      'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic
-                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'NAVAL_AVIATION',
+                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE'],
         DEFENSIVE:  ['FORTIFICATION', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
@@ -609,7 +645,7 @@ export function autoSelectResearch(state, personality) {
                      'EXPLOSIVES', 'RIFLED_MUSKET', 'IRONCLADS', 'TELEGRAPH',
                      'STEAM_ENGINE', 'RAILROAD', 'FIELD_ARTILLERY', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic (defensive factions prioritize anti-armor to repel tanks)
-                     'ANTI_ARMOR', 'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'DREADNOUGHT', 'NAVAL_AVIATION', 'ARMOR',
+                     'ANTI_ARMOR', 'ROCKETRY', 'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'DREADNOUGHT', 'NAVAL_AVIATION', 'ARMOR',
                      // Anti-cavalry (defensive factions love these)
                      'POLEARM', 'PIKE_WARFARE'],
         ECONOMIC:   ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
@@ -624,7 +660,7 @@ export function autoSelectResearch(state, personality) {
                      'ELECTRICITY', 'TELEGRAPH', 'STEAM_ENGINE', 'RAILROAD',
                      'RIFLED_MUSKET', 'IRONCLADS', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'SUBMARINE',
                      // Atomic
-                     'DREADNOUGHT', 'INTERNAL_COMBUSTION', 'NAVAL_AVIATION', 'ARMOR', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR',
+                     'DREADNOUGHT', 'INTERNAL_COMBUSTION', 'NAVAL_AVIATION', 'ARMOR', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE'],
         BALANCED:   ['ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
@@ -639,7 +675,7 @@ export function autoSelectResearch(state, personality) {
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
                      'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic
-                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'NAVAL_AVIATION',
+                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE']
     };
