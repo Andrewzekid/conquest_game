@@ -631,6 +631,10 @@ export function generateMap() {
         c.cityLevel = 1;
         c.fortMax = cityFortMax(c);
         c.fortification = c.fortMax;
+        // Assign a name so the 3D label shows "Ironhold" instead of "City 16,23".
+        // Faction-specific names are applied later when a city is captured/founded;
+        // generated cities use the generic pool here.
+        c.cityName = nextCityNameForFaction(null);
     }
 
     // Make sure no city is marooned: fill/breach tiles until every city has a

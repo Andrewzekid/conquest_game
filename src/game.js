@@ -4101,7 +4101,7 @@ export class Game {
         candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore, b.napScore, b.ceasefireScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore, a.napScore, a.ceasefireScore));
 
         for (const c of candidates) {
-            const { other, ratio, theirPower, rel, distance, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
+            const { other, ratio, theirPower, rel, distance, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isNeighbor, isDistant } = c;
             let type = null;
 
             // Pick best treaty type based on strategic scores
@@ -4346,6 +4346,7 @@ export class Game {
 
         const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
         const enemyLords = this.gameState.lords.filter(l => l.owner !== faction && atWar(l.owner));
+        const hasEnemy = enemyUnits.length > 0 || enemyLords.length > 0;
 
         // Mobility-weighted threat: a foe whose strike reach (moveRange +
         // attackRange) meets or exceeds its distance to the king can attack
@@ -4486,7 +4487,7 @@ export class Game {
         // 3) Early-game harassment response: an enemy king is pressing our territory.
         //    If our king can win locally, move to stop them instead of turtling.
         const earlyGame = military.length < 8;
-        if (earlyGame && atWar) {
+        if (earlyGame && hasEnemy) {
             let harasser = null, bestD = Infinity;
             for (const ek of enemyLords) {
                 if (!ek.isKing) continue;
@@ -4507,7 +4508,7 @@ export class Game {
         //     defenders locally, the king steps in to help crack the city �?a
         //     high-value objective at low risk. The retreat gate (step 2)
         //     already ensures we only advance when not locally outmatched.
-        if (atWar) {
+        if (hasEnemy) {
             let target = null, bestD = Infinity;
             for (const c of this.tiles.values()) {
                 if (c.terrain !== 'CITY' || c.owner === faction || !atWar(c.owner)) continue;
@@ -4542,7 +4543,7 @@ export class Game {
         //     exists — it should join the conquest group instead.
         const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
         const topGoalKind = aiSt && aiSt.goals && aiSt.goals[0] ? aiSt.goals[0].kind : null;
-        if (atWar && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
+        if (hasEnemy && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
             const enemyKing = enemyLords.find(l => l.isKing);
             if (enemyKing) {
                 const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
@@ -4595,6 +4596,26 @@ export class Game {
             }
         } else {
             lord.campTurns = 0;
+        }
+
+        // 5b) Early-game exploration: when there are no enemies to fight and the
+        //     army is still tiny (< 3 military), the king pushes outward toward
+        //     the nearest unowned land tile to scout and claim territory. This
+        //     gets the king off the capital at game start instead of idling.
+        if (!hasEnemy && military.length < 3) {
+            let explore = null, bestD = Infinity;
+            for (const t of this.tiles.values()) {
+                if (t.owner === faction) continue;
+                if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
+                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
+                // Prefer tiles a few steps away (not the immediate ring) so the
+                // king actually travels, but keep within ~6 so it can return home.
+                if (d > 2 && d < 6 && d < bestD) { bestD = d; explore = t; }
+            }
+            if (explore) {
+                this._aiStepLord(lord, explore.x, explore.z, faction, pool, factionName);
+                return;
+            }
         }
 
         // 6) No objective / tiny army: stay within a few tiles of the nearest
