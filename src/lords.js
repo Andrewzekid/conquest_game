@@ -226,16 +226,16 @@ export function getLordCombatBonus(lord) {
     };
 }
 
-/** Adjacency auras (Chebyshev radius 1): a lord's CLASS bonus (Warlord +atk,
+/** Adjacency auras (Chebyshev radius 3): a lord's CLASS bonus (Warlord +atk,
  *  Guardian +def, Grand Commander +atk/+def) is an area-of-effect that boosts
- *  every friendly unit within 1 tile — plus RALLY (+atk) / TACTICIAN (+def)
+ *  every friendly unit within 3 tiles — plus RALLY (+atk) / TACTICIAN (+def)
  *  abilities for lords that have unlocked them. */
 export function getAdjacentLordBonuses(lords, unit) {
     const out = { attack: 0, defense: 0 };
     if (!lords || !unit) return out;
     for (const l of lords) {
         if (l.owner !== unit.owner) continue;
-        if (Math.max(Math.abs(l.x - unit.x), Math.abs(l.z - unit.z)) > 1) continue;
+        if (Math.max(Math.abs(l.x - unit.x), Math.abs(l.z - unit.z)) > 3) continue;
         // Class aura (radius-1 AoE).
         const cb = (LORD_CLASSES[l.class] || {}).bonus || {};
         if (cb.attack) out.attack += cb.attack;
@@ -248,7 +248,7 @@ export function getAdjacentLordBonuses(lords, unit) {
 }
 
 /** Does this lord project a visible AoE aura (class grants atk or def)? Used by
- *  the renderer to draw the radius-1 ring. */
+ *  the renderer to draw the radius-3 ring. */
 export function hasLordAura(lord) {
     if (!lord || !lord.class) return false;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};

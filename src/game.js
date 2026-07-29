@@ -3023,7 +3023,10 @@ export class Game {
             // treaty-breaker. Past broken treaties (trust) cool it further.
             const effRel = (rel.relationship || 0) + (playerRep - 50) / 2 - (rel.brokenTreaties || 0) * 5;
             const theirGrievances = getRelation(diplo, target, 'player').grievances || 0;
-            if (aiDecideTreaty(pers, type, ratio, effRel, rel.brokenTreaties || 0, 0, false, theirGrievances)) {
+            const sharedEnemy = this._hasSharedEnemy('player', target) ? 1 : 0;
+            const playerDist = this._factionDistance('player', target);
+            const isNeighbor = playerDist <= 8;
+            if (aiDecideTreaty(pers, type, ratio, effRel, rel.brokenTreaties || 0, sharedEnemy, isNeighbor, theirGrievances)) {
                 const turn = this.gameState.turn || 0;
                 const duration = type === DIPLOMACY_STATES.NAP ? 15 :
                                 type === DIPLOMACY_STATES.CEASEFIRE ? 8 : 0;
@@ -3967,7 +3970,8 @@ export class Game {
             // the random roll. This makes goal-driven wars more reliable.
             const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
             const strategic = shouldDeclareWar(aiSt, this.gameState.diplomacy, faction, other, ratio);
-            const shouldWar = strategic.declare || aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension, this.spectateMode);
+            const sharedEnemies = this._hasSharedEnemy(faction, other) ? 1 : 0;
+            const shouldWar = strategic.declare || aiDecideWar(personality, ratio, rel.relationship || 0, sharedEnemies, isNeighbor, tension, this.spectateMode);
             if (!shouldWar) continue;
             const prevState = rel.state;
             const turn = this.gameState.turn || 0;
@@ -4168,8 +4172,9 @@ export class Game {
             const otherPers = (otherDef && otherDef.aiPersonality) || 'DEFENSIVE';
             const theirGriev = rel.grievances || 0;
             const bt = rel.brokenTreaties || 0;
-            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, 0, false, theirGriev);
-            let b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            const sharedEnemyCount = sharedEnemy ? 1 : 0;
+            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, sharedEnemyCount, isNeighbor, theirGriev);
+            let b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, sharedEnemyCount, isNeighbor, theirGriev);
             // Goal-driven peace: the recipient's active goals shape its answer
             // to a peace offer — war weariness, heavy losses, or a long/
             // directionless war push toward acceptance, while an active

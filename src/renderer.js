@@ -4,7 +4,6 @@ import { GRID_SIZE, TERRAIN, FACTION_COLORS, PLAYER_FACTION, LORD_CLASSES, BUILD
 import { hasLordAura } from './lords.js';
 import { svgDataURL, hasIcon } from './icons.js';
 
-const LORD_COLOR = 0xffd700;
 const HIGHLIGHT_MOVE = 0x2244aa;
 const HIGHLIGHT_ATTACK = 0xaa0000;
 const BREACH_COLOR = 0xff3322;
@@ -484,6 +483,13 @@ export class GameRenderer {
                 fl.scale.set(1, 0.9 + 0.2 * f, 1);
             }
         }
+        // Pulse aura rings slowly.
+        if (this._auraRings && this._auraRings.length) {
+            const p = 0.3 + 0.3 * Math.sin(now / 700);
+            for (const ring of this._auraRings) {
+                if (ring.material) ring.material.opacity = 0.25 + 0.3 * p;
+            }
+        }
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
     }
@@ -831,6 +837,93 @@ export class GameRenderer {
                     new THREE.MeshPhongMaterial({ color }));
                 flag.position.set(0, 0.62, -0.28); g.add(flag);
             }
+        }
+        return g;
+    }
+
+    makeLordModel(lord, fc) {
+        const g = new THREE.Group();
+        const isKing = lord.isKing;
+        const s = isKing ? 1.3 : 1.0;
+        const cls = LORD_CLASSES[lord.class] || {};
+        const bonus = cls.bonus || {};
+
+        const intensity = isKing ? 0.7 : 0.45;
+        let color, emissiveColor;
+        if (bonus.attack && bonus.defense) {
+            color = 0xffd700; emissiveColor = 0xffd700;
+        } else if (bonus.attack) {
+            color = 0xff5544; emissiveColor = 0xff3322;
+        } else if (bonus.defense) {
+            color = 0x4488ff; emissiveColor = 0x3366cc;
+        } else {
+            color = 0xaa66dd; emissiveColor = 0x8844cc;
+        }
+
+        switch (lord.class) {
+            case 'WARLORD': {
+                const base = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.22 * s, 0.28 * s, 0.12, 8),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
+                base.position.y = 0.06; g.add(base);
+                const blade = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.14 * s, 0.45 * s, 6),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
+                blade.position.y = 0.34; g.add(blade);
+                const spike = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.04 * s, 0.15 * s, 6),
+                    new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0xff8844, emissiveIntensity: 0.5 }));
+                spike.position.y = 0.6; g.add(spike);
+                break;
+            }
+            case 'GUARDIAN': {
+                const body = new THREE.Mesh(
+                    new THREE.DodecahedronGeometry(0.28 * s),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
+                body.position.y = 0.28; g.add(body);
+                const ring = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.36 * s, 0.04 * s, 8, 16),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity * 0.6 }));
+                ring.rotation.x = Math.PI / 2;
+                ring.position.y = 0.12; g.add(ring);
+                break;
+            }
+            case 'CONQUEROR': {
+                const tower = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.3 * s, 0.4 * s, 0.3 * s),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
+                tower.position.y = 0.24; g.add(tower);
+                const top = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.2 * s, 0.12 * s, 0.2 * s),
+                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: intensity * 0.5 }));
+                top.position.y = 0.5; g.add(top);
+                const spire = new THREE.Mesh(
+                    new THREE.ConeGeometry(0.04 * s, 0.12 * s, 6),
+                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.4 }));
+                spire.position.y = 0.62; g.add(spire);
+                break;
+            }
+            case 'GRAND_COMMANDER':
+            default: {
+                const body = new THREE.Mesh(
+                    new THREE.IcosahedronGeometry(0.26 * s),
+                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity + 0.2 }));
+                body.position.y = 0.26; g.add(body);
+                const ring = new THREE.Mesh(
+                    new THREE.TorusGeometry(0.34 * s, 0.03 * s, 8, 20),
+                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.5 }));
+                ring.rotation.x = Math.PI / 3;
+                ring.position.y = 0.32; g.add(ring);
+                break;
+            }
+        }
+
+        if (cls.icon) {
+            const iconY = lord.class === 'CONQUEROR' ? 0.85 : 0.8;
+            g.add(this.makeIconSprite(cls.icon, 0.7 * s, iconY));
+        }
+        if (isKing) {
+            g.add(this.makeIconSprite('crown', 0.5 * s, 1.05));
         }
         return g;
     }
@@ -1682,6 +1775,7 @@ export class GameRenderer {
     }
     renderAuras(gameState) {
         this.auraGroup.clear();
+        this._auraRings = [];
         const visible = gameState.visible || null;
         for (const lord of gameState.lords) {
             if (!hasLordAura(lord)) continue;
@@ -1689,21 +1783,25 @@ export class GameRenderer {
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;
             const fc = this.fcolor(gameState, lord.owner);
             const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
-            // Red ring for an attack aura, blue for a defense aura.
-            const color = cb.attack ? 0xff3322 : (cb.defense ? 0x3388ff : fc.tile);
-            const baseY = (this.tileHeights.get(`${lord.x},${lord.z}`) || 0) + 0.12;
-            // Faint filled disc.
-            const disc = new THREE.Mesh(new THREE.CircleGeometry(1.0, 40),
-                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.14, depthWrite: false }));
+            let color;
+            if (cb.attack && cb.defense) color = 0xffd700;
+            else if (cb.attack) color = 0xff3322;
+            else if (cb.defense) color = 0x3388ff;
+            else color = fc.tile;
+            const baseY = (this.tileHeights.get(`${lord.x},${lord.z}`) || 0) + 0.04;
+            const radius = 3.0;
+            const segments = 48;
+            const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, segments),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.08, depthWrite: false }));
             disc.rotation.x = -Math.PI / 2;
             disc.position.set(lord.x - GRID_SIZE / 2, baseY, lord.z - GRID_SIZE / 2);
             this.auraGroup.add(disc);
-            // Bright ring outline.
-            const ring = new THREE.Mesh(new THREE.RingGeometry(0.97, 1.04, 40),
-                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+            const ring = new THREE.Mesh(new THREE.RingGeometry(radius - 0.06, radius + 0.02, segments),
+                new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.45, depthWrite: false }));
             ring.rotation.x = -Math.PI / 2;
             ring.position.set(lord.x - GRID_SIZE / 2, baseY + 0.01, lord.z - GRID_SIZE / 2);
             this.auraGroup.add(ring);
+            this._auraRings.push(ring);
         }
     }
 
@@ -1860,24 +1958,18 @@ export class GameRenderer {
             this.unitGroup.add(mesh);
         }
 
-        // Rebuild lord markers (gold heroes, emissive tinted by faction, with a
-        // unique class icon floating above each leader; kings get a crown).
+        // Rebuild lord markers — each lord class gets a distinct 3D model
+        // (WARLORD cone, GUARDIAN dodecahedron, CONQUEROR tower, GRAND_COMMANDER
+        // icosahedron). Kings are 1.3× larger with a crown and stronger glow.
         this.lordGroup.clear();
-        const lordGeo = new THREE.OctahedronGeometry(0.35, 0);
         for (const lord of gameState.lords) {
             const isPlayer = lord.owner === PLAYER_FACTION;
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;
             const fc = this.fcolor(gameState, lord.owner);
-            const mat = new THREE.MeshPhongMaterial({ color: LORD_COLOR, emissive: fc.tile, emissiveIntensity: 0.4 });
-            const mesh = new THREE.Mesh(lordGeo, mat);
-            const y = (this.tileHeights.get(`${lord.x},${lord.z}`) || 0) + 0.7;
+            const mesh = this.makeLordModel(lord, fc);
+            const y = (this.tileHeights.get(`${lord.x},${lord.z}`) || 0) + 0.05;
             mesh.position.set(lord.x - GRID_SIZE / 2, y, lord.z - GRID_SIZE / 2);
             mesh.userData = { lordId: lord.id, x: lord.x, z: lord.z };
-            const cls = LORD_CLASSES[lord.class];
-            if (cls && cls.icon) {
-                mesh.add(this.makeIconSprite(cls.icon, 0.8, 0.6));
-            }
-            if (lord.isKing) mesh.add(this.makeIconSprite('crown', 0.55, 1.0));
             this.lordGroup.add(mesh);
         }
 

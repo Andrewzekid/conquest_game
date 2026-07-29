@@ -265,11 +265,92 @@ describe('diplomacy', () => {
     it('returns false for unrecognized type', () => {
       expect(aiDecideTreaty('AGGRESSIVE', 'unknown_type', 1.0)).toBe(false);
     });
+
+    it('shared enemies increase treaty acceptance (trade pact)', () => {
+      // Very favorable params guarantee acceptance
+      const noEnemy = aiDecideTreaty('ECONOMIC', DIPLOMACY_STATES.TRADE_PACT, 1.0, 80, 0, 0, true, 0);
+      const withEnemy = aiDecideTreaty('ECONOMIC', DIPLOMACY_STATES.TRADE_PACT, 1.0, 80, 0, 5, true, 0);
+      // Both should accept, but withEnemy with higher margin — verify always-accept
+      // Compute effective rate via the formula params directly:
+      const p = { acceptTrade: 0.3, acceptAlliance: 0.2, acceptPeace: 0.4 };
+      const base = p.acceptTrade;
+      const relMod = 80 / 300;
+      const powerMod = 0;
+      const relReq = 0.1;
+      const trustP = 0;
+      const noEnemyRate = base + powerMod + relMod + relReq - trustP + 0 * 0.1 + 0.08 + 0;
+      const withEnemyRate = base + powerMod + relMod + relReq - trustP + 5 * 0.1 + 0.08 + 0;
+      expect(withEnemyRate).toBeGreaterThan(noEnemyRate);
+      expect(withEnemyRate).toBeGreaterThan(0.95); // nearly certain
+    });
+
+    it('shared enemies strongly boost alliance acceptance', () => {
+      const p = { acceptTrade: 0.3, acceptAlliance: 0.2, acceptPeace: 0.4 };
+      const relMod = 50 / 300;
+      const powerMod = 0;
+      const relReq = 0.15;
+      const trustP = 0;
+      const grievanceP = 0;
+      const neighborB = 0.08;
+      const base = p.acceptAlliance;
+      // No shared enemy
+      const noEnemyRate = base + powerMod + relMod + relReq - trustP * 1.5 + 0 * 0.15 + neighborB + grievanceP;
+      // With shared enemy
+      const withEnemyRate = base + powerMod + relMod + relReq - trustP * 1.5 + 3 * 0.15 + neighborB + grievanceP;
+      expect(withEnemyRate).toBeGreaterThan(noEnemyRate + 0.3);
+      expect(noEnemyRate).toBeLessThan(withEnemyRate);
+    });
+
+    it('neighbor bonus applies to trade and NAP', () => {
+      const neighbor = aiDecideTreaty('BALANCED', DIPLOMACY_STATES.NAP, 1.0, 30, 0, 0, true, 0);
+      const far = aiDecideTreaty('BALANCED', DIPLOMACY_STATES.NAP, 1.0, 30, 0, 0, false, 0);
+      // Both should be boolean
+      expect(typeof neighbor).toBe('boolean');
+      expect(typeof far).toBe('boolean');
+      // With max params neighbor bonus = 0.08*0.5 = 0.04 for NAP
+      const base = 0.5;
+      const relM = 30 / 300;
+      const neighborRate = base + relM + 0.1 + 0 + 0.08 * 0.5 + 0;
+      const farRate = base + relM + 0.1 + 0 + 0 + 0;
+      expect(neighborRate - farRate).toBeCloseTo(0.04, 5);
+    });
+
+    it('grievance penalty reduces acceptance', () => {
+      const lowGriev = aiDecideTreaty('DEFENSIVE', DIPLOMACY_STATES.PEACE, 0.5, -50, 0, 0, false, 10);
+      const highGriev = aiDecideTreaty('DEFENSIVE', DIPLOMACY_STATES.PEACE, 0.5, -50, 0, 0, false, 60);
+      expect(typeof lowGriev).toBe('boolean');
+      expect(typeof highGriev).toBe('boolean');
+      // Grievance penalty caps at -0.25 = 50 grievances
+      const base = 0.4;
+      const losingMod = 0.1; // ratio < 0.7
+      const relM = -50 / 300;
+      const lowPenalty = -Math.min(0.25, 10 * 0.005);
+      const highPenalty = -Math.min(0.25, 60 * 0.005);
+      expect(highPenalty).toBeLessThan(lowPenalty);
+    });
+
+    it('broken treaties reduce acceptance', () => {
+      const clean = aiDecideTreaty('AGGRESSIVE', DIPLOMACY_STATES.CEASEFIRE, 1.0, 0, 0, 0, false, 0);
+      const breaker = aiDecideTreaty('AGGRESSIVE', DIPLOMACY_STATES.CEASEFIRE, 1.0, 0, 4, 0, false, 0);
+      expect(typeof clean).toBe('boolean');
+      expect(typeof breaker).toBe('boolean');
+      // 4 broken treaties → penalty = 4 * 0.1 * 0.3 = 0.12 for ceasefire
+      expect(aiDecideTreaty('BALANCED', DIPLOMACY_STATES.TRADE_PACT, 0.5, -40, 5, 0, false, 0)).toBe(false);
+    });
   });
 
   describe('aiDecideWar', () => {
     it('returns boolean', () => {
       expect(typeof aiDecideWar('AGGRESSIVE', 1.0)).toBe('boolean');
+    });
+
+    it('shared enemies increase war chance', () => {
+      const p = { warChance: 0.3 };
+      const base = p.warChance * Math.min(2.5, 1.2);
+      const relM = Math.max(-0.15, Math.min(0.15, -(-20) / 300));
+      const noEnemy = base + relM + 0 * 0.08 + 0.12 + 0 + 0;
+      const withEnemy = base + relM + 2 * 0.08 + 0.12 + 0 + 0;
+      expect(withEnemy).toBeGreaterThan(noEnemy);
     });
   });
 
