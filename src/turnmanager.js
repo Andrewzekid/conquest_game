@@ -2,10 +2,10 @@
 import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth,
          processUnrest, applyFactionUnrest, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
 import { PLAYER_FACTION, UNIT_TYPE, VICTORY_THREAT_GRIPERANCE_PER_TURN, BORDER_BUILDUP_GRIPERANCE_PER_TURN } from './config.js';
-import { regenFortification } from './map.js';
+import { regenFortification, cityFortMax } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
          processWarWeariness } from './diplomacy.js';
-import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS } from './tech.js';
+import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS, getTechBonuses } from './tech.js';
 import { applyKingTechBonuses } from './lords.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
@@ -104,6 +104,29 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Neutral (unowned) cities also grow and expand influence over time.
         processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
+        // Apply cityDefenseBonus from researched techs to each faction's cities.
+        // Tech bonuses like FORTIFICATION, BASTION_FORT, POLEARM, PIKE_WARFARE
+        // increase fortMax (walls) and grant an immediate fortification boost.
+        for (const f of factions) {
+            const techState = gameState.techState && f === PLAYER_FACTION
+                ? gameState.techState
+                : (gameState.aiTechStates && gameState.aiTechStates[f]) || null;
+            if (!techState) continue;
+            const bonuses = getTechBonuses(techState);
+            const bonus = bonuses.cityDefenseBonus || 0;
+            if (bonus <= 0) continue;
+            for (const tile of gameState.tiles.values()) {
+                if (tile.owner !== f || tile.terrain !== 'CITY') continue;
+                const baseFortMax = cityFortMax(tile);
+                const newFortMax = baseFortMax + bonus;
+                if (newFortMax > tile.fortMax) {
+                    const diff = newFortMax - tile.fortMax;
+                    tile.fortMax = newFortMax;
+                    tile.fortification += diff;
+                }
+            }
+        }
 
         // Trade routes: pay out income per faction, process raids (an enemy
         // military unit on a route's path steals gold and disrupts it), then

@@ -650,11 +650,14 @@ export const BUILDING_TYPE = {
                   desc: 'Unlocks naval units (GALLEY, TRANSPORT). +5 production/turn. Build in a coastal/river city or its influence.', techRequired: 'NAVAL_ENGINEERING' },
     SIEGE_WORKSHOP: { name: 'Siege Workshop', cost: { gold: 80, wood: 20, iron: 0 }, bonus: { production: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: 'Unlocks long-range siege engines (CATAPULT, TREBUCHET). +5 production/turn. Build in any city or its influence.', techRequired: 'SIEGE_CRAFT' },
+    // === CLASSICAL ERA BUILDINGS ===
+    LIBRARY:     { name: 'Library',     cost: { gold: 60, wood: 30 },              bonus: { research: 2 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+2 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'MATHEMATICS' },
     // === RENAISSANCE ERA BUILDINGS ===
     CITADEL:     { name: 'Citadel',     cost: { gold: 120, wood: 40, iron: 30 }, bonus: { defense: 8 }, terrain: 'CITY', upgradesFrom: 'WALLS',
                   desc: '+8 defense to units defending this tile. Upgrades Walls. Stays on the city tile.', techRequired: 'BASTION_FORT' },
     // === ENLIGHTENMENT ERA BUILDINGS ===
-    UNIVERSITY:  { name: 'University',  cost: { gold: 150, wood: 60 }, bonus: { research: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
+    UNIVERSITY:  { name: 'University',  cost: { gold: 100, wood: 40 }, bonus: { research: 5 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+5 research points per turn. Buildable in the city or its influence; pillageable by enemy units.' },
     BANK:        { name: 'Bank',        cost: { gold: 200, wood: 40 }, bonus: { gold: 20 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+20 gold per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'BANKING' },
@@ -662,12 +665,14 @@ export const BUILDING_TYPE = {
     COMMAND_POST:{ name: 'Command Post', cost: { gold: 180, wood: 50, iron: 40 }, bonus: { production: 8 }, terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+8 production per turn. Lords gain +2 command range. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'TELEGRAPH' },
     POWER_PLANT: { name: 'Power Plant', cost: { gold: 250, wood: 60, iron: 50 }, bonus: { production: 12 }, terrain: 'CITY', influenceBuildable: true, military: true,
-                  desc: '+12 production per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ELECTRICITY' }
+                  desc: '+12 production per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'ELECTRICITY' },
+    RESEARCH_INSTITUTE: { name: 'Research Institute', cost: { gold: 200, wood: 80, iron: 40 }, bonus: { research: 8 }, terrain: 'CITY', influenceBuildable: true, military: true,
+                  desc: '+8 research points per turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'SCIENTIFIC_METHOD' }
 };
 
 // Military structures outside cities can be attacked, damaged, and pillaged.
 // All influence-buildable buildings have HP so they can be attacked/pillaged.
-export const MILITARY_BUILDING_HP = { BARRACKS: 20, SIEGE_WORKSHOP: 25, HARBOR: 30, MARKET: 15, UNIVERSITY: 20, BANK: 20, COMMAND_POST: 25, POWER_PLANT: 30 };
+export const MILITARY_BUILDING_HP = { BARRACKS: 20, SIEGE_WORKSHOP: 25, HARBOR: 30, MARKET: 15, UNIVERSITY: 20, BANK: 20, COMMAND_POST: 25, POWER_PLANT: 30, LIBRARY: 15, RESEARCH_INSTITUTE: 30 };
 export const MILITARY_BUILDING_DEFENSE = { BARRACKS: 2, SIEGE_WORKSHOP: 3, HARBOR: 3 };
 
 // Per-level upgrade curves for military buildings (max level 3). Each level

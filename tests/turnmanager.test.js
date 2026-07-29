@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTurnManager } from '../src/turnmanager.js';
 import { PLAYER_FACTION, setGridDimensions } from '../src/config.js';
+import { createTechState } from '../src/tech.js';
 import { makeGameState, makeUnit, makeTile } from './helpers.js';
 
 // Set grid dimensions so economy functions work correctly.
@@ -337,5 +338,47 @@ describe('turnmanager — phase management', () => {
         const tm = createTurnManager(state, [PLAYER_FACTION, 'ai1']);
         tm.phase = 'ai1';
         expect(tm.phase).toBe('ai1');
+    });
+
+    it('cityDefenseBonus from tech increases fortMax for owned cities', () => {
+        const state = makeGameState();
+        // Set up techState with FORTIFICATION (grants +2 cityDefenseBonus)
+        state.techState = createTechState();
+        state.techState.researched.add('FORTIFICATION');
+
+        const city = state.tiles.get('5,5');
+        // cityFortMax(level 2) = 4 + 4 = 8, +2 from FORTIFICATION = 10
+        const expectedFortMax = 10;
+
+        runTurn(state);
+
+        expect(city.fortMax).toBe(expectedFortMax);
+        expect(city.fortification).toBeGreaterThanOrEqual(expectedFortMax);
+    });
+
+    it('cityDefenseBonus applies to AI faction cities via aiTechStates', () => {
+        const state = makeGameState();
+        // AI faction gets BASTION_FORT (+3) and POLEARM (+1) = +4
+        state.aiTechStates = { ai1: createTechState() };
+        state.aiTechStates.ai1.researched.add('BASTION_FORT');
+        state.aiTechStates.ai1.researched.add('POLEARM');
+
+        const aiCity = state.tiles.get('10,10');
+        // cityFortMax(level 1) = 4 + 2 = 6, +3 bastion +1 polearm = 10
+        const expectedFortMax = 10;
+
+        runTurn(state);
+
+        expect(aiCity.fortMax).toBe(expectedFortMax);
+    });
+
+    it('no cityDefenseBonus with no techState (null) — no crash', () => {
+        const state = makeGameState();
+        state.techState = null;
+        const city = state.tiles.get('5,5');
+        const before = city.fortMax;
+
+        expect(() => runTurn(state)).not.toThrow();
+        expect(city.fortMax).toBe(before);
     });
 });

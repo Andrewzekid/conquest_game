@@ -23,7 +23,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
           WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
           WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
-         captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
+         captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory, cityFortMax } from './map.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
 import { resolveCombat, canCaptureTile } from './battle.js';
 import { createTurnManager } from './turnmanager.js';
@@ -1305,6 +1305,17 @@ export class Game {
         }
     }
 
+    /** Look up the cityDefenseBonus from the defender faction's researched techs. */
+    _defenderCityDefense(defender) {
+        const f = defender && defender.owner;
+        if (!f) return 0;
+        const ts = f === PLAYER_FACTION
+            ? this.gameState.techState
+            : (this.gameState.aiTechStates && this.gameState.aiTechStates[f]) || null;
+        if (!ts) return 0;
+        return getTechBonuses(ts).cityDefenseBonus || 0;
+    }
+
     handleAttack(attacker, defender) {
         if (attacker.hasAttackedThisTurn) return;
         if (!canAttack(this.gameState.diplomacy, attacker.owner, defender.owner)) {
@@ -1319,7 +1330,8 @@ export class Game {
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units,
+            this._defenderCityDefense(defender));
         result.messages.forEach(m => this.log(m));
         sfx.attack();
         this._battleWeariness(attacker.owner, defender.owner);
@@ -1408,7 +1420,8 @@ export class Game {
         const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
         const result = resolveCombat(atk, def, terrain, null, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units,
+            this._defenderCityDefense(def));
         result.messages.forEach(m => this.log(m));
         sfx.attack();
         this._battleWeariness(lord.owner, def.owner);
@@ -1577,7 +1590,8 @@ export class Game {
         const defenderLord = findCommandingLord(this.gameState.lords, defender);
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units,
+            this._defenderCityDefense(defender));
         result.messages.forEach(m => this.log(m));
         // Restore original attack
         attacker.attack = originalAttack;
@@ -1691,7 +1705,8 @@ export class Game {
             const result = resolveCombat(attacker, defender, terrain, atkLord, defLord,
                 this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses,
                 false, this.gameState.structures,
-                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true, this.gameState.units);
+                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true, this.gameState.units,
+                this._defenderCityDefense(defender));
             result.messages.forEach(m => this.log(m));
             attacker.attack = originalAttack;
             if (result.defenderDied) {
@@ -2964,7 +2979,7 @@ export class Game {
         r.food -= cost.food;
         r.production = (r.production || 0) - cost.production;
         tile.cityLevel = level + 1;
-        tile.fortMax = 2 + tile.cityLevel;
+        tile.fortMax = cityFortMax(tile);
         tile.fortification = tile.fortMax;     // a leveled city is fully fortified
         // The expanded influence radius claims the newly-reached unowned tiles.
         const claimed = expandCityTerritory(this.tiles, tile, PLAYER_FACTION);
@@ -4962,7 +4977,8 @@ export class Game {
                         const defenderLord = findCommandingLord(this.gameState.lords, defender);
                         const result = resolveCombat(attacker, defender, terrain,
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
+                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units,
+                            this._defenderCityDefense(defender));
                         result.messages.forEach(m => this.log(m));
                         this._battleWeariness(attacker.owner, defender.owner);
                         // Ranged fire vs an unbreached enemy city also chips its fortification.
@@ -5073,7 +5089,7 @@ export class Game {
                             pool.food -= cost.food;
                             pool.production = (pool.production || 0) - cost.production;
                             tile.cityLevel = lvl + 1;
-                            tile.fortMax = 2 + tile.cityLevel;
+                            tile.fortMax = cityFortMax(tile);
                             tile.fortification = tile.fortMax;
                             const claimed = expandCityTerritory(this.tiles, tile, faction);
                             this.renderer.updateTileTerrain(tile);
@@ -5263,7 +5279,8 @@ export class Game {
                     const defenderLord = findCommandingLord(this.gameState.lords, defender);
                     const result = resolveCombat(attacker, defender, terrain,
                         attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
+                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units,
+                        this._defenderCityDefense(defender));
                     attacker.attack = originalAttack;
                     result.messages.forEach(m => this.log(m));
                     this._battleWeariness(attacker.owner, defender.owner);

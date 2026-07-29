@@ -86,9 +86,10 @@ export function isEncircled(defender, units, tiles) {
  *   bonuses no longer apply — the defenses are down.
  * @param units - optional full units Map (for adjacency-based passives like
  *   MUSKETEER volley fire and LINE_INFANTRY formation).
+ * @param defenderCityDefenseBonus - extra defense from tech research (FORTIFICATION, BASTION_FORT, POLEARM, PIKE_WARFARE) applied on city terrain.
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false, units = null) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false, units = null, defenderCityDefenseBonus = 0) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
@@ -259,8 +260,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const defTemp = (tempBonuses && tempBonuses[defenderUnit.owner]) || { attack: 0, defense: 0 };
     const defPower = defenderUnit.defense ?? defStats.defense;
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
+    const cityTechDef = (isCity && !defenderCityBreached) ? (defenderCityDefenseBonus || 0) : 0;
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
-        + defLordBonus.defense + defAdj.defense + defTemp.defense;
+        + defLordBonus.defense + defAdj.defense + defTemp.defense + cityTechDef;
+    if (cityTechDef > 0) {
+        messages.push(`City fortifications from tech: +${cityTechDef} def`);
+    }
     // RIFLEMAN accurate: ignores 50% of target defense. Must run AFTER the
     // effectiveDefense declaration above — before this fix it referenced the
     // binding in its temporal dead zone (ReferenceError on every attack).

@@ -267,15 +267,15 @@ describe('Phase 6: city defense', () => {
         expect(TERRAIN_BONUS.CITY.defense).toBe(8);
     });
 
-    it('cityFortMax uses new formula 3 + round(level * 1.5)', () => {
-        expect(cityFortMax({ cityLevel: 1 })).toBe(5);   // 3 + round(1.5) = 5
-        expect(cityFortMax({ cityLevel: 2 })).toBe(6);   // 3 + round(3) = 6
-        expect(cityFortMax({ cityLevel: 3 })).toBe(8);   // 3 + round(4.5) = 8
-        expect(cityFortMax({ cityLevel: 5 })).toBe(11);  // 3 + round(7.5) = 11
+    it('cityFortMax uses formula 4 + level * 2', () => {
+        expect(cityFortMax({ cityLevel: 1 })).toBe(6);   // 4 + 2 = 6
+        expect(cityFortMax({ cityLevel: 2 })).toBe(8);   // 4 + 4 = 8
+        expect(cityFortMax({ cityLevel: 3 })).toBe(10);  // 4 + 6 = 10
+        expect(cityFortMax({ cityLevel: 5 })).toBe(14);  // 4 + 10 = 14
     });
 
     it('cityFortMax defaults to level 1 for null', () => {
-        expect(cityFortMax(null)).toBe(5);
+        expect(cityFortMax(null)).toBe(6);
     });
 
     it('canCaptureTile respects breach delay', () => {

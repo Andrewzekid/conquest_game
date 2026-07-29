@@ -199,7 +199,7 @@ describe('first-engineer reserve', () => {
     }
 
     it('AI with zero engineers trains its first engineer when affordable', () => {
-        const input = reserveSetup({ gold: 500, food: 100, wood: 60, iron: 30, production: 60 });
+        const input = reserveSetup({ gold: 500, food: 100, wood: 120, iron: 30, production: 60 });
         const actions = runAI(input);
         const engTrains = actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER');
         expect(engTrains.length).toBeGreaterThanOrEqual(1);

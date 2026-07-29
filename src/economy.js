@@ -8,7 +8,7 @@ import { TERRAIN, MARKET_RATES, TRADE_ROUTE_GOLD, STARVATION_ATTRITION, BUILDING
          TRADE_ROUTE_MAX, TRADE_ROUTE_MIN_CITY_LEVEL, RAID_STEAL_PERCENT, RAID_DISRUPT_TURNS,
          UNIT_TYPE } from './config.js';
 import { getLordGovernanceMultiplier } from './lords.js';
-import { cityRadius, expandCityTerritory } from './map.js';
+import { cityRadius, expandCityTerritory, cityFortMax } from './map.js';
 import { getRelation } from './diplomacy.js';
 import { DIPLOMACY_STATES } from './config.js';
 
@@ -57,7 +57,7 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
         wood: { city: 0, lumbermill: 0, terrain: 0, wonder: 0 },
         iron: { city: 0, mine: 0, terrain: 0, wonder: 0 },
         production: { city: 0, barracks: 0, workshop: 0, harbor: 0, wonder: 0, commandPost: 0, powerPlant: 0 },
-        research: { city: 0, university: 0, wonder: 0 },
+        research: { city: 0, university: 0, library: 0, researchInstitute: 0, wonder: 0 },
     };
     const add = (res, cat, amt) => { breakdown[res][cat] = (breakdown[res][cat] || 0) + amt; };
     const lordsArr = lords || [];
@@ -126,6 +126,25 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
                     else add('production', 'city', bonus);
                 } else if (res === 'research') {
                     if (bType === 'UNIVERSITY') add('research', 'university', bonus);
+                    else if (bType === 'LIBRARY') add('research', 'library', bonus);
+                    else if (bType === 'RESEARCH_INSTITUTE') {
+                        add('research', 'researchInstitute', bonus);
+                        // Adjacency bonus: +2 per adjacent mountain, +3 per adjacent Research Institute
+                        let adjBonus = 0;
+                        for (let dx = -1; dx <= 1; dx++) {
+                            for (let dz = -1; dz <= 1; dz++) {
+                                if (dx === 0 && dz === 0) continue;
+                                const adj = tiles.get(`${tile.x + dx},${tile.z + dz}`);
+                                if (!adj || adj.owner !== owner) continue;
+                                if (adj.terrain === 'MOUNTAIN') adjBonus += 2;
+                                else {
+                                    const adjList = buildings.get(`${adj.x},${adj.z}`) || [];
+                                    if (adjList.includes('RESEARCH_INSTITUTE')) adjBonus += 3;
+                                }
+                            }
+                        }
+                        if (adjBonus > 0) add('research', 'researchInstitute', adjBonus);
+                    }
                     else add('research', 'city', bonus);
                 } else {
                     add(res, 'city', bonus);
@@ -192,6 +211,25 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
                     else add('production', 'city', bonus);
                 } else if (res === 'research') {
                     if (bType === 'UNIVERSITY') add('research', 'university', bonus);
+                    else if (bType === 'LIBRARY') add('research', 'library', bonus);
+                    else if (bType === 'RESEARCH_INSTITUTE') {
+                        add('research', 'researchInstitute', bonus);
+                        // Adjacency bonus: +2 per adjacent mountain, +3 per adjacent Research Institute
+                        let adjBonus = 0;
+                        for (let dx = -1; dx <= 1; dx++) {
+                            for (let dz = -1; dz <= 1; dz++) {
+                                if (dx === 0 && dz === 0) continue;
+                                const adj = tiles.get(`${t.x + dx},${t.z + dz}`);
+                                if (!adj || adj.owner !== owner) continue;
+                                if (adj.terrain === 'MOUNTAIN') adjBonus += 2;
+                                else {
+                                    const adjList = buildings.get(`${adj.x},${adj.z}`) || [];
+                                    if (adjList.includes('RESEARCH_INSTITUTE')) adjBonus += 3;
+                                }
+                            }
+                        }
+                        if (adjBonus > 0) add('research', 'researchInstitute', adjBonus);
+                    }
                     else add('research', 'city', bonus);
                 } else {
                     add(res, 'city', bonus);
@@ -453,7 +491,7 @@ export function processCityGrowth(tiles, owner, resources, log) {
         if (tile.growth >= need) {
             tile.growth -= need;
             tile.cityLevel = (tile.cityLevel || 1) + 1;
-            tile.fortMax = 2 + tile.cityLevel;
+            tile.fortMax = cityFortMax(tile);
             tile.fortification = tile.fortMax;
             const claimed = expandCityTerritory(tiles, tile, owner);
             const msg = `City at [${tile.x}, ${tile.z}] grew to Lv.${tile.cityLevel} (influence ${cityRadius(tile)})!${claimed ? ` Claimed ${claimed} new tile(s).` : ''}`;
@@ -483,7 +521,7 @@ export function processNeutralCityGrowth(tiles, log) {
         if (tile.growth >= need) {
             tile.growth -= need;
             tile.cityLevel = (tile.cityLevel || 1) + 1;
-            tile.fortMax = 2 + tile.cityLevel;
+            tile.fortMax = cityFortMax(tile);
             tile.fortification = tile.fortMax;
             const claimed = expandCityTerritory(tiles, tile, null);
             const msg = `Neutral city at [${tile.x}, ${tile.z}] grew to Lv.${tile.cityLevel} (influence ${cityRadius(tile)}).${claimed ? ` Claimed ${claimed} tile(s).` : ''}`;

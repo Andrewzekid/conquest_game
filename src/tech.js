@@ -37,9 +37,9 @@ export const TECHS = {
     MATHEMATICS: {
         id: 'MATHEMATICS', name: 'Mathematics', era: 'classical', cost: 50,
         prerequisites: ['ARCHERY'],
-        unlocks: [{ type: 'unit', id: 'CATAPULT' }, { type: 'building', id: 'MARKET' }],
+        unlocks: [{ type: 'unit', id: 'CATAPULT' }, { type: 'building', id: 'MARKET' }, { type: 'building', id: 'LIBRARY' }],
         bonus: {},
-        desc: 'Unlocks Catapult and Market building.'
+        desc: 'Unlocks Catapult, Market, and Library building.'
     },
     ENGINEERING: {
         id: 'ENGINEERING', name: 'Engineering', era: 'classical', cost: 50,
@@ -257,6 +257,13 @@ export const TECHS = {
         unlocks: [{ type: 'unit', id: 'SUBMARINE' }, { type: 'unit', id: 'TORPEDO_BOAT' }],
         bonus: { navalStealth: true },
         desc: 'Unlocks Submarine and Torpedo Boat. Naval units can stealth.'
+    },
+    SCIENTIFIC_METHOD: {
+        id: 'SCIENTIFIC_METHOD', name: 'Scientific Method', era: 'modern', cost: 500,
+        prerequisites: ['ACADEMY', 'BANKING'],
+        unlocks: [{ type: 'building', id: 'RESEARCH_INSTITUTE' }],
+        bonus: { researchSpeedBonus: 0.25 },
+        desc: 'Unlocks Research Institute building. Research speed +25%.'
     },
 
     // === ATOMIC ERA (1880-1940, cost 800 pts) ===
@@ -598,13 +605,33 @@ export function calculateResearchOutput(tiles, owner, buildings) {
             total += tile.cityLevel || 1;
         }
     }
-    // UNIVERSITY buildings (now buildable on influence tiles outside the city)
-    // grant +3 research each. Scan all owned tiles, not just city tiles.
+    // Library, University, and Research Institute buildings contribute research.
+    // Research Institute also gets adjacency bonuses from mountains and other
+    // Research Institutes.
     if (buildings) {
         for (const tile of tiles.values()) {
             if (tile.owner !== owner) continue;
             const list = buildings.get(`${tile.x},${tile.z}`) || [];
-            if (list.includes('UNIVERSITY')) total += 3;
+            for (const bType of list) {
+                if (bType === 'LIBRARY') total += 2;
+                else if (bType === 'UNIVERSITY') total += 3;
+                else if (bType === 'RESEARCH_INSTITUTE') {
+                    total += 8;
+                    // Adjacency bonus: +2 per adjacent mountain, +3 per adjacent Research Institute
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dz = -1; dz <= 1; dz++) {
+                            if (dx === 0 && dz === 0) continue;
+                            const adj = tiles.get(`${tile.x + dx},${tile.z + dz}`);
+                            if (!adj || adj.owner !== owner) continue;
+                            if (adj.terrain === 'MOUNTAIN') total += 2;
+                            else {
+                                const adjList = buildings.get(`${adj.x},${adj.z}`) || [];
+                                if (adjList.includes('RESEARCH_INSTITUTE')) total += 3;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     return total;
