@@ -1281,11 +1281,15 @@ describe('modern warship picks', () => {
         ]);
         const units = new Map();
         for (let i = 0; i < 4; i++) units.set(i + 1, makeUnit('INFANTRY', 'ai1', 6 + i, 5, { factionId: 'crimson' }));
-        // Two transports already fielded → transport needs are satisfied and
-        // the ship block goes for a warship.
-        const t1 = makeUnit('TRANSPORT', 'ai1', 4, 5, { factionId: 'crimson' });
-        const t2 = makeUnit('TRANSPORT', 'ai1', 4, 5, { factionId: 'crimson' });
-        units.set(t1.id, t1); units.set(t2.id, t2);
+        // Four transports already fielded → the demand-scaled transport quota
+        // (conquest-across-water demand of 6 slots ÷ capacity 2 = 3, plus any
+        // expansion-fleet bonus) is satisfied and the ship block goes for a
+        // warship. (The old flat cap of 2 was raised — see the transport
+        // demand sizing in ai.js.)
+        for (let i = 0; i < 4; i++) {
+            const tr = makeUnit('TRANSPORT', 'ai1', 4, 5, { factionId: 'crimson' });
+            units.set(tr.id, tr);
+        }
         const ts = makeFactionTs(['NAVAL_ENGINEERING', 'CARTOGRAPHY']);
         const actions = runAI({
             units, tiles,

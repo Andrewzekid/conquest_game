@@ -27,7 +27,7 @@ import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } fr
 import { getUnlockedUnits, TECHS } from './tech.js';
 import { applyObsolescence, isObsolete } from './unit_obsolescence.js';
 import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
-import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity } from './ai_theater.js';
+import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity, garrisonNeeds, findTheaterTarget, planFerries } from './ai_theater.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
  *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
@@ -92,6 +92,10 @@ export function computeScarcity(stock, prev, thresholds) {
 export function computeAIActions(units, tiles, resources, owner, buildings, influence, factionDef, diploState, lords = null, tempBonuses = null, structures = null, buildingState = null, aiState = null, aiTechStates = null, victoryState = null, currentTurn = 0) {
     const actions = [];
     const myUnits = [...units.values()].filter(u => u.owner === owner && !u.boarded);
+    // Ferry flags are recomputed every turn (see theater ferry planning in
+    // step 5a2). Boarded units keep theirs so a mid-sea transport doesn't
+    // lose its destination; everyone else's is re-set below if still needed.
+    for (const u of myUnits) delete u._ferryTo;
     let res = { ...resources };
     buildings = buildings || new Map();
     influence = influence || null;
@@ -112,6 +116,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // Siege engines require both a Siege Workshop AND the unlocking tech.
     const aiTsForRoster = aiTechStates && aiTechStates[owner];
     const aiUnlocked = (aiTsForRoster && aiTsForRoster.researched) ? getUnlockedUnits(aiTsForRoster) : new Set();
+    // Modern-siege tech gate: once gunpowder/shell artillery exists, the AI
+    // retires the medieval siege corps — engineers stop building Siege Towers
+    // (unit loop below), SIEGE_TOWER/ENGINEER leave the trainable roster
+    // (OBSOLESCENCE), and the engineer-training cap collapses (step 1c).
+    const hasModernSiegeTech = !!(aiTsForRoster && aiTsForRoster.researched && (
+        aiTsForRoster.researched.has('GUNPOWDER') ||
+        aiTsForRoster.researched.has('METALLURGY') ||
+        aiTsForRoster.researched.has('EXPLOSIVES') ||
+        aiTsForRoster.researched.has('FIELD_ARTILLERY')));
     const siegeAvailable = hasSiegeWorkshop
         ? ['CATAPULT', 'TREBUCHET'].filter(u => !roster.includes(u) && aiUnlocked.has(u))
         : [];
@@ -970,6 +983,19 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             if (needsBridges) engCap += 1;
         }
         engCap = Math.min(engCap, 4);
+        // Modern siege retires the engineer siege corps: towers are gated off
+        // and SIEGE_TOWER/ENGINEER leave the roster (OBSOLESCENCE). Keep at
+        // most one engineer for bridge duty when an unbridged river sits near
+        // our cities; otherwise train none — artillery does the sieging now.
+        if (hasModernSiegeTech) {
+            const riverNearCity = [...tiles.values()].some(t => {
+                if (t.terrain !== 'RIVER' || t.bridge) return false;
+                return [...tiles.values()].some(c =>
+                    c.terrain === 'CITY' && c.owner === owner &&
+                    manhattan(c.x, c.z, t.x, t.z) <= 12);
+            });
+            engCap = Math.min(engCap, riverNearCity ? 1 : 0);
+        }
         const engNow = myUnits.filter(u => u.type === 'ENGINEER').length +
             actions.filter(a => a.type === 'train' && a.unitType === 'ENGINEER').length;
         if (engNow < engCap && capRoom()) {
@@ -1190,24 +1216,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     ((topGoal.meta && topGoal.meta.requiresNaval) ||
                      pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
                         ...topGoal.targetTileKey.split(',').map(Number)));
-                const navalCap = (needsExpansionFleet || conquestAcrossWater) ? 10 : 2;
-            if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
+                // Prefer the modern STEAM_TRANSPORT when STEAM_ENGINE is
+                // researched (TRANSPORT is obsolete once STEAM_TRANSPORT is
+                // available). Fall back to TRANSPORT for pre-steam factions.
+                const modernTransport = aiUnlocked.has('STEAM_TRANSPORT') ? 'STEAM_TRANSPORT' : 'TRANSPORT';
                 // Count transports including the modern STEAM_TRANSPORT.
                 const transportCount = myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length +
                     actions.filter(a => a.type === 'train' && (a.unitType === 'TRANSPORT' || a.unitType === 'STEAM_TRANSPORT')).length;
                 const waitingSettlers = myUnits.filter(u => u.type === 'SETTLER' &&
                     !findFoundSpot(u, tiles, owner, land, land.idOf.get(`${u.x},${u.z}`), units)).length;
-                const needsMoreTransports = needsExpansionFleet && transportCount < 2 + waitingSettlers;
-                // A conquest target across water needs transports to ferry the
-                // army — even for a continental faction that isn't otherwise in
-                // "expansion fleet" mode. Without this the AI builds a harbor
-                // (via conquestAcrossWater) but only trains warships, never the
-                // transport the army needs to cross.
-                const needsConquestTransport = conquestAcrossWater && transportCount < 2;
-                // Prefer the modern STEAM_TRANSPORT when STEAM_ENGINE is
-                // researched (TRANSPORT is obsolete once STEAM_TRANSPORT is
-                // available). Fall back to TRANSPORT for pre-steam factions.
-                const modernTransport = aiUnlocked.has('STEAM_TRANSPORT') ? 'STEAM_TRANSPORT' : 'TRANSPORT';
+                // Transport demand, sized by cargo capacity — NOT a flat count
+                // of 2 (the old rule stranded 20-unit armies with ~4 cargo
+                // slots). Sources: settlers waiting for a found spot, army
+                // units tagged for cross-theater ferry (_ferryTo — set in step
+                // 5a3, visible here from previous turns), and a slice of the
+                // conquest army when its target is across water.
+                const waitingFerryArmy = myUnits.filter(u => u._ferryTo).length;
+                const transportCapacity = (UNIT_TYPE[modernTransport] && UNIT_TYPE[modernTransport].capacity) || 2;
+                const ferryDemand = waitingSettlers + waitingFerryArmy +
+                    (conquestAcrossWater ? 6 : 0);
+                const transportNeed = Math.min(8, Math.ceil(ferryDemand / transportCapacity) +
+                    (needsExpansionFleet ? 1 : 0));
+                const navalCap = (needsExpansionFleet || conquestAcrossWater)
+                    ? Math.max(10, transportNeed + 4)
+                    : Math.max(2, transportNeed);
+            if (navalNow < navalCap && !(captureClose && (res.gold || 0) < CAPTURE_COST + 20)) {
                 // Warship pick: the best unlocked, non-obsolete warship.
                 // Previously this defaulted to GALLEY forever — which the
                 // executor's obsolescence check then REJECTED once FRIGATE
@@ -1219,10 +1252,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'GALLEY'];
                 const warshipOptions = applyObsolescence(
                     WARSHIP_ORDER.filter(t => aiUnlocked.has(t)), aiTs && aiTs.researched);
+                // Transports first, deterministically, while the quota is
+                // unmet — the old 0.7 coin flip diverted a third of hulls to
+                // warships even with an army waiting at the shore.
+                const transportDeficit = transportNeed - transportCount;
                 let pick = null;
-                if ((needsExpansionFleet || needsConquestTransport) && transportCount === 0) pick = modernTransport;
-                else if (needsMoreTransports && Math.random() < 0.7) pick = modernTransport;
-                else if (needsConquestTransport && Math.random() < 0.7) pick = modernTransport;
+                if (transportDeficit > 0) pick = modernTransport;
                 else pick = warshipOptions.find(t => canAfford(t, res, getUnitCostFor(t, factionDef))) || null;
                 // Tech gate: don't train a ship whose tech hasn't been researched.
                 if (pick && !aiUnlocked.has(pick)) {
@@ -1234,6 +1269,17 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     if (canAfford(pick, res, pc)) {
                         actions.push({ type: 'train', unitType: pick, tileKey: `${harborCity.x},${harborCity.z}` });
                         res = spendCost(pick, res, pc);
+                    }
+                }
+                // Behind on the ferry quota? A second hull may sail out this
+                // turn — one transport per turn can't catch up with an army
+                // already waiting at the shore.
+                if (transportDeficit >= 2 && navalNow + 1 < navalCap && capRoom() &&
+                    aiUnlocked.has(modernTransport)) {
+                    const pc2 = getUnitCostFor(modernTransport, factionDef);
+                    if (canAfford(modernTransport, res, pc2)) {
+                        actions.push({ type: 'train', unitType: modernTransport, tileKey: `${harborCity.x},${harborCity.z}` });
+                        res = spendCost(modernTransport, res, pc2);
                     }
                 }
             }
@@ -1598,12 +1644,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         //     Defense: when an own city is threatened (enemy units closing in),
         //     build traps/fortifications on owned tiles around it.
         if (unit.type === 'ENGINEER' && !unit.hasAttackedThisTurn) {
-            const hasModernSiege = aiTs && aiTs.researched && (
-                aiTs.researched.has('GUNPOWDER') ||
-                aiTs.researched.has('METALLURGY') ||
-                aiTs.researched.has('EXPLOSIVES') ||
-                aiTs.researched.has('FIELD_ARTILLERY'));
-            const towerTarget = (!hasModernSiege) ? findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS) : null;
+            const towerTarget = (!hasModernSiegeTech) ? findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS) : null;
             if (towerTarget && canAffordCost(res, SIEGE_TOWER_COST)) {
                 actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${towerTarget.city.x},${towerTarget.city.z}` });
                 res = subtractCost(res, SIEGE_TOWER_COST);
@@ -1889,6 +1930,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                             }
                         }
                     } else if (hasMilitary) {
+                        // Cross-theater ferry: cargo tagged with _ferryTo (by the
+                        // donor-theater release in step 5a3) sails to the needy
+                        // theater's port — not to an assault target of the
+                        // transport's own choosing.
+                        const ferryDest = cargoIds.map(id => units.get(id))
+                            .find(cu => cu && cu._ferryTo)?._ferryTo || null;
+                        if (ferryDest) {
+                            if (canUnloadAt(unit, ferryDest, tiles)) {
+                                actions.push({ type: 'disembark', unitId: unit.id });
+                            } else if (!unit.hasMovedThisTurn) {
+                                const step = stepToward(unit, ferryDest, tiles, owner, units, moved, isAtWar);
+                                if (step) {
+                                    actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                                    moved.add(`${step.x},${step.z}`);
+                                }
+                            }
+                            acted.add(unit.id);
+                            continue;
+                        }
                         // Theater-aware ferry: if the home theater is under attack,
                         // return troops home instead of sailing toward the enemy.
                         // Check whether this transport's cargo came from a safe
@@ -1965,6 +2025,38 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
                 // Empty transport.
+                // Ferry pickup first: units tagged _ferryTo are waiting near a
+                // donor port for cross-theater reinforcement — they get
+                // priority over generic shore pickups. (Tagged units may stand
+                // a tile inland from the water, so this checks everywhere, not
+                // just shore tiles.)
+                {
+                    let bestU = null, bestD = Infinity;
+                    for (const u of units.values()) {
+                        if (u.owner !== owner || !u._ferryTo || u.boarded) continue;
+                        if (acted.has(u.id)) continue;
+                        if (u.type === 'SETTLER' || u.type === 'WORKER' || isNaval(u)) continue;
+                        const d = manhattan(unit.x, unit.z, u.x, u.z);
+                        if (d < bestD) { bestD = d; bestU = u; }
+                    }
+                    if (bestU) {
+                        if (Math.abs(unit.x - bestU.x) + Math.abs(unit.z - bestU.z) === 1) {
+                            const cap = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].capacity) || 2;
+                            if (((unit.cargo || []).length) < cap) {
+                                actions.push({ type: 'board', unitId: bestU.id, transportId: unit.id });
+                                acted.add(bestU.id);
+                            }
+                        } else if (!unit.hasMovedThisTurn) {
+                            const step = stepToward(unit, bestU, tiles, owner, units, moved, isAtWar);
+                            if (step) {
+                                actions.push({ type: 'move', unitId: unit.id, tx: step.x, tz: step.z });
+                                moved.add(`${step.x},${step.z}`);
+                            }
+                        }
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
                 if (atWar) {
                     // 6b — Amphibious assault: pick up idle land military units at
                     //     shore on a friendly landmass (units already ashore abroad
@@ -2095,13 +2187,28 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const militaryPool = myUnits.filter(u =>
         u.type !== 'SETTLER' && u.type !== 'WORKER' && !isNaval(u));
     const groups = buildArmyGroups(militaryPool, lords, owner);
+    // Theater assignment + urgency run BEFORE conquest/patrol role selection:
+    // how many groups must stay home depends on which theaters are threatened.
+    const groupTheater = new Map(); // group -> Theater
+    if (theaters.size > 0) {
+        assignGroupsToTheaters(groups, theaters, tiles, theaterLand, owner);
+        computeTheaterUrgency(theaters, tiles, units, owner, isAtWar, theaterLand);
+        for (const t of theaters.values()) for (const g of t.groups) groupTheater.set(g, t);
+    }
     const hasConquestTargets = atWar ||
         [...tiles.values()].some(t => t.terrain === 'CITY' && !t.owner);
     const ranked = groups.map(g => ({
         g, power: g.units.reduce((s, u) => s + unitValue(u), 0)
     })).sort((a, b) => b.power - a.power);
+    // Patrol quota: one group per threatened theater holds territory (plus one
+    // at war even without theater data); EVERY other group campaigns. The old
+    // hard cap of 3 conquest groups left most of a large army idle at home.
+    const threatenedTheaters = theaters.size > 0
+        ? [...theaters.values()].filter(t => t.urgency >= 0.2).length
+        : 0;
+    const patrolQuota = Math.min(ranked.length, Math.max(atWar ? 1 : 0, threatenedTheaters));
     const conquestCount = hasConquestTargets
-        ? Math.min(3, Math.max(1, Math.ceil(ranked.length / 2)))
+        ? Math.max(1, ranked.length - patrolQuota)
         : 0;
     // Multi-front conquest assignment: cluster enemy cities into fronts and
     // assign each conquest group to a different front.
@@ -2170,12 +2277,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     // 5a2. Theater system: group army groups by landmass for geographic command.
-    //      The home theater (where the capital sits) gets priority. An overseas
-    //      theater under attack (enemy units on its landmass) gets an urgency
-    //      boost so the AI defends it instead of idling on another continent.
+    //      (Assignment + urgency already ran right after buildArmyGroups — the
+    //      conquest/patrol split above depends on them.) The home theater gets
+    //      priority: an overseas theater under attack gets an urgency boost so
+    //      the AI defends it instead of idling on another continent.
     if (theaters.size > 0) {
-        assignGroupsToTheaters(groups, theaters, tiles, theaterLand, owner);
-        computeTheaterUrgency(theaters, tiles, units, owner, isAtWar, theaterLand);
         allocateTheaterBudgets(theaters, resources, owner);
         // Ensure home theater gets a large urgency boost when under attack.
         const homeTheater = [...theaters.values()].find(t => t.homeTheater);
@@ -2187,6 +2293,33 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 const weakest = [...conquest].sort((a, b) =>
                     groupPower(a) - groupPower(b))[0];
                 conquest.delete(weakest);
+            }
+        }
+    }
+
+    // 5a3. Cross-theater ferry + garrison release. Quiet theaters only keep
+    //      their garrison quota at home (garrisonNeeds); every group beyond
+    //      the quota is RELEASED — it attacks an in-theater target, or (when
+    //      its theater is a ferry donor) marches to the port to embark for a
+    //      needy theater. This is what puts large idle armies to work.
+    const ferryPlans = theaters.size > 0
+        ? planFerries(theaters, units, tiles, owner, theaterLand,
+            t => t.groups.some(g => !conquest.has(g)))
+        : [];
+    const donorTheater = new Map(); // theater.id -> plan
+    for (const p of ferryPlans) donorTheater.set(p.donor.id, p);
+    const releasedGroups = new Set();
+    if (theaters.size > 0) {
+        for (const t of theaters.values()) {
+            if (t.urgency >= 0.3) continue; // threatened: everyone defends
+            const quota = garrisonNeeds(t, tiles, owner, theaterLand);
+            // Weakest groups stay on garrison; the strong ones are released.
+            const patrols = t.groups.filter(g => !conquest.has(g))
+                .sort((a, b) => groupPower(a) - groupPower(b));
+            let kept = 0;
+            for (const g of patrols) {
+                if (kept < quota) { kept += g.units.length; continue; }
+                releasedGroups.add(g);
             }
         }
     }
@@ -2256,7 +2389,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         });
     }
 
-    const REINFORCE_RANGE = 12;
+    const REINFORCE_RANGE = 18; // was 12 — too short for large-map armies to support each other
     const groupObjectives = new Map();   // group -> objective tile
     const groupStances = new Map();      // group -> stance
     // Decisive-battle: cluster keys ("x,z") already assigned to a conquest
@@ -2287,10 +2420,38 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         } else {
             const c = groupCentroid(g);
-            objective = (g === kingGuardGroup && king)
-                ? { x: king.x, z: king.z }
-                : nearestFriendlyCity(c, tiles, owner);
-            stance = 'hold';
+            if (g === kingGuardGroup && king) {
+                objective = { x: king.x, z: king.z };
+                stance = 'hold';
+            } else if (releasedGroups.has(g)) {
+                // Released from garrison duty: put this group to work.
+                const th = groupTheater.get(g);
+                const plan = th ? donorTheater.get(th.id) : null;
+                if (plan) {
+                    // Ferry donor: march to the port and wait for a transport.
+                    // The port city tile carries `owner`, so planGroup's
+                    // hold-ring rule gathers the group around the harbor.
+                    const portTile = tiles.get(`${plan.fromPort.x},${plan.fromPort.z}`);
+                    objective = portTile || { x: plan.fromPort.x, z: plan.fromPort.z };
+                    stance = 'hold';
+                    for (const u of g.units) u._ferryTo = plan.toPort;
+                } else {
+                    // Attack the nearest enemy/neutral city IN THIS THEATER —
+                    // no cross-map wandering, no idling on a quiet landmass.
+                    const tTarget = th ? findTheaterTarget(tiles, owner, th.landmassId,
+                        theaterLand, isAtWar, c.x, c.z) : null;
+                    if (tTarget) {
+                        objective = tTarget;
+                        stance = computeStance(g, units, owner, atWar, isAtWar);
+                    } else {
+                        objective = nearestFriendlyCity(c, tiles, owner);
+                        stance = 'hold';
+                    }
+                }
+            } else {
+                objective = nearestFriendlyCity(c, tiles, owner);
+                stance = 'hold';
+            }
         }
         groupObjectives.set(g, objective);
         groupStances.set(g, stance);
@@ -2477,6 +2638,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         const stance = groupStances.get(g);
         actions.push(...planGroup(g, objective, stance, units, tiles, owner,
             lords, buildings, tempBonuses, diploState, moved, acted, atWar, isAtWar, res, structures, activeObjectives, currentTurn));
+    }
+
+    // Idleness metric: military units that received no order this turn. A
+    // large standing number here means armies are sitting at home — the
+    // theater release/ferry systems above exist to drive this toward zero.
+    if (aiState) {
+        aiState.idleMilitaryCount = militaryPool.filter(u =>
+            !acted.has(u.id) && !u.hasMovedThisTurn && !u.boarded).length;
     }
 
     // Store the last turn's actions in aiState for the debug panel to display.
@@ -5379,8 +5548,11 @@ export function buildArmyGroupsHTML(aiState, factions, factionDefs, factionColor
   <span style="font-size:10px;">${comp || '—'}</span>
 </div>`;
         }).join('');
+        const idleNote = (st && st.idleMilitaryCount != null)
+            ? ` · <span style="color:${st.idleMilitaryCount > 0 ? '#e07b3a' : '#6fbf73'};">idle ${st.idleMilitaryCount}</span>`
+            : '';
         html += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
-  <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${groups.length} groups)</span></div>
+  <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${groups.length} groups${idleNote})</span></div>
   ${rows}
 </div>`;
     }

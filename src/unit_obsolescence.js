@@ -42,10 +42,19 @@ export const OBSOLESCENCE = {
     // hold, e.g. Iron) and CATAPULT directly — otherwise a faction that
     // reaches GUNPOWDER without SIEGE_CRAFT keeps spamming CATAPULT/SIEGE
     // despite having gunpowder artillery unlocked.
-    ARTILLERY:    { obsoletes: ['TREBUCHET', 'CATAPULT', 'SIEGE'], tech: 'GUNPOWDER' },
-    CANNON:       { obsoletes: ['ARTILLERY', 'TREBUCHET', 'CATAPULT', 'SIEGE'], tech: 'METALLURGY' },
-    SIEGE_CANNON: { obsoletes: ['SIEGE', 'CANNON', 'MORTAR', 'ARTILLERY', 'TREBUCHET', 'CATAPULT'], tech: 'EXPLOSIVES' },
-    FIELD_GUN:    { obsoletes: ['ARTILLERY', 'CANNON', 'MORTAR', 'CATAPULT', 'TREBUCHET', 'SIEGE'], tech: 'FIELD_ARTILLERY' },
+    // SIEGE_TOWER joins the retirement list from GUNPOWDER on: gunpowder
+    // artillery replaces engineer-built towers (the AI's engineer tower-build
+    // gate uses the same techs), and SIEGE_TOWER is trainable via EXTRA_UNITS
+    // so without this the spending spree keeps queuing towers next to cannons.
+    ARTILLERY:    { obsoletes: ['TREBUCHET', 'CATAPULT', 'SIEGE', 'SIEGE_TOWER'], tech: 'GUNPOWDER' },
+    CANNON:       { obsoletes: ['ARTILLERY', 'TREBUCHET', 'CATAPULT', 'SIEGE', 'SIEGE_TOWER'], tech: 'METALLURGY' },
+    // Modern siege (EXPLOSIVES / FIELD_ARTILLERY) also retires the levies and
+    // the engineer siege corps: a faction with shell guns fields rifles +
+    // artillery, not INFANTRY mobs and SIEGE_TOWER engineers. (ENGINEER here
+    // covers roster/spree training; the AI's explicit engineer block gates
+    // separately so bridge/defense utility isn't lost mid-turn.)
+    SIEGE_CANNON: { obsoletes: ['SIEGE', 'CANNON', 'MORTAR', 'ARTILLERY', 'TREBUCHET', 'CATAPULT', 'SIEGE_TOWER', 'INFANTRY', 'ENGINEER'], tech: 'EXPLOSIVES' },
+    FIELD_GUN:    { obsoletes: ['ARTILLERY', 'CANNON', 'MORTAR', 'CATAPULT', 'TREBUCHET', 'SIEGE', 'SIEGE_TOWER', 'INFANTRY', 'ENGINEER'], tech: 'FIELD_ARTILLERY' },
 
     // Naval line: GALLEY → FRIGATE → IRONCLAD; TRANSPORT → STEAM_TRANSPORT
     FRIGATE:      { obsoletes: ['GALLEY'],                          tech: 'CARTOGRAPHY' },

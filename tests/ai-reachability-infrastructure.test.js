@@ -12,8 +12,9 @@ import { computeAIActions, findAffordableUnit } from '../src/ai.js';
 import { createAIState, selectGoals, isReachableByLand, classifyReachability } from '../src/ai_goals.js';
 import { createTechState, getUnlockedUnits, TECHS } from '../src/tech.js';
 import { FACTION_DEFS } from '../src/faction.js';
-import { DIPLOMACY_STATES, setGridDimensions, UNIT_TYPE, EXTRA_UNITS } from '../src/config.js';
+import { DIPLOMACY_STATES, setGridDimensions, UNIT_TYPE, EXTRA_UNITS, TYPE_ADVANTAGE, BUILDING_TYPE } from '../src/config.js';
 import { canAfford } from '../src/unit.js';
+import { resolveCombat } from '../src/battle.js';
 import { makeTile, makeUnit, makeTileMap } from './helpers.js';
 
 beforeEach(() => { setGridDimensions(40, 40); });
@@ -1161,7 +1162,6 @@ describe('Siege composition & balance', () => {
 
 describe('Infantry vs siege TYPE_ADVANTAGE', () => {
     it('infantry has type advantage against siege units', () => {
-        const { TYPE_ADVANTAGE } = require('../src/config.js');
         const adv = TYPE_ADVANTAGE.INFANTRY;
         expect(adv).toBeDefined();
         const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
@@ -1169,7 +1169,6 @@ describe('Infantry vs siege TYPE_ADVANTAGE', () => {
     });
 
     it('infantry has type advantage against archers', () => {
-        const { TYPE_ADVANTAGE } = require('../src/config.js');
         const adv = TYPE_ADVANTAGE.INFANTRY;
         const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
         expect(targets).toContain('ARCHER');
@@ -1281,7 +1280,6 @@ describe('Naval conquest: army group heads to coast', () => {
 
 describe('Per-city building limits', () => {
     it('maxPerCity is set on FARM, LUMBERMILL, MINE', () => {
-        const { BUILDING_TYPE } = require('../src/config.js');
         expect(BUILDING_TYPE.FARM.maxPerCity).toBe(2);
         expect(BUILDING_TYPE.LUMBERMILL.maxPerCity).toBe(2);
         expect(BUILDING_TYPE.MINE.maxPerCity).toBe(2);
@@ -1318,21 +1316,18 @@ describe('Spectate mode victory checks', () => {
     it('checkVictory runs elimination in spectate mode', () => {
         // This tests the logic indirectly — we verify the function signature works
         // without crashing when spectateMode is true.
-        const { BUILDING_TYPE } = require('../src/config.js');
         expect(BUILDING_TYPE.UNIVERSITY.techRequired).toBeUndefined();
     });
 });
 
 describe('UNIVERSITY has no tech gate', () => {
     it('UNIVERSITY can be built without researching ACADEMY', () => {
-        const { BUILDING_TYPE } = require('../src/config.js');
         expect(BUILDING_TYPE.UNIVERSITY.techRequired).toBeUndefined();
     });
 });
 
 describe('Iron Empire king ability boosts siege attack', () => {
     it('siegeAttack bonus applies to siege units in combat', () => {
-        const { resolveCombat } = require('../src/battle.js');
         const atk = makeUnit('ARTILLERY', 'a', 0, 0);
         const def = makeUnit('INFANTRY', 'b', 1, 0, { hp: 50, maxHp: 50 });
         const tempBonuses = { a: { attack: 0, defense: 0, siegeAttack: 4 } };

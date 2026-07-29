@@ -202,46 +202,72 @@ export function planTheaterProduction(theaters, tiles, owner, land, isAtWar) {
     return suggestions;
 }
 
-/** Request naval ferry from the home theater to an overseas theater that needs
- *  reinforcements. Returns null if no ferry is needed, or a ferry plan:
- *  { fromPort, toPort, transportCount, unitIds } */
-export function planFerry(theaters, units, tiles, owner, land) {
-    const home = [...theaters.values()].find(t => t.homeTheater);
-    if (!home || !home.portCity) return null;
+/** How many units should stay behind as garrison in a theater? One per city,
+ *  +1 per city when the theater is seriously threatened (urgency > 0.5) and
+ *  +1 for a city with high unrest (> 50). Groups beyond this quota are
+ *  surplus — free to attack in-theater or embark for another theater. */
+export function garrisonNeeds(theater, tiles, owner, land) {
+    let need = 0;
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY' || t.owner !== owner) continue;
+        if (land.idOf.get(`${t.x},${t.z}`) !== theater.landmassId) continue;
+        need += 1;
+        if (theater.urgency > 0.5) need += 1;
+        if ((t.unrest || 0) > 50) need += 1;
+    }
+    return need;
+}
 
-    // Find an overseas theater that has urgent need but not enough groups.
-    let neediest = null;
-    for (const t of theaters.values()) {
-        if (t.homeTheater) continue;
-        if (t.urgency < 0.3) continue;
-        const friendPower = t.groups.reduce((s, g) => s + g.units.length, 0);
-        if (friendPower < t.enemyUnits) {
-            neediest = t;
-            break;
+/** Nearest attackable city (enemy at war, or neutral) ON a given landmass —
+ *  the in-theater offensive target for groups released from garrison duty.
+ *  Returns the city tile or null. */
+export function findTheaterTarget(tiles, owner, landmassId, land, isAtWar, fromX, fromZ) {
+    let best = null, bestDist = Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY' || t.owner === owner) continue;
+        if (t.owner && isAtWar && !isAtWar(t.owner)) continue;
+        if (land.idOf.get(`${t.x},${t.z}`) !== landmassId) continue;
+        const d = Math.abs(t.x - fromX) + Math.abs(t.z - fromZ);
+        if (d < bestDist) { bestDist = d; best = t; }
+    }
+    return best;
+}
+
+/** Pair every needy theater with a quiet donor theater for naval reinforcement.
+ *  A theater is needy when it is under pressure (urgency ≥ 0.3), outnumbered
+ *  locally, and has a port to receive troops. A donor is any OTHER theater
+ *  that is quiet (urgency < 0.2), has a port to embark from, and still has
+ *  groups available (per the caller's donorFilter). Returns an array of
+ *  { donor, needy, fromPort, toPort } — one plan per needy theater.
+ *
+ *  This replaces the old home→overseas-only planFerry: reinforcement can now
+ *  flow between ANY pair of landmasses, which is what lets large idle armies
+ *  on safe continents join the fight instead of sitting at home. */
+export function planFerries(theaters, units, tiles, owner, land, donorFilter = null) {
+    const plans = [];
+    const list = [...theaters.values()];
+    for (const needy of list) {
+        if (needy.urgency < 0.3 || !needy.portCity) continue;
+        const friendPower = needy.groups.reduce((s, g) => s + g.units.length, 0);
+        if (friendPower >= needy.enemyUnits) continue;
+        let bestDonor = null, bestDist = Infinity;
+        for (const donor of list) {
+            if (donor === needy || donor.urgency >= 0.2 || !donor.portCity) continue;
+            if (donorFilter && !donorFilter(donor)) continue;
+            const d = Math.abs(donor.portCity.x - needy.portCity.x) +
+                      Math.abs(donor.portCity.z - needy.portCity.z);
+            if (d < bestDist) { bestDist = d; bestDonor = donor; }
+        }
+        if (bestDonor) {
+            plans.push({
+                donor: bestDonor,
+                needy,
+                fromPort: bestDonor.portCity,
+                toPort: needy.portCity
+            });
         }
     }
-    if (!neediest || !neediest.portCity) return null;
-
-    // Find available transports in the home theater or en route.
-    const homeMass = home.landmassId;
-    const transports = [...units.values()].filter(u => {
-        if (u.owner !== owner) return false;
-        const utype = u.type || '';
-        if (utype !== 'TRANSPORT' && utype !== 'STEAM_TRANSPORT') return false;
-        if (u.boarded) return false;
-        const umass = land.idOf.get(`${u.x},${u.z}`);
-        // Must be near the home theater (on its landmass or adjacent water).
-        return umass === homeMass || umass == null; // null = at sea
-    });
-
-    if (transports.length === 0) return null;
-
-    return {
-        fromPort: home.portCity,
-        toPort: neediest.portCity,
-        transportCount: transports.length,
-        theaterId: neediest.id
-    };
+    return plans;
 }
 
 function groupCentroid(group) {
