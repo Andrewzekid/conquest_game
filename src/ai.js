@@ -26,8 +26,8 @@ import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordComba
 import { selectGoals, pathCrossesWater, isReachableByLand, isKingVulnerable } from './ai_goals.js';
 import { getUnlockedUnits, getUnlockedStructures, TECHS } from './tech.js';
 import { applyObsolescence, isObsolete } from './unit_obsolescence.js';
-import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective } from './ai_army_plan.js';
-import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity, garrisonNeeds, findTheaterTarget, planFerries } from './ai_theater.js';
+import { computeStrategicTarget, detectFlankingOpportunity, computeFlankObjective, findSafeBeachheadLandingTile, findStagingTile, findPerimeterTile } from './ai_army_plan.js';
+import { createTheaters, assignGroupsToTheaters, computeTheaterUrgency, allocateTheaterBudgets, findTheaterCity, garrisonNeeds, findTheaterTarget, planFerries, calculateAdjustedPower } from './ai_theater.js';
 
 /** Flow-aware scarcity (Feature: scarcity should consider net resource flow).
  *  Pure: given this turn's stock, last turn's stock snapshot, and per-resource
@@ -1348,23 +1348,31 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const theaters = createTheaters(tiles, owner, theaterLand);
     if (theaters.size > 0) {
         const homeTheater = [...theaters.values()].find(t => t.homeTheater);
-        if (homeTheater && homeTheater.urgency >= 0.3) {
-            const defCap = Math.min(3, Math.ceil(homeTheater.cityCount * 1.5));
-            let defTrained = 0;
-            // Count existing + queued units on the home landmass.
-            const homeUnits = myUnits.filter(u => {
+        if (homeTheater) {
+            // computeTheaterUrgency hasn't run yet, so check directly.
+            let enemyOnHome = 0;
+            for (const u of units.values()) {
+                if (u.owner === owner || !isAtWar(u.owner, owner)) continue;
+                if (u.boarded) continue;
                 const m = theaterLand.idOf.get(`${u.x},${u.z}`);
-                return m === homeTheater.landmassId;
-            }).length;
-            while (homeUnits + defTrained < defCap && capRoom() && defTrained < 2) {
-                const defType = findDefensiveUnit(res, fullRoster, factionDef, myUnits, actions, owner, aiState);
-                if (!defType) break;
-                // Find a city on the home landmass specifically.
-                const homeCity = findTheaterCity(tiles, owner, homeTheater.landmassId, theaterLand, actions);
-                if (!homeCity) break;
-                actions.push({ type: 'train', unitType: defType, tileKey: `${homeCity.x},${homeCity.z}` });
-                res = spendCost(defType, res, getUnitCostFor(defType, factionDef));
-                defTrained++;
+                if (m === homeTheater.landmassId) enemyOnHome++;
+            }
+            if (enemyOnHome > 0) {
+                const defCap = Math.min(3, Math.ceil(homeTheater.cityCount * 1.5));
+                let defTrained = 0;
+                const homeUnits = myUnits.filter(u => {
+                    const m = theaterLand.idOf.get(`${u.x},${u.z}`);
+                    return m === homeTheater.landmassId;
+                }).length;
+                while (homeUnits + defTrained < defCap && capRoom() && defTrained < 2) {
+                    const defType = findDefensiveUnit(res, fullRoster, factionDef, myUnits, actions, owner, aiState);
+                    if (!defType) break;
+                    const homeCity = findTheaterCity(tiles, owner, homeTheater.landmassId, theaterLand, actions);
+                    if (!homeCity) break;
+                    actions.push({ type: 'train', unitType: defType, tileKey: `${homeCity.x},${homeCity.z}` });
+                    res = spendCost(defType, res, getUnitCostFor(defType, factionDef));
+                    defTrained++;
+                }
             }
         }
     }
@@ -1480,6 +1488,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //    they fight as a coordinated group rather than each picking targets
     //    independently. (`moved`/`acted` were declared at the top, before the
     //    capture-first pre-pass.)
+
+    // Naval fleet groups: cluster ships into tactical fleets BEFORE the
+    // per-unit ship loop so each ship can consult its group role.
+    const navalGroups = buildNavalGroups(myUnits, owner, tiles, isAtWar);
+    const shipGroup = new Map();
+    for (const ng of navalGroups) {
+        for (const u of ng.units) shipGroup.set(u.id, ng);
+    }
+    const navalGroupObjectives = new Map(); // naval group -> objective tile
 
     for (const unit of myUnits) {
         // a) Settlers found a city where they stand (if valid) or head toward
@@ -1969,6 +1986,26 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                             }
                         }
                     } else if (hasMilitary) {
+                        // 6a gate — Escorted flotilla with timeout: if the sea corridor is
+                        // dangerous (enemy warships within 8 tiles) and no friendly escort
+                        // is within 3 tiles, the transport waits up to 5 turns before
+                        // sailing unescorted.
+                        const dangerousCorridor = [...units.values()].some(u =>
+                            u.owner !== owner && isAtWar(u.owner, owner) && isNaval(u) &&
+                            !isTransport(u) && Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) <= 8);
+                        const hasCloseEscort = [...units.values()].some(u =>
+                            u.owner === owner && !isTransport(u) && isNaval(u) &&
+                            Math.abs(u.x - unit.x) + Math.abs(u.z - unit.z) <= 3);
+                        if (dangerousCorridor && !hasCloseEscort) {
+                            unit._escortWaitTurns = (unit._escortWaitTurns || 0) + 1;
+                            if (unit._escortWaitTurns < 5) {
+                                // Waiting for escort — skip movement this turn.
+                                acted.add(unit.id);
+                                continue;
+                            }
+                        } else {
+                            unit._escortWaitTurns = 0; // reset when safe or escorted
+                        }
                         // Cross-theater ferry: cargo tagged with _ferryTo (by the
                         // donor-theater release in step 5a3) sails to the needy
                         // theater's port — not to an assault target of the
@@ -2131,7 +2168,24 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 acted.add(unit.id);
                 continue;
             }
-            // Warships (GALLEY/FRIGATE/GALLEON): attack a target in range…
+            // Warships (GALLEY/FRIGATE/GALLEON): consult naval group role to
+            // narrow the action tree. Ungrouped ships default to 'strike'.
+            const ng = shipGroup.get(unit.id);
+            const navalRole = ng ? ng.role : 'strike';
+            // Defend fleet: only attack ships in range, then hold position.
+            if (navalRole === 'defend') {
+                if (atWar && !unit.hasAttackedThisTurn) {
+                    const tgt = findAttackTarget(unit, units, isAtWar);
+                    if (tgt) {
+                        actions.push({ type: 'attack', fromId: unit.id, toId: tgt.id });
+                        acted.add(unit.id);
+                        continue;
+                    }
+                }
+                acted.add(unit.id);
+                continue;
+            }
+            // All other roles (strike, besiege, amphibious): attack in range…
             if (atWar && !unit.hasAttackedThisTurn) {
                 const tgt = findAttackTarget(unit, units, isAtWar);
                 if (tgt) {
@@ -2210,6 +2264,82 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             acted.add(unit.id);
             continue;
         }
+    }
+
+    // 4b. Naval fleet group objectives. After the per-unit ship loop, assign
+    //     fleet-level objectives so the naval debug panel shows where each
+    //     fleet is heading. Objectives use the same target-finding helpers
+    //     as the per-unit code but at the fleet level.
+    for (const ng of navalGroups) {
+        const centroid = groupCentroid(ng);
+        let obj = null;
+        if (ng.role === 'amphibious' || ng.role === 'transport') {
+            // Sail toward the nearest enemy coastal city (beachhead approach).
+            const transport = ng.units.find(u => isTransport(u));
+            if (transport) {
+                if (atWar) {
+                    const target = nearestEnemyCoastalCity(transport, tiles, owner, isAtWar);
+                    if (target) obj = target;
+                }
+                if (!obj) obj = nearestForeignLandmass(transport, tiles, owner, land);
+            }
+        } else if (ng.role === 'besiege') {
+            // Find nearest enemy coastal city with fortification > 0.
+            let best = null, bestDist = Infinity;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+                if (isAtWar && !isAtWar(t.owner)) continue;
+                if ((t.fortification || 0) <= 0) continue;
+                let coastal = false;
+                for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+                    if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) { coastal = true; break; }
+                }
+                if (!coastal) continue;
+                const d = Math.abs(centroid.x - t.x) + Math.abs(centroid.z - t.z);
+                if (d < bestDist) { bestDist = d; best = t; }
+            }
+            if (best) obj = best;
+        } else if (ng.role === 'defend') {
+            // Nearest friendly coastal city.
+            let best = null, bestDist = Infinity;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || t.owner !== owner) continue;
+                let coastal = false;
+                for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+                    if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) { coastal = true; break; }
+                }
+                if (!coastal) continue;
+                const d = Math.abs(centroid.x - t.x) + Math.abs(centroid.z - t.z);
+                if (d < bestDist) { bestDist = d; best = t; }
+            }
+            if (best) obj = best;
+        } else {
+            // strike: nearest enemy ship cluster centroid.
+            let best = null, bestDist = Infinity, sumX = 0, sumZ = 0, count = 0;
+            for (const u of units.values()) {
+                if (u.owner === owner || !isAtWar(u.owner, owner)) continue;
+                const def = UNIT_TYPE[u.type];
+                if (!def || !def.naval) continue;
+                sumX += u.x; sumZ += u.z; count++;
+            }
+            if (count > 0) {
+                const cluster = { x: Math.round(sumX / count), z: Math.round(sumZ / count) };
+                obj = cluster;
+            }
+            if (!obj && atWar) {
+                let nearestEnemyCity = null, nearestDist = Infinity;
+                for (const t of tiles.values()) {
+                    if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+                    if (!isAtWar(t.owner)) continue;
+                    const d = Math.abs(centroid.x - t.x) + Math.abs(centroid.z - t.z);
+                    if (d < nearestDist) { nearestDist = d; nearestEnemyCity = t; }
+                }
+                if (nearestEnemyCity) obj = nearestEnemyCity;
+            }
+        }
+        if (obj) navalGroupObjectives.set(ng, { x: obj.x, z: obj.z });
     }
 
     // 5. Army-group coordination: ALL military units (everything that isn't a
@@ -2357,7 +2487,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 .sort((a, b) => groupPower(a) - groupPower(b));
             let kept = 0;
             for (const g of patrols) {
-                if (kept < quota) { kept += g.units.length; continue; }
+                if (kept < quota) { kept++; continue; }
                 releasedGroups.add(g);
             }
         }
@@ -2536,6 +2666,72 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
     }
 
+    // 5ab. Staging area + siege/screen role split. Conquest groups targeting
+    //      the same coastal city are organized: the stronger group gets the
+    //      coastal city objective (siege), the others guard the perimeter
+    //      (screen) against enemy reinforcements approaching the siege group.
+    //      Groups targeting a coastal enemy city that are not yet in position
+    //      get routed through a beachhead staging tile first.
+    if (conquest.size >= 2 && strategicTarget) {
+        const siegeTarget = strategicTarget;
+        let siegeGroup = null, maxPower = -1;
+        const siegeCandidates = conquestGroups.filter(g => {
+            const obj = groupObjectives.get(g);
+            return obj && obj.x === siegeTarget.x && obj.z === siegeTarget.z;
+        });
+        for (const g of siegeCandidates) {
+            const p = groupPower(g);
+            if (p > maxPower) { maxPower = p; siegeGroup = g; }
+        }
+        if (siegeGroup) {
+            groupObjectives.set(siegeGroup, { x: siegeTarget.x, z: siegeTarget.z });
+            groupStances.set(siegeGroup, 'siege');
+            for (const g of siegeCandidates) {
+                if (g === siegeGroup) continue;
+                const gc = groupCentroid(g);
+                // Compute beachhead landing tile if the screen group approaches from sea.
+                const beachhead = findSafeBeachheadLandingTile(tiles, siegeTarget.x, siegeTarget.z, units, owner, isAtWar);
+                if (beachhead) {
+                    const staging = findStagingTile(beachhead.x, beachhead.z, siegeTarget.x, siegeTarget.z, tiles);
+                    groupObjectives.set(g, staging);
+                } else {
+                    // Screen from the landward side — between siege target and most-likely enemy reinforcements.
+                    const enemyDirection = { dx: Math.sign(siegeTarget.x - gc.x) || 0, dz: Math.sign(siegeTarget.z - gc.z) || 0 };
+                    const screenPos = findPerimeterTile(gc.x, gc.z, [enemyDirection], tiles);
+                    groupObjectives.set(g, screenPos);
+                }
+                groupStances.set(g, 'screen');
+            }
+        }
+    }
+
+    // Phase 4a continued: staging for any conquest group approaching a coastal
+    // target by sea (even single-group operations).
+    if (conquest.size > 0) {
+        for (const g of conquestGroups) {
+            const obj = groupObjectives.get(g);
+            if (!obj) continue;
+            // Is the target a coastal enemy city?
+            let isCoastalTarget = false;
+            for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                const nt = tiles.get(`${obj.x + dx},${obj.z + dz}`);
+                if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) { isCoastalTarget = true; break; }
+            }
+            if (!isCoastalTarget) continue;
+            const stance = groupStances.get(g);
+            if (stance === 'siege' || stance === 'screen') continue; // already handled above
+            const gc = groupCentroid(g);
+            const dist = Math.abs(gc.x - obj.x) + Math.abs(gc.z - obj.z);
+            if (dist <= 2) continue; // already adjacent — no staging needed
+            const beachhead = findSafeBeachheadLandingTile(tiles, obj.x, obj.z, units, owner, isAtWar);
+            if (beachhead) {
+                const staging = findStagingTile(beachhead.x, beachhead.z, obj.x, obj.z, tiles);
+                groupObjectives.set(g, staging);
+                groupStances.set(g, 'stage');
+            }
+        }
+    }
+
     // 5c. Naval embarkation: when the conquest goal requires naval transport
     //     (meta.requiresNaval) and the plan has a 'boardArmy' step, order the
     //     conquest group's land units to move toward and board friendly
@@ -2667,6 +2863,23 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 objective: obj ? `${obj.x},${obj.z}` : null,
                 lord: g.lord ? (g.lord.name || null) : null,
                 power: g.units.reduce((s, u) => s + unitValue(u), 0),
+                composition,
+            };
+        });
+        // Persist naval fleet groups for the debug panel.
+        aiState.navalGroups = navalGroups.map(ng => {
+            const obj = navalGroupObjectives.get(ng);
+            const composition = {};
+            for (const u of ng.units) composition[u.type] = (composition[u.type] || 0) + 1;
+            const power = ng.units.reduce((s, u) => s + calculateAdjustedPower(u), 0);
+            return {
+                id: ng.id,
+                size: ng.units.length,
+                stance: ng.role,
+                objective: obj ? `${obj.x},${obj.z}` : null,
+                lord: null,
+                power,
+                role: ng.role,
                 composition,
             };
         });
@@ -4155,6 +4368,88 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
     return groups;
 }
 
+/** Group naval units into fleet groups: transport + escort pairs form
+ *  'amphibious' groups; remaining warships cluster spatially (Chebyshev ≤ 3)
+ *  into strike/besiege/defend groups. Rebuilt every turn — no persistent
+ *  group identities (dynamic re-grouping is handled by per-turn rebuild).
+ *  Returns [{ id, units, role }]. */
+function buildNavalGroups(myUnits, owner, tilesMap, isAtWarFn) {
+    const navalUnits = myUnits.filter(u => isNaval(u));
+    const groups = [];
+    const assigned = new Set();
+    const transports = navalUnits.filter(u => isTransport(u));
+    const warships = navalUnits.filter(u => !isTransport(u));
+
+    // Pass 1: Transport + escort pairs.
+    for (const tr of transports) {
+        const group = { id: 'fleet:' + tr.id, units: [tr], role: 'transport' };
+        const escort = warships.find(ws =>
+            !assigned.has(ws.id) && Math.abs(ws.x - tr.x) + Math.abs(ws.z - tr.z) <= 3);
+        if (escort) {
+            group.units.push(escort);
+            assigned.add(escort.id);
+            group.role = 'amphibious';
+        }
+        groups.push(group);
+        assigned.add(tr.id);
+    }
+
+    // Pass 2: Unassigned warships cluster spatially.
+    const remaining = warships.filter(u => !assigned.has(u.id));
+    for (const ws of remaining) {
+        let best = null, bestDist = Infinity;
+        for (const g of groups) {
+            if (g.role === 'transport') continue;
+            const c = groupCentroid(g);
+            const d = Math.max(Math.abs(c.x - ws.x), Math.abs(c.z - ws.z));
+            if (d <= 3 && d < bestDist) { bestDist = d; best = g; }
+        }
+        if (best) {
+            best.units.push(ws);
+        } else {
+            groups.push({ id: 'fleet:' + ws.id, units: [ws], role: 'strike' });
+        }
+        assigned.add(ws.id);
+    }
+
+    // Pass 3: Assign roles based on composition and position.
+    for (const g of groups) {
+        g.role = classifyNavalGroup(g, owner, tilesMap, isAtWarFn);
+    }
+
+    return groups;
+}
+
+/** Classify a naval fleet group's tactical role based on composition,
+ *  proximity to enemy/friendly cities, and power. */
+export function classifyNavalGroup(group, owner, tilesMap, isAtWarFn) {
+    const hasTransport = group.units.some(u => isTransport(u));
+    const hasWarship = group.units.some(u => !isTransport(u));
+    if (hasTransport && hasWarship) return 'amphibious';
+    if (hasTransport) return 'transport';
+
+    // Warship-only groups.
+    const nearEnemyCoast = group.units.some(u => {
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tilesMap.get(`${u.x + dx},${u.z + dz}`);
+            if (nt && nt.terrain === 'CITY' && nt.owner && nt.owner !== owner) return true;
+        }
+        return false;
+    });
+    const nearFriendlyCoast = group.units.some(u => {
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tilesMap.get(`${u.x + dx},${u.z + dz}`);
+            if (nt && nt.terrain === 'CITY' && nt.owner === owner) return true;
+        }
+        return false;
+    });
+    const power = group.units.reduce((s, u) => s + calculateAdjustedPower(u), 0);
+
+    if (nearEnemyCoast && power >= 20) return 'besiege';
+    if (nearFriendlyCoast && !nearEnemyCoast) return 'defend';
+    return 'strike';
+}
+
 /** Average position of a group's members (rounded to a tile). */
 function groupCentroid(group) {
     let sx = 0, sz = 0;
@@ -5601,7 +5896,8 @@ export function buildArmyGroupsHTML(aiState, factions, factionDefs, factionColor
     for (const slot of factions) {
         const st = aiState && aiState[slot];
         const groups = (st && Array.isArray(st.armyGroups)) ? st.armyGroups : [];
-        if (!groups.length) continue;
+        const navals = (st && Array.isArray(st.navalGroups)) ? st.navalGroups : [];
+        if (!groups.length && !navals.length) continue;
         any = true;
         const def = factionDefs && factionDefs[slot];
         const color = factionColors && factionColors[slot];
@@ -5621,12 +5917,24 @@ export function buildArmyGroupsHTML(aiState, factions, factionDefs, factionColor
   <span style="font-size:10px;">${comp || '—'}</span>
 </div>`;
         }).join('');
+        const navRows = navals.map(ng => {
+            const comp = Object.entries(ng.composition || {})
+                .map(([type, n]) => `${(UNIT_TYPE[type] && UNIT_TYPE[type].name) || type} ×${n}`)
+                .join(' · ');
+            const roleLabel = ng.role || 'strike';
+            const obj = ng.objective ? ` → ${ng.objective}` : '';
+            return `<div style="font-size:11px;line-height:1.4;margin:2px 0;padding:2px 4px;background:rgba(255,255,255,0.04);border-radius:3px;">
+  <strong>${roleLabel}</strong> <span class="muted">${obj} · pow ${ng.power || 0}</span><br>
+  <span style="font-size:10px;">${comp || '—'}</span>
+</div>`;
+        }).join('');
         const idleNote = (st && st.idleMilitaryCount != null)
             ? ` · <span style="color:${st.idleMilitaryCount > 0 ? '#e07b3a' : '#6fbf73'};">idle ${st.idleMilitaryCount}</span>`
             : '';
         html += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
   <div style="font-weight:600;">${emoji} ${name} <span class="muted" style="font-size:10px;">(${groups.length} groups${idleNote})</span></div>
   ${rows}
+  ${navals.length ? `<div style="margin-top:4px;font-size:11px;color:#7ab;">Naval Fleet (${navals.length} groups)</div>${navRows}` : ''}
 </div>`;
     }
     if (!any) html += '<p class="muted">No army groups</p>';

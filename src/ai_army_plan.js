@@ -1,5 +1,6 @@
-/** Strategic army planning: concentration of force, reserve assignment, and
- *  flanking detection. Pure functions — no mutation of game state.
+/** Strategic army planning: concentration of force, reserve assignment, flanking
+ *  detection, beachhead landing engine, and staging-area coordination.
+ *  Pure functions — no mutation of game state.
  *
  *  This module sits between the per-turn goal selection (ai_goals.js) and the
  *  per-group tactical planning (planGroup in ai.js). It answers the question
@@ -269,4 +270,109 @@ export function computeFlankObjective(target, assaultAngle, tiles, owner) {
         return { x: fx, z: fz };
     }
     return null;
+}
+
+/** Sum of hostile military power (all at-war factions) within Manhattan
+ *  `radius` of a tile. Used by the beachhead engine to pick a safe landing
+ *  spot. Ships are excluded (naval power assessed separately). */
+export function getReachableHostilePower(tileKey, tiles, units, owner, isAtWar, radius = 4) {
+    const [x, z] = tileKey.split(',').map(Number);
+    let power = 0;
+    for (const u of units.values()) {
+        if (u.owner === owner || !isAtWar(u.owner, owner)) continue;
+        if (u.boarded) continue;
+        const def = UNIT_TYPE[u.type];
+        if (def && def.naval) continue;
+        if (Math.abs(u.x - x) + Math.abs(u.z - z) > radius) continue;
+        const atk = def ? def.attack || 0 : 0;
+        power += (u.hp || 1) + atk * 2;
+    }
+    return power;
+}
+
+/** Find a safe beachhead landing tile near a target coastal city.
+ *  Scans the 4 cardinal neighbors of the target: picks the first one that is
+ *  land (not WATER/MOUNTAIN), not enemy-owned, not blocked by adjacent enemy,
+ *  and reachable from the target's sea approach.
+ *
+ *  The safe beachhead is the tile where amphibious troops should disembark
+ *  (transport sails adjacent, unloads onto this tile). Returns null if no
+ *  safe tile exists — the caller falls back to nearestEnemyCoastalCity.
+ *
+ *  @param {Map} tiles - game tiles
+ *  @param {number} targetX - coastal city X
+ *  @param {number} targetZ - coastal city Z
+ *  @param {Map} units - all units (for enemy proximity check)
+ *  @param {string} owner - this faction's id
+ *  @param {Function} isAtWar - (factionId) => boolean
+ *  @returns {{ x, z }|null} */
+export function findSafeBeachheadLandingTile(tiles, targetX, targetZ, units, owner, isAtWar) {
+    let best = null, bestPower = Infinity;
+    for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const bx = targetX + dx, bz = targetZ + dz;
+        const bt = tiles.get(`${bx},${bz}`);
+        if (!bt) continue;
+        // Must be land tile (not WATER or MOUNTAIN).
+        if (bt.terrain === 'WATER' || bt.terrain === 'MOUNTAIN') continue;
+        // Must not be our own city or an enemy city.
+        if (bt.terrain === 'CITY') continue;
+        // Must have WATER adjacency (reachable by transport).
+        let adjacentWater = false;
+        for (const [dx2, dz2] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tiles.get(`${bx + dx2},${bz + dz2}`);
+            if (nt && nt.terrain === 'WATER') { adjacentWater = true; break; }
+        }
+        if (!adjacentWater) continue;
+        // Check hostile power within radius 3.
+        const hp = getReachableHostilePower(`${bx},${bz}`, tiles, units, owner, isAtWar, 3);
+        if (hp < bestPower) { bestPower = hp; best = { x: bx, z: bz }; }
+    }
+    return best;
+}
+
+/** Find a staging tile for an army group preparing to attack a target city.
+ *  Places the group 2-4 tiles behind the beachhead (away from the target)
+ *  so the group can form up before committing.
+ *  Returns { x, z } or the beachhead itself if no rear tile is available. */
+export function findStagingTile(beachheadX, beachheadZ, targetX, targetZ, tiles) {
+    // Direction from target → beachhead (reverse of approach).
+    const dx = beachheadX - targetX;
+    const dz = beachheadZ - targetZ;
+    const ndx = Math.sign(dx) || 0;
+    const ndz = Math.sign(dz) || 0;
+    for (let dist = 2; dist <= 4; dist++) {
+        const sx = beachheadX + ndx * dist;
+        const sz = beachheadZ + ndz * dist;
+        const st = tiles.get(`${sx},${sz}`);
+        if (!st) continue;
+        if (st.terrain === 'WATER' || st.terrain === 'MOUNTAIN') continue;
+        return { x: sx, z: sz };
+    }
+    return { x: beachheadX, z: beachheadZ };
+}
+
+/** Find a perimeter tile for a screening group — a defensible position between
+ *  the staging area and known threat directions. Returns a tile offset from
+ *  staging by the average threat direction, or the staging tile itself if no
+ *  clear threat direction exists. */
+export function findPerimeterTile(stagingX, stagingZ, threatDirections, tiles) {
+    if (!threatDirections || threatDirections.length === 0) {
+        return { x: stagingX, z: stagingZ };
+    }
+    let avgDx = 0, avgDz = 0;
+    for (const dir of threatDirections) {
+        avgDx += dir.dx;
+        avgDz += dir.dz;
+    }
+    avgDx = Math.round(avgDx / threatDirections.length);
+    avgDz = Math.round(avgDz / threatDirections.length);
+    for (let dist = 1; dist <= 3; dist++) {
+        const px = stagingX + avgDx * dist;
+        const pz = stagingZ + avgDz * dist;
+        const pt = tiles.get(`${px},${pz}`);
+        if (!pt) continue;
+        if (pt.terrain === 'WATER' || pt.terrain === 'MOUNTAIN') continue;
+        return { x: px, z: pz };
+    }
+    return { x: stagingX, z: stagingZ };
 }

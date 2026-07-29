@@ -11,6 +11,7 @@
  *  is under attack, and lets it manage multi-island empires effectively.
  */
 import { countCities } from './economy.js';
+import { UNIT_TYPE } from './config.js';
 
 /** Represents one geographic theater for a faction. */
 export class Theater {
@@ -119,11 +120,18 @@ export function assignGroupsToTheaters(groups, theaters, tiles, land, owner) {
     }
 }
 
-/** Count enemy units on each theater's landmass to compute urgency. */
+/** Count enemy units on each theater's landmass to compute urgency.
+ *  Urgency is a 0-1 blend of:
+ *    - Active threat (75%): enemy units on the landmass vs friendly garrison
+ *    - Latent threat (25%): enemy naval transports within 6 tiles of the
+ *      theater's coast, weighted by how many hostile factions are present
+ *  Also handles RIVER/WATER separation: naval threat scanning only considers
+ *  WATER tiles, while port-finding retains RIVER for backward compat. */
 export function computeTheaterUrgency(theaters, tiles, units, owner, isAtWar, land) {
     for (const t of theaters.values()) {
         t.enemyUnits = 0;
     }
+    // Count enemy units per theater (landmass-only — ignore ships at sea).
     for (const u of units.values()) {
         if (u.owner === owner || !isAtWar(u.owner, owner)) continue;
         if (u.boarded) continue;
@@ -132,15 +140,38 @@ export function computeTheaterUrgency(theaters, tiles, units, owner, isAtWar, la
             theaters.get(massId).enemyUnits++;
         }
     }
+    // Active: count hostile transports within 6 tiles of each theater's coast.
+    // Uses WATER-only coastal tiles (not RIVER) for threat scanning.
+    // Track unique transport IDs to avoid double-counting the same ship.
     for (const t of theaters.values()) {
-        // Urgency based on enemy-to-friendly ratio on this landmass.
+        const coastTiles = theaterCoastalTiles(tiles, t.landmassId, land, owner);
+        const seen = new Set();
+        for (const ct of coastTiles) {
+            const transports = hostileTransportsAt(units, `${ct.x},${ct.z}`, 6, owner, isAtWar);
+            for (const id of transports) seen.add(id);
+        }
+        const transitCount = seen.size;
+        // Count unique hostile factions with transports near this theater's coast.
+        const hostileFactionsNear = new Set();
+        for (const id of seen) {
+            const u = units.get(id);
+            if (u) hostileFactionsNear.add(u.owner);
+        }
+        const factionWeight = Math.min(1, hostileFactionsNear.size * 0.25);
+
         const friendGroups = t.groups.reduce((s, g) => s + g.units.length, 0);
         const ratio = friendGroups > 0 ? t.enemyUnits / friendGroups : t.enemyUnits;
-        t.urgency = Math.min(1, ratio * 0.5);
-        // If there are enemy units on the home landmass at all, raise urgency.
+        // Active threat (75%): enemy-to-friendly ratio on the landmass.
+        const active = Math.min(1, ratio * 0.5);
+        // Latent threat (25%): transit count weighted by faction diversity.
+        const latent = Math.min(1, (transitCount * 0.15 + factionWeight) * 0.33);
+        t.urgency = active * 0.75 + latent * 0.25;
+        // Home theater boost: if enemy units are on the home landmass at all,
+        // guarantee a minimum urgency so the AI doesn't ignore its capital.
         if (t.homeTheater && t.enemyUnits > 0) {
             t.urgency = Math.max(t.urgency, 0.5);
         }
+        t.urgency = Math.min(1, t.urgency);
     }
 }
 
@@ -312,4 +343,58 @@ export function findTheaterCity(tiles, owner, landmassId, land, actions) {
         if (land.idOf.get(k) === landmassId) return t;
     }
     return null;
+}
+
+/** Combat power adjusted by splash and range bonuses.
+ *  Parallel to unitValue() in ai.js: this one gives extra weight to siege
+ *  units (splash AOE) and ranged warships (extra reach) so the AI correctly
+ *  values artillery and battleships when computing urgency and power ratios.
+ *  Does NOT replace unitValue/groupPower/localPowerBalance — those keep
+ *  their raw formulas for tactical combat decisions. */
+export function calculateAdjustedPower(unit) {
+    if (!unit) return 0;
+    const def = UNIT_TYPE[unit.type];
+    if (!def) return (unit.hp || 1) + (unit.attack || 0) * 2;
+    const atk = def.attack || 0;
+    const hp = unit.hp || 1;
+    let power = hp + atk * 2;
+    // Splash bonus: siege units and ships with splash deal area damage.
+    if (def.splash) power += atk * 0.8;
+    // Range bonus: units with range > 1 can bombard from safety.
+    const range = def.attackRange || 1;
+    if (range > 1) power += (range - 1) * 3;
+    // Naval priority: ships need extra weight because they control sea lanes.
+    if (def.naval) power *= 1.2;
+    return Math.round(power);
+}
+
+/** Return ID array of hostile transports (enemy ships with troop capacity)
+ *  within Chebyshev `radius` of `centerKey` on WATER-only tiles. Returns
+ *  unit IDs so the caller can deduplicate across overlapping radii. */
+export function hostileTransportsAt(units, centerKey, radius, owner, isAtWar) {
+    const [cx, cz] = centerKey.split(',').map(Number);
+    const found = [];
+    for (const u of units.values()) {
+        if (u.owner === owner || !isAtWar(u.owner, owner)) continue;
+        if (Math.max(Math.abs(u.x - cx), Math.abs(u.z - cz)) > radius) continue;
+        const def = UNIT_TYPE[u.type];
+        if (def && def.naval && def.capacity > 0) found.push(u.id);
+    }
+    return found;
+}
+
+/** All coastal WATER tiles adjacent to owned cities on a given landmass.
+ *  Used for naval threat scanning — only WATER tiles, not RIVER, to match
+ *  ship movement without conflating navigable rivers with open-sea access. */
+export function theaterCoastalTiles(tiles, landmassId, land, owner) {
+    const coast = new Set();
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY' || t.owner !== owner) continue;
+        if (land.idOf.get(`${t.x},${t.z}`) !== landmassId) continue;
+        for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+            const nt = tiles.get(`${t.x + dx},${t.z + dz}`);
+            if (nt && nt.terrain === 'WATER') coast.add(nt);
+        }
+    }
+    return coast;
 }
