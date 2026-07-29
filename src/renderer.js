@@ -948,6 +948,118 @@ export class GameRenderer {
         this._effects.push({ obj: smoke, born: performance.now(), life: 800, kind: 'debris' });
     }
 
+    /** Tank shell: flat fast shell with heavy impact (TANK, HEAVY_TANK). */
+    addTankShell(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.25;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.1;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        // Muzzle flash
+        const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 1 }));
+        flash.position.set(x0, y0, z0);
+        this.effectsGroup.add(flash);
+        // Shell
+        const shell = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0x3a3a2a }));
+        shell.position.set(x0, y0, z0);
+        this.effectsGroup.add(shell);
+        // Smoke trail
+        const smokeTrail = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.5 }));
+        smokeTrail.position.set(x0, y0, z0);
+        this.effectsGroup.add(smokeTrail);
+        const start = performance.now();
+        const life = 280;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !shell.parent) {
+                if (shell.parent) this.effectsGroup.remove(shell);
+                if (flash.parent) this.effectsGroup.remove(flash);
+                if (smokeTrail.parent) this.effectsGroup.remove(smokeTrail);
+                if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
+                return;
+            }
+            shell.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
+            flash.material.opacity = 1 - t * 3;
+            flash.scale.setScalar(1 + t * 2);
+            smokeTrail.position.copy(shell.position);
+            smokeTrail.material.opacity = 0.5 * (1 - t);
+            smokeTrail.scale.setScalar(1 + t);
+            requestAnimationFrame(step);
+        };
+        step();
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const recoil = Math.sin(t * Math.PI) * 0.15;
+            m.position.set(p.x - (dx / len) * recoil, p.y, p.z - (dz / len) * recoil);
+        }, life);
+    }
+
+    /** Rocket: projectile with smoke trail (ANTI_TANK_GUN, RPG_TEAM). */
+    addRocket(attackerId, fromX, fromZ, toX, toZ) {
+        const y0 = (this.tileHeights.get(`${fromX},${fromZ}`) || 0) + 0.3;
+        const y1 = (this.tileHeights.get(`${toX},${toZ}`) || 0) + 0.15;
+        const x0 = fromX - GRID_SIZE / 2, z0 = fromZ - GRID_SIZE / 2;
+        const x1 = toX - GRID_SIZE / 2, z1 = toZ - GRID_SIZE / 2;
+        // Launch flash
+        const flash = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 1 }));
+        flash.position.set(x0, y0, z0);
+        this.effectsGroup.add(flash);
+        // Rocket
+        const rocket = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.1, 6),
+            new THREE.MeshBasicMaterial({ color: 0x4a5a3a }));
+        rocket.position.set(x0, y0, z0);
+        rocket.lookAt(x1, y1, z1);
+        this.effectsGroup.add(rocket);
+        // Smoke trail
+        const trail = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6),
+            new THREE.MeshBasicMaterial({ color: 0x999999, transparent: true, opacity: 0.6 }));
+        trail.position.set(x0, y0, z0);
+        this.effectsGroup.add(trail);
+        const start = performance.now();
+        const life = 300;
+        const step = () => {
+            const t = Math.min(1, (performance.now() - start) / life);
+            if (t >= 1 || !rocket.parent) {
+                if (rocket.parent) this.effectsGroup.remove(rocket);
+                if (flash.parent) this.effectsGroup.remove(flash);
+                if (trail.parent) this.effectsGroup.remove(trail);
+                if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 450);
+                return;
+            }
+            rocket.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * 0.3, z0 + (z1 - z0) * t);
+            rocket.lookAt(x1, y1, z1);
+            flash.material.opacity = 1 - t * 2;
+            flash.scale.setScalar(1 + t * 2);
+            trail.position.copy(rocket.position);
+            trail.material.opacity = 0.6 * (1 - t);
+            trail.scale.setScalar(1 + t * 1.5);
+            requestAnimationFrame(step);
+        };
+        step();
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            const recoil = Math.sin(t * Math.PI) * 0.2;
+            m.position.set(p.x - (dx / len) * recoil, p.y, p.z - (dz / len) * recoil);
+            m.rotation.z = r.z + Math.sin(t * Math.PI) * 0.12;
+        }, life);
+    }
+
+    /** Pike stab: longer thrust for polearm units (PIKEMAN, HALBERDIER, PIKE_MASTER). */
+    addPikeStab(attackerId, fromX, fromZ, toX, toZ) {
+        this._animateModel(attackerId, (m, t, p, r) => {
+            const dx = toX - fromX, dz = toZ - fromZ;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            // Long forward thrust, no rotation — the pike stays level
+            const forward = Math.sin(t * Math.PI) * 0.6;
+            m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
+        }, 280);
+    }
+
     /** Lord/king attack with faction-specific visuals. */
     addLordAttack(lordId, factionId, fromX, fromZ, toX, toZ) {
         let mesh = null;
@@ -1102,6 +1214,8 @@ export class GameRenderer {
         };
         loop();
     }
+
+    getIntersects(mouse, camera) {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
         return raycaster.intersectObjects(this.scene.children, true);

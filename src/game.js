@@ -1394,25 +1394,31 @@ export class Game {
 
         // ---- Unit attack dispatch by type ----
 
-        // Ranged gunpowder infantry
-        if (['MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'RIFLEMAN', 'SHARPSHOOTER', 'DEMOLITION_SQUAD'].includes(t)) {
+        // Ranged gunpowder infantry (including modern rifle units and combat engineers)
+        if (['MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'RIFLEMAN', 'SHARPSHOOTER',
+             'BAYONET_RIFLE', 'COMBAT_ENGINEER', 'DEMOLITION_SQUAD'].includes(t)) {
             fx.addGunfire(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
         // Archers
         const def = UNIT_TYPE[t];
-        if (def && def.ranged && ['ARCHER', 'LONGBOWMAN'].includes(t)) {
+        if (def && def.ranged && ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN'].includes(t)) {
             fx.addArrowShot(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
-        // Cavalry charge (already existing)
-        if (CHARGE_UNITS.includes(t)) {
+        // Cavalry charge (horse units only — TANK/HEAVY_TANK excluded)
+        if (['CAVALRY', 'CATAPHRACT', 'DRAGOON', 'WINGED_HUSSAR', 'CONQUISTADOR'].includes(t) || t === 'CHARIOT') {
             fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
-        // Chariot charge
-        if (['CHARIOT'].includes(t)) {
-            fx.addCavalryCharge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        // Tank shell (armored vehicles fire shells, not cavalry charges)
+        if (['TANK', 'HEAVY_TANK', 'ARMORED_CAR'].includes(t)) {
+            fx.addTankShell(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+            return;
+        }
+        // Anti-tank / rocket (AT gun and RPG teams)
+        if (['ANTI_TANK_GUN', 'RPG_TEAM'].includes(t)) {
+            fx.addRocket(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
         // Battering ram
@@ -1460,12 +1466,12 @@ export class Game {
             fx.addTorpedo(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
-        // Pikeman stab
-        if (t === 'PIKEMAN') {
-            fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
+        // Pike / halberd stab (polearm units)
+        if (['PIKEMAN', 'HALBERDIER', 'PIKE_MASTER'].includes(t)) {
+            fx.addPikeStab(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
             return;
         }
-        // Default melee (sword lunge)
+        // Default melee (sword lunge covers Legionnaire, Berserker, Varangian Guard, etc.)
         fx.addSwordLunge(attacker.id, attacker.x, attacker.z, defender.x, defender.z);
     }
 
