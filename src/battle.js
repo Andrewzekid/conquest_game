@@ -1,9 +1,10 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
 import { isPassable } from './map.js';
+import { getFactionDef, getCityCaptureBonus, getFortifiedDefenseBonus, getHealOnKill } from './faction.js';
 
 /** Fallback stats for combatants with no UNIT_TYPE entry (lords/kings, which
  *  fight as unit-like combatants). They are melee, non-naval, no siege bonus. */
@@ -11,6 +12,14 @@ const LORD_FALLBACK_STATS = { ranged: false, naval: false, siegeBonus: 0, besieg
 function combatStats(u) { return UNIT_TYPE[u.type] || LORD_FALLBACK_STATS; }
 /** Display name for combat log lines (lords use their proper name). */
 function combatName(u) { return u.name || u.type; }
+
+/** River-crossing penalty (Feature 10): a unit that crossed a river this turn
+ *  is bogged down and fights at a defense disadvantage until its next turn.
+ *  Returns the flat defense penalty (0 if the unit didn't cross). Pure. */
+export function riverCrossingDefensePenalty(unit) {
+    if (!unit || !unit.crossedRiverThisTurn) return 0;
+    return RIVER_CROSSING_DEFENSE_PENALTY;
+}
 
 /**
  * Is `defender` encircled? A defender is encircled when ALL four orthogonal
@@ -75,12 +84,28 @@ export function isEncircled(defender, units, tiles) {
  * @param defenderCityBreached - true when the defender stands on a CITY tile
  *   whose fortification is 0: the city's terrain and building (walls) defense
  *   bonuses no longer apply — the defenses are down.
+ * @param units - optional full units Map (for adjacency-based passives like
+ *   MUSKETEER volley fire and LINE_INFANTRY formation).
  * @returns { messages: string[], defenderDied: boolean, attackerDied: boolean }
  */
-export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false) {
+export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord = null, defenderLord = null, buildings = null, lords = null, tempBonuses = null, encircled = false, structures = null, defenderCityBreached = false, noCounter = false, units = null) {
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
+    // Siege-only units (SIEGE) can only attack cities — block attacks on units.
+    const atkType = UNIT_TYPE[attackerUnit.type];
+    if (atkType && atkType.siegeOnly && terrain !== 'CITY') {
+        return { messages: [`${combatName(attackerUnit)} can only attack cities!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
+    }
+
+    // Corrupted hp (NaN/undefined -- e.g. units from pre-HP saves leveled up
+    // or burned into NaN) would make a combatant unkillable, since NaN <= 0
+    // is false everywhere. Normalize at the gate: non-finite hp counts as 0
+    // (already dead), non-finite maxHp falls back to current hp.
+    for (const c of [attackerUnit, defenderUnit]) {
+        if (typeof c.hp !== 'number' || !Number.isFinite(c.hp)) c.hp = 0;
+        if (typeof c.maxHp !== 'number' || !Number.isFinite(c.maxHp)) c.maxHp = Math.max(1, c.hp);
+    }
     const atkStats = combatStats(attackerUnit);
     const defStats = combatStats(defenderUnit);
     // A breached city gives no defensive terrain bonus — treat it as open ground.
@@ -93,9 +118,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 
     // --- Attacker damage calculation ---
     let atkMultiplier = 1.0;
-    if (TYPE_ADVANTAGE[attackerUnit.type]?.strongAgainst === defenderUnit.type) {
-        atkMultiplier *= TYPE_ADVANTAGE[attackerUnit.type].multiplier;
-        messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
+    if (TYPE_ADVANTAGE[attackerUnit.type]) {
+        const adv = TYPE_ADVANTAGE[attackerUnit.type];
+        const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+        if (targets.includes(defenderUnit.type)) {
+            atkMultiplier *= adv.multiplier;
+            messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
+        }
     }
 
     // Attacker bonuses: own commanding lord's stats + class bonus + adjacent auras.
@@ -108,8 +137,80 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     let effectiveAttack = atkPower * atkMultiplier + (terrainBonus.attack || 0)
         + atkLordBonus.attack + atkAdj.attack + atkTemp.attack;
 
-    // Siege bonus: artillery vs cities, lord siege ability, or Conqueror class.
+    // Siege-specific temp bonus: Iron Will gives +siegeAttack to siege units.
+    const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'SIEGE_TOWER']);
+    if (SIEGE_TYPES.has(attackerUnit.type) && atkTemp.siegeAttack) {
+        effectiveAttack += atkTemp.siegeAttack;
+    }
+
+    // --- New European-faction/unit attacker bonuses (Phase G) ---
+    const atkDef = getFactionDef(attackerUnit.factionId);
+    // BERSERKER frenzy: +3 attack when below 50% HP (glass cannon bites back).
+    if (attackerUnit.type === 'BERSERKER' && attackerUnit.hp < (attackerUnit.maxHp || atkStats.hp) * 0.5) {
+        effectiveAttack += 3;
+        messages.push(`${combatName(attackerUnit)} is in a frenzy! (+3 atk)`);
+    }
+    // WINGED_HUSSAR alpha strike is handled below as a damage multiplier (2x on
+    // the first attack each turn) — it does not add raw attack here.
+
+    // === RENAISSANCE/ENLIGHTENMENT/MODERN ERA UNIT BONUSES ===
+    // MUSKETEER volley fire: +1 attack per adjacent friendly MUSKETEER.
+    if (attackerUnit.type === 'MUSKETEER' && units) {
+        let adjacentMusketters = 0;
+        for (const other of units.values()) {
+            if (other.owner !== attackerUnit.owner || other.type !== 'MUSKETEER' || other.id === attackerUnit.id) continue;
+            if (Math.abs(other.x - attackerUnit.x) + Math.abs(other.z - attackerUnit.z) === 1) adjacentMusketters++;
+        }
+        if (adjacentMusketters > 0) {
+            effectiveAttack += adjacentMusketters;
+            messages.push(`${combatName(attackerUnit)} volley fire: +${adjacentMusketters} atk (${adjacentMusketters} adjacent)`);
+        }
+    }
+    // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
+    // (Defense bonus applied below in defender section)
+
+    // Precompute isCity once — used by several per-unit bonus blocks below
+    // BEFORE the general siege-bonus section. Declaring it here (before the
+    // per-unit blocks that reference it) avoids a temporal-dead-zone
+    // ReferenceError ("Cannot access 'isCity' before initialization").
     const isCity = terrain === 'CITY';
+    // Defender's tile key — precomputed here (with isCity) because per-unit
+    // bonus blocks below (e.g. DEMOLITION_SQUAD) reference it BEFORE the
+    // defender-defense section where it used to be declared (same TDZ
+    // ReferenceError class as isCity above).
+    const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
+
+    // CANNON siege bonus: additional +4 vs cities (stacks with base siegeBonus).
+    if (attackerUnit.type === 'CANNON' && isCity) {
+        effectiveAttack += 4;
+        messages.push(`${combatName(attackerUnit)} cannonball barrage: +4 vs city`);
+    }
+    // MORTAR AOE: splash damage handled separately in AOE section.
+
+    // SHARPSHOOTER sniper: +3 vs lords, settlers, engineers.
+    if (attackerUnit.type === 'SHARPSHOOTER' && defenderUnit) {
+        if (defenderUnit.lordId || defenderUnit._isLord || defenderUnit.type === 'SETTLER' || defenderUnit.type === 'ENGINEER') {
+            effectiveAttack += 3;
+            messages.push(`${combatName(attackerUnit)} precision shot: +3 vs high-value target`);
+        }
+    }
+    // DEMOLITION_SQUAD demolish: +5 vs cities and buildings.
+    if (attackerUnit.type === 'DEMOLITION_SQUAD' && (isCity || (buildings && buildings.get(tileKey)?.length > 0))) {
+        effectiveAttack += 5;
+        messages.push(`${combatName(attackerUnit)} demolition charge: +5 vs fortification`);
+    }
+    // SIEGE_CANNON fort buster: +6 vs cities.
+    if (attackerUnit.type === 'SIEGE_CANNON' && isCity) {
+        effectiveAttack += 6;
+        messages.push(`${combatName(attackerUnit)} fort buster: +6 vs city`);
+    }
+    // TORPEDO_BOAT torpedo: +8 vs naval units.
+    if (attackerUnit.type === 'TORPEDO_BOAT' && defStats.naval) {
+        effectiveAttack += 8;
+        messages.push(`${combatName(attackerUnit)} torpedo strike: +8 vs naval`);
+    }
+
+    // Siege bonus: artillery vs cities, lord siege ability, or Conqueror class.
     if (isCity) {
         if (atkStats.siegeBonus) {
             effectiveAttack += atkStats.siegeBonus;
@@ -124,10 +225,21 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             effectiveAttack += atkClass.siege;
             messages.push(`${attackerLord ? attackerLord.name : 'Conqueror'} class siege: +${atkClass.siege}`);
         }
+        // CONQUISTADOR: mounted gunpowder unit, +2 attack vs units in cities.
+        if (atkStats.cityBonus) {
+            effectiveAttack += atkStats.cityBonus;
+            messages.push(`${combatName(attackerUnit)} city assault: +${atkStats.cityBonus}`);
+        }
+        // Roman Legion passive: +1 damage when capturing/attacking cities.
+        const romanCityBonus = getCityCaptureBonus(atkDef);
+        if (romanCityBonus > 0) {
+            effectiveAttack += romanCityBonus;
+            messages.push(`${combatName(attackerUnit)} Roman discipline vs city: +${romanCityBonus}`);
+        }
     }
 
     // Defender defense: terrain + buildings + structures + lord stats + class + adjacent auras.
-    const tileKey = `${defenderUnit.x},${defenderUnit.z}`;
+    // (tileKey was precomputed above, next to isCity.)
     // Walls/buildings only protect while the city stands — a breached city's
     // building defense bonus is gone too.
     const buildingDef = (buildings && !defenderCityBreached) ? getBuildingDefenseBonus(tileKey, buildings) : 0;
@@ -145,16 +257,116 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense;
+    // RIFLEMAN accurate: ignores 50% of target defense. Must run AFTER the
+    // effectiveDefense declaration above — before this fix it referenced the
+    // binding in its temporal dead zone (ReferenceError on every attack).
+    if (attackerUnit.type === 'RIFLEMAN') {
+        effectiveDefense *= 0.5;
+        messages.push(`${combatName(attackerUnit)} rifled accuracy: target defense halved!`);
+    }
     if (structureDef > 0) {
         messages.push(`${combatName(defenderUnit)} is protected by a Fortification (+${structureDef} def)`);
+    }
+    // Siege Tower support: a friendly SIEGE_TOWER adjacent to an unbreached
+    // city undermines its defenses — the garrison can't fully man the walls
+    // while a tower is at the gates. Lowers the city's defense bonus for
+    // combat against that city (attackers of the tower's owner only).
+    if (isCity && !defenderCityBreached && units) {
+        let towerSupport = false;
+        for (const u of units.values()) {
+            if (u.owner !== attackerUnit.owner || u.type !== 'SIEGE_TOWER') continue;
+            if (Math.abs(u.x - defenderUnit.x) + Math.abs(u.z - defenderUnit.z) === 1) { towerSupport = true; break; }
+        }
+        if (towerSupport) {
+            effectiveDefense -= SIEGE_TOWER_CITY_DEFENSE_REDUCTION;
+            messages.push(`A siege tower undermines the city walls (-${SIEGE_TOWER_CITY_DEFENSE_REDUCTION} def)`);
+        }
+    }
+    // --- New European-faction/unit defender bonuses (Phase G) ---
+    const defDef = getFactionDef(defenderUnit.factionId);
+    // VARANGIAN_GUARD: +2 defense when a friendly lord is adjacent (Chebyshev-1).
+    if (defenderUnit.type === 'VARANGIAN_GUARD' && lords) {
+        const guarded = lords.some(l => l && l.owner === defenderUnit.owner &&
+            Math.max(Math.abs(l.x - defenderUnit.x), Math.abs(l.z - defenderUnit.z)) <= 1);
+        if (guarded) {
+            effectiveDefense += 2;
+            messages.push(`${combatName(defenderUnit)} guards its lord (+2 def)`);
+        }
+    }
+    // Byzantine Empire passive: fortified units (holding position this turn)
+    // gain +2 defense.
+    const byzFort = getFortifiedDefenseBonus(defDef);
+    if (byzFort > 0 && !defenderUnit.hasMovedThisTurn) {
+        effectiveDefense += byzFort;
+        messages.push(`${combatName(defenderUnit)} is fortified (+${byzFort} def)`);
+    }
+    // === RENAISSANCE/ENLIGHTENMENT/MODERN ERA DEFENDER BONUSES ===
+    // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
+    if (defenderUnit.type === 'LINE_INFANTRY' && units) {
+        const infantryTypes = new Set(['INFANTRY', 'LINE_INFANTRY', 'RIFLEMAN', 'MUSKETEER']);
+        let adjacentInfantry = 0;
+        for (const other of units.values()) {
+            if (other.owner !== defenderUnit.owner || other.id === defenderUnit.id) continue;
+            if (!infantryTypes.has(other.type)) continue;
+            if (Math.abs(other.x - defenderUnit.x) + Math.abs(other.z - defenderUnit.z) === 1) adjacentInfantry++;
+        }
+        if (adjacentInfantry >= 2) {
+            effectiveDefense += 2;
+            messages.push(`${combatName(defenderUnit)} formation discipline: +2 def (${adjacentInfantry} adjacent)`);
+        }
+    }
+    // IRONCLAD armored: reduces ranged damage taken by 50%.
+    if (defenderUnit.type === 'IRONCLAD' && atkStats.ranged) {
+        effectiveDefense += Math.floor(effectiveDefense * 0.5);
+        messages.push(`${combatName(defenderUnit)} armored hull: +50% effective defense vs ranged`);
+    }
+    // IRONCLAD_FRIGATE heavyArmor: takes 1 less damage from all sources.
+    if (defenderUnit.type === 'IRONCLAD_FRIGATE') {
+        effectiveDefense += 3;
+        messages.push(`${combatName(defenderUnit)} heavy armor: +3 defense`);
     }
     // Encircled defenders fight at a disadvantage (no room to maneuver).
     if (encircled) {
         effectiveDefense -= ENCIRCLEMENT_DEFENSE_PENALTY;
         messages.push(`${combatName(defenderUnit)} is encircled! (-${ENCIRCLEMENT_DEFENSE_PENALTY} def, no counter)`);
     }
+    // River-crossing penalty (Feature 10): a defender that crossed a river this
+    // turn is bogged down and easier to hit.
+    const defRiverPenalty = riverCrossingDefensePenalty(defenderUnit);
+    if (defRiverPenalty > 0) {
+        effectiveDefense -= defRiverPenalty;
+        messages.push(`${combatName(defenderUnit)} crossed a river this turn (-${defRiverPenalty} def)`);
+    }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    // Ranged distance falloff (RANGED_DISTANCE_FALLOFF): full damage adjacent,
+    // 80% at 2 tiles, 25% from 3 tiles onwards.
+    if (atkStats.ranged) {
+        const dist = Math.max(Math.abs(attackerUnit.x - defenderUnit.x), Math.abs(attackerUnit.z - defenderUnit.z));
+        if (dist > 1) {
+            const falloff = RANGED_DISTANCE_FALLOFF[dist] != null ? RANGED_DISTANCE_FALLOFF[dist] : RANGED_FALLOFF_MIN;
+            damageToDefender = Math.max(1, Math.floor(damageToDefender * falloff));
+            messages.push(`${combatName(attackerUnit)} ranged attack at distance ${dist}: ×${falloff.toFixed(2)} damage`);
+        }
+    }
+    // Ranged dodge chance: defenders at range have a chance to dodge. 8% per
+    // tile of distance beyond 1, capped at 32% (distance 5+).
+    if (atkStats.ranged && !defStats.naval) {
+        const dist = Math.max(Math.abs(attackerUnit.x - defenderUnit.x), Math.abs(attackerUnit.z - defenderUnit.z));
+        const dodgeChance = Math.min(0.32, (dist - 1) * 0.08);
+        if (dodgeChance > 0 && Math.random() < dodgeChance) {
+            damageToDefender = 0;
+            messages.push(`${combatName(defenderUnit)} dodges the ranged attack!`);
+        }
+    }
+    // WINGED_HUSSAR: devastating alpha strike — the first attack each turn deals
+    // 2x damage (chargeMultiplier). Only the hussar's own first swing, not a
+    // counter-attack (this branch is the attacker's strike).
+    if (attackerUnit.type === 'WINGED_HUSSAR' && atkStats.chargeMultiplier &&
+        !attackerUnit.hasAttackedThisTurn) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * atkStats.chargeMultiplier));
+        messages.push(`${combatName(attackerUnit)} winged charge deals ×${atkStats.chargeMultiplier} damage!`);
+    }
     // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
     // — archers and artillery exploit the spent, immobile mount.
     if (defenderUnit.chargeExhausted && defenderUnit.chargeExhausted > 0 && atkStats.ranged) {
@@ -164,12 +376,38 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     defenderUnit.hp -= damageToDefender;
     messages.push(`${combatName(attackerUnit)} attacks ${combatName(defenderUnit)} for ${damageToDefender} damage (HP: ${Math.max(0, defenderUnit.hp)}/${defenderUnit.maxHp})`);
 
+    // Lifesteal: attacker heals a fraction of damage dealt (Viking Berserker
+    // Rage ability). Only applies when the attacker's faction has a lifesteal
+    // tempBonus and the attacker's type is in the lifestealTypes whitelist.
+    if (atkTemp && atkTemp.lifesteal && atkTemp.lifesteal > 0) {
+        const allowedTypes = atkTemp.lifestealTypes;
+        if (!allowedTypes || allowedTypes.includes(attackerUnit.type)) {
+            const healAmount = Math.floor(damageToDefender * atkTemp.lifesteal);
+            if (healAmount > 0 && attackerUnit.hp > 0) {
+                const before = attackerUnit.hp;
+                attackerUnit.hp = Math.min(attackerUnit.maxHp || before, before + healAmount);
+                if (attackerUnit.hp > before) {
+                    messages.push(`${combatName(attackerUnit)} drains ${attackerUnit.hp - before} HP via lifesteal`);
+                }
+            }
+        }
+    }
+
     // Keep a lord combatant's hp synced onto its lord object as it changes.
     const sync = () => { syncLordHp(attackerUnit); syncLordHp(defenderUnit); };
 
     const defenderDied = defenderUnit.hp <= 0;
     if (defenderDied) {
         messages.push(`${combatName(defenderUnit)} was destroyed!`);
+        // Viking Raiders passive: the killing unit heals a few HP on the kill.
+        const healOnKill = getHealOnKill(atkDef);
+        if (healOnKill > 0 && attackerUnit.hp > 0) {
+            const before = attackerUnit.hp;
+            attackerUnit.hp = Math.min(attackerUnit.maxHp || before, before + healOnKill);
+            if (attackerUnit.hp > before) {
+                messages.push(`${combatName(attackerUnit)} raids and heals ${attackerUnit.hp - before} HP`);
+            }
+        }
         // Award XP: a lord attacker earns lord XP; otherwise the attacker's
         // commanding lord (if any) and the attacker unit itself gain XP.
         if (attackerUnit._isLord) {
@@ -189,13 +427,20 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // are surrounded). Counter-attacks are weaker than full attacks.
     if (!defStats.ranged && !atkStats.ranged && !encircled && !noCounter) {
         let defMultiplier = 1.0;
-        if (TYPE_ADVANTAGE[defenderUnit.type]?.strongAgainst === attackerUnit.type) {
-            defMultiplier *= TYPE_ADVANTAGE[defenderUnit.type].multiplier;
-            messages.push(`${combatName(defenderUnit)} counter type advantage!`);
+        if (TYPE_ADVANTAGE[defenderUnit.type]) {
+            const adv = TYPE_ADVANTAGE[defenderUnit.type];
+            const targets = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+            if (targets.includes(attackerUnit.type)) {
+                defMultiplier *= adv.multiplier;
+                messages.push(`${combatName(defenderUnit)} counter type advantage!`);
+            }
         }
 
         const effectiveAttackDef = (defenderUnit.attack ?? defStats.attack) * defMultiplier + defLordBonus.attack;
-        const effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
+        let effectiveDefenseAtk = (attackerUnit.defense ?? atkStats.defense) + atkLordBonus.defense;
+        // River-crossing penalty also applies to the attacker on the counter.
+        const atkRiverPenalty = riverCrossingDefensePenalty(attackerUnit);
+        if (atkRiverPenalty > 0) effectiveDefenseAtk -= atkRiverPenalty;
         const damageToAttacker = Math.max(1, Math.floor((effectiveAttackDef - effectiveDefenseAtk * 0.3) * COUNTER_ATTACK_MULTIPLIER));
         attackerUnit.hp -= damageToAttacker;
         messages.push(`${combatName(defenderUnit)} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);
@@ -222,13 +467,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
  * Check if a unit can capture a tile.
  * Must be military unit, tile must be unowned or enemy-owned, and player has gold.
  */
-export function canCaptureTile(unitOwner, tile, resources, diploState = null) {
+export function canCaptureTile(unitOwner, tile, resources, diploState = null, currentTurn = null) {
     // Can't capture own tile
     if (tile.owner === unitOwner) return false;
-    // Must have gold
-    if (resources.gold < 20) return false;
     // A fortified city must be besieged (fortification reduced to 0) before capture.
     if (tile.terrain === 'CITY' && (tile.fortification || 0) > 0) return false;
+    // Breach delay: a freshly breached city can't be captured until the next turn.
+    if (tile.terrain === 'CITY' && tile.breachedTurn && currentTurn !== null && currentTurn < tile.breachedTurn) return false;
     return true;
 }
 
@@ -299,6 +544,12 @@ export function simulateCombat(attackerUnit, defenderUnit, terrain, attackerLord
     const cloneLord = (l) => l
         ? { ...l, stats: { ...(l.stats || {}) }, abilities: [...(l.abilities || [])], army: [...(l.army || [])] }
         : null;
+    // Sever the combatants' `_lord` back-references as well: a shallow clone of
+    // a lordCombatant keeps `_lord` pointing at the REAL lord, so resolveCombat's
+    // syncLordHp/awardXP would write simulated (often lethal) hp and XP onto the
+    // real lord with no death routing — the "0 HP king never dies" bug.
+    if (aClone._lord) aClone._lord = cloneLord(aClone._lord);
+    if (dClone._lord) dClone._lord = cloneLord(dClone._lord);
     const result = resolveCombat(aClone, dClone, terrain, cloneLord(attackerLord), cloneLord(defenderLord), buildings, lords, tempBonuses, encircled, structures, defenderCityBreached);
     return {
         defenderDied: result.defenderDied,

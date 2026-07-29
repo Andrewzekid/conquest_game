@@ -1,5 +1,6 @@
 /** Building system: construction, defensiveness, buildable list (pure logic). */
 import { BUILDING_TYPE, PILLAGEABLE_BUILDINGS, MILITARY_BUILDING_HP, MILITARY_BUILDING_DEFENSE, BUILDING_MAX_LEVEL, MILITARY_BUILDING_LEVELS } from './config.js';
+import { findParentCity, cityRadius } from './map.js';
 
 /** A tile is buildable for an influence-buildable military building if it is
  *  passable land inside influence (not water/mountain/river). City-tile
@@ -54,11 +55,17 @@ export function isCoastal(tile, tiles) {
  * @param tiles - optional full tile Map (for the Harbor coastal check)
  * @returns messages array
  */
-export function constructBuilding(buildingType, tile, resources, buildings, influence, tiles, buildingState) {
+export function constructBuilding(buildingType, tile, resources, buildings, influence, tiles, buildingState, techState) {
     const messages = [];
     const bData = BUILDING_TYPE[buildingType];
     if (!bData) {
         messages.push(`Unknown building: ${buildingType}`);
+        return messages;
+    }
+
+    // Tech gate: reject buildings whose prerequisite tech hasn't been researched.
+    if (bData.techRequired && techState && !techState.researched.has(bData.techRequired)) {
+        messages.push(`Cannot build ${bData.name}: requires ${bData.techRequired} tech.`);
         return messages;
     }
 
@@ -86,8 +93,17 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
 
     // One of each type per tile
     const existing = buildings.get(tileKey) || [];
-    if (existing.includes(buildingType)) {
-        messages.push(`${bData.name} already built at [${tile.x}, ${tile.z}].`);
+    if (existing.length > 0 && !(buildingType === 'CITADEL' && existing.includes('WALLS'))) {
+        messages.push(`${bData.name} cannot be built here — a building already occupies this tile.`);
+        return messages;
+    }
+
+    // One of each type per city (across all influence tiles) — removed in
+    // favour of the 1-building-per-tile rule above.
+
+    // CITADEL requires WALLS to be present (it upgrades Walls)
+    if (buildingType === 'CITADEL' && !existing.includes('WALLS')) {
+        messages.push(`Cannot build ${bData.name}: requires Walls to be built first.`);
         return messages;
     }
 
@@ -224,7 +240,7 @@ export function getBuildingDefenseBonus(tileKey, buildings) {
  * @param influence - optional Set of tile keys within a city's area of influence.
  * @param tiles - optional full tile Map (for the Harbor coastal check)
  */
-export function getBuildableBuildings(tile, resources, buildings, influence, tiles) {
+export function getBuildableBuildings(tile, resources, buildings, influence, tiles, techState) {
     const tileKey = `${tile.x},${tile.z}`;
     const existing = buildings.get(tileKey) || [];
     const inInfluence = !influence || influence.has(tileKey);
@@ -252,9 +268,18 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
             canBuild = false;
             reason = 'City not coastal';
         }
-        if (canBuild && existing.includes(type)) {
-            canBuild = false;
-            reason = 'Already built';
+        if (canBuild && existing.length > 0) {
+            if (!(type === 'CITADEL' && existing.includes('WALLS'))) {
+                canBuild = false;
+                reason = 'Tile occupied';
+            }
+        }
+        // Tech gate: building requires a tech that hasn't been researched yet.
+        // Hide it entirely from the menu (don't even show a disabled button).
+        if (bData.techRequired && techState) {
+            if (!techState.researched.has(bData.techRequired)) {
+                continue;
+            }
         }
         if (canBuild) {
             for (const [res, amt] of Object.entries(bData.cost)) {

@@ -122,7 +122,7 @@
             position: absolute; top: 70px; width: 250px;
             background: linear-gradient(180deg, rgba(24,31,50,0.97), rgba(18,24,39,0.97));
             border: 1px solid var(--border); border-radius: var(--radius); z-index: 15;
-            max-height: 82vh; display: flex; flex-direction: column; overflow: hidden;
+            max-height: 82vh; display: flex; flex-direction: column; overflow-x: hidden;
             box-shadow: var(--shadow);
         }
         .side-panel.minimized { max-height: none; }
@@ -144,6 +144,20 @@
         #build-menu { right: 20px; border-top: 3px solid var(--blue); }
         #diplomacy-panel { right: 280px; border-top: 3px solid var(--gold); }
         #lord-panel { right: 540px; border-top: 3px solid var(--gold); }
+        #victory-panel { left: 20px; border-top: 3px solid var(--green); }
+        .victory-section { margin-bottom: 12px; }
+        .victory-label { font-weight: 700; font-size: 12px; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .victory-detail { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+        .progress-track { height: 8px; background: #11182b; border-radius: 4px; overflow: hidden; border: 1px solid var(--border); }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #2e7d4f, #4caf6f); transition: width 0.3s ease; }
+        /* Per-faction standings rows inside the victory panel */
+        .vp-faction-row { margin: 6px 0; font-size: 11px; }
+        .vp-faction-row .vp-chip { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
+        .vp-faction-row .vp-name { font-weight: 600; margin-right: 6px; }
+        .vp-faction-row .vp-detail { color: var(--muted); font-size: 10px; }
+        .vp-faction-row .progress-track { height: 5px; margin-top: 2px; }
+        .vp-faction-row.vp-eliminated .vp-name { text-decoration: line-through; opacity: 0.55; }
+        .vp-faction-row.vp-eliminated .vp-detail { opacity: 0.55; }
 
         /* Scrollbars */
         .panel-body::-webkit-scrollbar, #combat-log::-webkit-scrollbar { width: 9px; }
@@ -305,7 +319,7 @@
             <div class="resource plain phase">Phase: <span id="phase-indicator">PLAYER</span></div>
         </div>
         <button id="btn-end-turn" class="btn btn-primary">End Turn</button>
-        <div id="spectate-controls" class="hidden" style="display:none; gap:8px; align-items:center;">
+        <div id="spectate-controls" style="display:none; gap:8px; align-items:center;">
             <button id="btn-ff-1" class="btn btn-ghost btn-sm">FF 1</button>
             <button id="btn-ff-5" class="btn btn-ghost btn-sm">FF 5</button>
             <button id="btn-ff-10" class="btn btn-ghost btn-sm">FF 10</button>
@@ -313,6 +327,7 @@
             <span id="ff-status" style="font-size:12px; color:var(--muted);"></span>
         </div>
         <button id="btn-mute" class="btn btn-icon" title="Toggle sound"></button>
+        <button id="btn-scoreboard" class="btn btn-icon" title="Scoreboard & Rankings">🏆</button>
     </div>
 
     <!-- Start menu overlay -->
@@ -333,7 +348,7 @@
         </div>
         <div class="row">
             <label style="color:var(--muted);">Players: <span id="start-players-display">4</span></label>
-            <input type="range" id="start-players" min="2" max="10" value="4" style="width:160px;">
+            <input type="range" id="start-players" min="2" max="15" value="4" style="width:160px;">
         </div>
         <div class="row">
             <label style="color:var(--muted);">
@@ -375,6 +390,26 @@
     <div id="build-menu" class="side-panel">
         <div class="panel-drag-handle"><span>Build</span><button class="panel-minimize" title="Minimize">−</button></div>
         <div id="build-menu-body" class="panel-body"></div>
+    </div>
+    <div id="ai-goals-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>AI Goals</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="ai-goals-panel-body" class="panel-body"></div>
+    </div>
+    <div id="ai-debug-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>AI Debug</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="ai-debug-panel-body" class="panel-body"></div>
+    </div>
+    <div id="army-groups-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>Army Groups</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="army-groups-panel-body" class="panel-body"></div>
+    </div>
+    <div id="tech-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>Research</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="tech-panel-body" class="panel-body"></div>
+    </div>
+    <div id="victory-panel" class="side-panel" style="display:none;">
+        <div class="panel-drag-handle"><span>Victory Progress</span><button class="panel-minimize" title="Minimize">−</button></div>
+        <div id="victory-panel-body" class="panel-body"></div>
     </div>
     <div id="combat-log"></div>
 

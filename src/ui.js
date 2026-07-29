@@ -3,14 +3,20 @@ import { UNIT_TYPE, BUILDING_TYPE, DIPLOMACY_STATES, LORD_ABILITIES,
           FACTIONS, PLAYER_FACTION, FACTION_COLORS, LORD_CLASSES, TERRAIN, TERRAIN_BONUS,
           EXTRA_UNITS, NAVAL_UNITS, SIEGE_ENGINES, CHARGE_UNITS, CHARIOT_CHARGE_UNITS, CONCEAL_TERRAINS,
           STRUCTURE_TYPE, STRUCTURE_COST, LORD_RECRUIT_COST,
-          cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL } from './config.js';
+          cityGrowthThreshold, CITY_MAX_LEVEL, MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
+          TRADE_ROUTE_MIN_CITY_LEVEL } from './config.js';
 import { getBuildableBuildings, pillageableOn, getBuildingState } from './building.js';
-import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel } from './diplomacy.js';
+import { getDiplomacySummary, stateLabel, relationshipLabel, grievanceLevel, getRelation } from './diplomacy.js';
+import { buildAIGoalsHTML } from './ai_goals.js';
+import { buildAIDebugHTML, buildArmyGroupsHTML } from './ai.js';
+import { cityRadius } from './map.js';
 import { getInfluencedTiles, isPassable } from './map.js';
-import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand } from './lords.js';
+import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAvailableSkills, getSkillEffects } from './lords.js';
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
+import { getUnlockedUnits, isUnitUnlocked, TECHS } from './tech.js';
+import { applyObsolescence } from './unit_obsolescence.js';
 
 // Map building types to their icon names in src/icons.js.
 const BUILDING_ICON = {
@@ -18,6 +24,22 @@ const BUILDING_ICON = {
     BARRACKS: 'barracks', WALLS: 'walls', HARBOR: 'harbor', SIEGE_WORKSHOP: 'siege_workshop'
 };
 const RES_ORDER = [['gold', 'g'], ['food', 'f'], ['wood', 'w'], ['iron', 'i'], ['production', 'pr']];
+
+/** Check whether a given building type exists on any tile within the city's
+ *  influence radius (Chebyshev). Mirrors bestMilitaryLevel's scan in game.js. */
+function hasBuildingInInfluence(gameState, cityTile, buildingType) {
+    if (!cityTile || !gameState || !gameState.buildings) return false;
+    const radius = cityRadius(cityTile);
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            const k = `${cityTile.x + dx},${cityTile.z + dz}`;
+            const list = gameState.buildings.get(k) || [];
+            if (list.includes(buildingType)) return true;
+        }
+    }
+    return false;
+}
+
 // Renders a cost object as small colored chips (green if affordable, red if not).
 function costChips(cost, res) {
     const parts = [];
@@ -44,6 +66,16 @@ export function bindUI(gameState, callbacks) {
         buildMenu: document.getElementById('build-menu-body'),
         diplomacyPanel: document.getElementById('diplomacy-panel-body'),
         lordPanel: document.getElementById('lord-panel-body'),
+        aiGoalsPanel: document.getElementById('ai-goals-panel-body'),
+        aiGoalsPanelWrap: document.getElementById('ai-goals-panel'),
+        aiDebugPanel: document.getElementById('ai-debug-panel-body'),
+        aiDebugPanelWrap: document.getElementById('ai-debug-panel'),
+        armyGroupsPanel: document.getElementById('army-groups-panel-body'),
+        armyGroupsPanelWrap: document.getElementById('army-groups-panel'),
+        victoryPanel: document.getElementById('victory-panel-body'),
+        victoryPanelWrap: document.getElementById('victory-panel'),
+        techPanel: document.getElementById('tech-panel-body'),
+        techPanelWrap: document.getElementById('tech-panel'),
         combatLog: document.getElementById('combat-log'),
         phaseIndicator: document.getElementById('phase-indicator')
     };
@@ -66,9 +98,9 @@ export function bindUI(gameState, callbacks) {
                 if (dx === 0 && dz === 0) continue;
                 if (dx !== 0 && dz !== 0) continue; // orthogonal only
                 for (const u of units.values()) {
-                    if (u.type === 'TRANSPORT' && u.owner === unit.owner &&
+                    if ((u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT') && u.owner === unit.owner &&
                         u.x === unit.x + dx && u.z === unit.z + dz) {
-                        const cap = (UNIT_TYPE.TRANSPORT && UNIT_TYPE.TRANSPORT.capacity) || 2;
+                        const cap = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].capacity) || 2;
                         const used = (u.cargo && u.cargo.length) || 0;
                         if (used < cap) return u;
                     }
@@ -262,6 +294,14 @@ export function bindUI(gameState, callbacks) {
             const breached = fort === 0 && tile.owner !== PLAYER_FACTION;
             info += ` &nbsp;${svgIcon('city', {size:16})} <strong>${cityName}</strong> (Lv.${cityLevel})`;
             info += ` &nbsp;${svgIcon('hp', {size:14})} ${fort}/${fortMax} (${fortPct}%)${breached ? ' <span style="color:var(--bad);">BREACHED</span>' : ''}`;
+            // City unrest & loyalty: show the unrest level + color-coded severity.
+            const unrest = tile.unrest || 0;
+            if (unrest > 0) {
+                const unrestColor = unrest >= 75 ? 'var(--bad)'
+                    : unrest >= 50 ? '#ff8844'
+                    : unrest >= 25 ? '#ffcc44' : 'var(--good)';
+                info += ` &nbsp;⚠️ Unrest <b style="color:${unrestColor}">${Math.round(unrest)}%</b>`;
+            }
         }
         if (tile.terrain === 'RIVER') {
             info += tile.bridge ? ` &nbsp;${svgIcon('bridge', {size:14})} Bridged` : ' &nbsp;<span style="color:var(--bad);">Impassable (needs bridge)</span>';
@@ -302,6 +342,12 @@ export function bindUI(gameState, callbacks) {
                 const have = Math.floor(tile.growth || 0);
                 const est = Math.max(1, Math.ceil((need - have) / 2)); // ~2 growth/turn rough estimate
                 els.ownership.textContent += ` | Growth: ${have}/${need} (~${est}t to Lv.${lvl + 1})`;
+            }
+            // Unrest driver breakdown (only when the city is actually restless).
+            const reasons = Array.isArray(tile.unrestReasons) ? tile.unrestReasons : [];
+            if ((tile.unrest || 0) > 0 && reasons.length) {
+                const parts = reasons.map(r => `${r.reason}${r.amount > 0 ? '+' : ''}${r.amount}`).join(', ');
+                els.ownership.textContent += ` | Unrest: ${parts}`;
             }
         }
 
@@ -421,14 +467,41 @@ export function bindUI(gameState, callbacks) {
                         html += `<span style="font-size:10px; color:#9ab;">Siege target: city at [${tgt.x}, ${tgt.z}]</span><br>`;
                     }
                     // Siege Engine build buttons (CATAPULT/TREBUCHET) — field
-                    // construction, no workshop required. Gives factions without
-                    // a Siege Workshop a path to long-range siege engines.
-                    html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
-                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="CATAPULT" style="display:block; width:100%; margin:2px 0;" title="Build a Catapult (2 turns). Long-range AOE siege with fire.">${svgIcon('CATAPULT', { size: 13 })} Build Catapult (2t)</button>`;
-                    html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="TREBUCHET" style="display:block; width:100%; margin:2px 0;" title="Build a Trebuchet (2 turns). Strongest long-range AOE siege.">${svgIcon('TREBUCHET', { size: 13 })} Build Trebuchet (2t)</button>`;
+                    // construction, no workshop required. Only show for siege
+                    // engines whose tech has been researched.
+                    const ts = gameState.techState;
+                    const siegeBuildable = SIEGE_ENGINES.filter(e => isUnitUnlocked(e, ts));
+                    if (siegeBuildable.length) {
+                        html += `<div style="font-size:11px; color:#9fd; margin-top:4px;">Build siege engine (field project):</div>`;
+                        for (const engine of siegeBuildable) {
+                            const def = UNIT_TYPE[engine];
+                            html += `<button class="build-siege-engine-btn btn btn-sm" data-engine="${engine}" style="display:block; width:100%; margin:2px 0;" title="Build a ${def.name} (2 turns). Long-range AOE siege with fire.">${svgIcon(engine, { size: 13 })} Build ${def.name} (2t)</button>`;
+                        }
+                    }
                     // Defensive structures (traps/fortifications) on the
                     // engineer's current tile: must be owned land within a
                     // city's influence, free of an existing structure.
+                    const stile = gameState.tiles.get(`${unit.x},${unit.z}`);
+                    const canSite = stile && stile.owner === PLAYER_FACTION &&
+                        stile.terrain !== 'CITY' && stile.terrain !== 'WATER' && stile.terrain !== 'RIVER' &&
+                        !(gameState.structures && gameState.structures.has(`${unit.x},${unit.z}`));
+                    if (canSite) {
+                        html += `<div style="font-size:11px; color:#fda; margin-top:4px;">Build structure here:</div>`;
+                        for (const sType of Object.keys(STRUCTURE_TYPE)) {
+                            const s = STRUCTURE_TYPE[sType];
+                            html += `<button class="build-structure-btn btn btn-sm" data-structure="${sType}" style="display:block; width:100%; margin:2px 0;" title="${s.desc} (${s.buildTurns || 2} turns)">${svgIcon('spikes', { size: 13 })} ${s.name} (${formatCost(STRUCTURE_COST[sType] || {})})</button>`;
+                        }
+                    }
+                }
+            }
+            // Non-engineer units with canBuildStructure (e.g. Legionnaire) can
+            // raise defensive structures on their current tile — but only the
+            // structure buttons, not the engineer-only siege engines/towers.
+            const usd = UNIT_TYPE[unit.type];
+            if (usd && usd.canBuildStructure && unit.type !== 'ENGINEER' &&
+                unit.owner === PLAYER_FACTION && !unit.hasAttackedThisTurn) {
+                const constructing2 = gameState.construction && gameState.construction.get(unit.id);
+                if (!constructing2) {
                     const stile = gameState.tiles.get(`${unit.x},${unit.z}`);
                     const canSite = stile && stile.owner === PLAYER_FACTION &&
                         stile.terrain !== 'CITY' && stile.terrain !== 'WATER' && stile.terrain !== 'RIVER' &&
@@ -449,17 +522,17 @@ export function bindUI(gameState, callbacks) {
                 const tr = findAdjacentTransport(gameState, unit);
                 if (tr) {
                     const cargoLen = (tr.cargo && tr.cargo.length) || 0;
-                    if (cargoLen < (UNIT_TYPE.TRANSPORT.capacity || 2)) {
+                    if (cargoLen < (UNIT_TYPE[tr.type].capacity || 2)) {
                         html += `<button id="board-btn" data-transport-id="${tr.id}" class="btn btn-sm" style="margin-top:4px;" title="Board this transport to cross water.">${svgIcon('TRANSPORT', { size: 14 })} Board Transport #${tr.id}</button><br>`;
                     }
                 }
             }
-            if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {
+            if ((unit.type === 'TRANSPORT' || unit.type === 'STEAM_TRANSPORT') && unit.cargo && unit.cargo.length) {
                 const land = findAdjacentLand(gameState, unit);
                 if (land) {
                     html += `<button id="disembark-btn" class="btn btn-sm" style="margin-top:4px;" title="Disembark one carried unit onto the adjacent land tile.">${svgIcon('harbor', { size: 14 })} Disembark at [${land.x}, ${land.z}]</button><br>`;
                 }
-                html += `<span style="font-size:10px; color:#9ab;">Carrying ${unit.cargo.length}/${UNIT_TYPE.TRANSPORT.capacity || 2} units.</span><br>`;
+                html += `<span style="font-size:10px; color:#9ab;">Carrying ${unit.cargo.length}/${UNIT_TYPE[unit.type].capacity || 2} units.</span><br>`;
             }
             if (unit.goal) {
                 html += `${svgIcon('target', { size: 13 })} Auto-moving to [${unit.goal.x}, ${unit.goal.z}] `;
@@ -474,7 +547,7 @@ export function bindUI(gameState, callbacks) {
                 const wtile = gameState.tiles.get(`${unit.x},${unit.z}`);
                 if (wtile && wtile.owner === PLAYER_FACTION) {
                     const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
-                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles)
+                    const opts = getBuildableBuildings(wtile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.techState)
                         .filter(b => b.canBuild && b.type !== 'HARBOR' && b.type !== 'SIEGE_WORKSHOP' &&
                             b.type !== 'MARKET' && b.type !== 'BARRACKS' && b.type !== 'WALLS');
                     if (opts.length) {
@@ -611,11 +684,37 @@ export function bindUI(gameState, callbacks) {
             </button>`;
             html += `<div style="font-size:10px; color:#9ab;">${lord.active.desc}</div>`;
         }
+        // Skill tree (Feature 4): show unspent points, learned skills, and
+        // available skills as invest buttons. Player lords only.
+        if (lord.owner === PLAYER_FACTION) {
+            const known = (lord.skills || []).length ? lord.skills.join(', ') : 'None';
+            html += `<div style="margin-top:6px; padding:4px; border-left:3px solid #ffd700; font-size:11px;">`;
+            html += `<b style="color:#ffd700;">Skill Points: ${lord.skillPoints || 0}</b><br>`;
+            html += `<span style="opacity:.7;">Learned: ${known}</span><br>`;
+            const available = getAvailableSkills(lord);
+            if ((lord.skillPoints || 0) > 0 && available.length) {
+                html += `<div style="margin-top:3px;">Available to learn:</div>`;
+                for (const skill of available) {
+                    html += `<button class="btn btn-sm skill-invest-btn" data-lord-id="${lord.id}" data-skill-id="${skill.id}"
+                        style="display:block; margin:2px 0; width:100%; text-align:left;">
+                        ${skill.name} <span style="opacity:.6;">(T${skill.tier})</span> — ${skill.desc}
+                    </button>`;
+                }
+            } else if ((lord.skillPoints || 0) > 0) {
+                html += `<div style="color:#9ab; margin-top:3px;">No skills available (prerequisites unmet).</div>`;
+            }
+            html += `</div>`;
+        }
         if (els.unitInfo) els.unitInfo.innerHTML = html;
         const kab = document.getElementById('king-act-btn');
         if (kab) kab.onclick = () => callbacks.onActivateKing && callbacks.onActivateKing(lord);
         const lcbtn = document.getElementById('lord-cancel-goal-btn');
         if (lcbtn) lcbtn.onclick = () => callbacks.onCancelGoal && callbacks.onCancelGoal(lord);
+        const skillBtns = document.querySelectorAll('.skill-invest-btn');
+        skillBtns.forEach(b => {
+            b.onclick = () => callbacks.onSkillInvestment &&
+                callbacks.onSkillInvestment(Number(b.dataset.lordId), b.dataset.skillId);
+        });
     }
 
     function describeBuilding(type) {
@@ -642,7 +741,14 @@ export function bindUI(gameState, callbacks) {
         if (u.vision) tags.push(`vision ${u.vision}`);
         if (u.canFoundCity) tags.push('founds a new city');
         if (u.canBuildBridge) tags.push('builds bridges over rivers');
+        if (u.canBuildStructure && type !== 'ENGINEER') tags.push('builds fortifications');
         if (u.canBuildImprovement) tags.push('builds terrain improvements');
+        if (u.frenzy) tags.push('+3 ATK below 50% HP (frenzy)');
+        if (u.noMedic) tags.push('cannot be healed by medics');
+        if (u.lordGuard) tags.push('+2 DEF near a friendly lord');
+        if (u.cityBonus) tags.push(`+${u.cityBonus} ATK vs city units`);
+        if (u.chargeMultiplier) tags.push(`×${u.chargeMultiplier} damage on first attack`);
+        if (u.openTerrainMoveBonus) tags.push(`+${u.openTerrainMoveBonus} move on open terrain`);
         if (u.buildTurns && u.buildTurns > 1) tags.push(`${u.buildTurns}-turn build`);
         if (tags.length) txt += `. <span style="color:#ffd700;">${tags.join('; ')}.</span>`;
         // Faction flavor for this unit.
@@ -652,6 +758,7 @@ export function bindUI(gameState, callbacks) {
             if (m.attack) parts.push(`${m.attack > 0 ? '+' : ''}${m.attack} ATK`);
             if (m.defense) parts.push(`${m.defense > 0 ? '+' : ''}${m.defense} DEF`);
             if (m.hp) parts.push(`${m.hp > 0 ? '+' : ''}${m.hp} HP`);
+            if (m.moveRange) parts.push(`${m.moveRange > 0 ? '+' : ''}${m.moveRange} MOV`);
             if (m.costGoldMult) parts.push(`${Math.round(m.costGoldMult * 100)}% gold cost`);
             if (parts.length) txt += ` <span style="color:#9cf;">Faction: ${parts.join(', ')}.</span>`;
         }
@@ -659,13 +766,17 @@ export function bindUI(gameState, callbacks) {
     }
 
     function showBuildMenu(tile) {
-        if (!tile || tile.owner !== PLAYER_FACTION) {
+        const influence = tile ? getInfluencedTiles(gameState.tiles, PLAYER_FACTION) : new Set();
+        const inInfluence = tile ? influence.has(`${tile.x},${tile.z}`) : false;
+        // Buildable anywhere inside a city's influence (the engine's
+        // constructBuilding only requires influence, not ownership) — gating
+        // the menu on ownership hid ALL options on influenced-but-unowned
+        // tiles (e.g. an island tile inside the city's radius).
+        if (!tile || (tile.owner !== PLAYER_FACTION && !inInfluence)) {
             if (els.buildMenu) els.buildMenu.innerHTML = '';
             return;
         }
-        const influence = getInfluencedTiles(gameState.tiles, PLAYER_FACTION);
-        const inInfluence = influence.has(`${tile.x},${tile.z}`);
-        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles);
+        const buildable = getBuildableBuildings(tile, gameState.resources.player, gameState.buildings, influence, gameState.tiles, gameState.techState);
         if (els.buildMenu) {
             els.buildMenu.innerHTML = '';
             const desc = document.createElement('div');
@@ -688,14 +799,23 @@ export function bindUI(gameState, callbacks) {
             for (const b of buildable) {
                 const btn = document.createElement('button');
                 btn.textContent = `${b.name} (${formatCost(b.cost)})`;
-                btn.disabled = !b.canBuild;
                 btn.title = (BUILDING_TYPE[b.type] && BUILDING_TYPE[b.type].desc) ? BUILDING_TYPE[b.type].desc : (b.reason || '');
                 btn.style.cssText = 'display:block; margin:2px; padding:4px; width:100%;';
-                btn.onmouseenter = () => setDesc(describeBuilding(b.type) + (b.reason && !b.canBuild ? ` <span style="color:#ff8866;">(${b.reason})</span>` : ''));
+                btn.onmouseenter = () => setDesc(describeBuilding(b.type));
                 btn.onmouseleave = () => setDesc('');
-                btn.onclick = () => {
-                    if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
-                };
+                if (!b.canBuild) {
+                    // Show unavailable options greyed out WITH the reason —
+                    // hiding them made the menu look broken/empty (e.g.
+                    // Harbor not appearing on a coastal tile you can't yet
+                    // afford, or a workshop outside influence).
+                    btn.disabled = true;
+                    btn.style.opacity = '0.45';
+                    btn.textContent += b.reason ? ` — ${b.reason}` : '';
+                } else {
+                    btn.onclick = () => {
+                        if (callbacks.onBuild) callbacks.onBuild(b.type, tile);
+                    };
+                }
                 els.buildMenu.appendChild(btn);
             }
 
@@ -733,18 +853,49 @@ export function bindUI(gameState, callbacks) {
                 const def = defOf(PLAYER_FACTION);
                 const roster = (def && def.roster) || Object.keys(UNIT_TYPE);
                 const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
-                // Ships are unlocked per-city by a Harbor (coastal cities only).
-                const hasHarbor = (gameState.buildings.get(cityKey) || []).includes('HARBOR');
-                if (hasHarbor) {
-                    for (const ship of NAVAL_UNITS) {
-                        if (!fullRoster.includes(ship)) fullRoster.push(ship);
+                // Tech gating: faction-roster units are always available, but
+                // EXTRA_UNITS that are unlocked by a tech are only shown once
+                // that tech is researched. Mirrors the AI's filter in ai.js. This
+                // stops gunpowder-era units (and other faction's signature units
+                // like LEGIONNAIRE/BERSERKER) appearing in the build menu from
+                // turn 1 — they must be researched first.
+                const ts = gameState.techState;
+                if (ts && ts.researched) {
+                    const unlocked = getUnlockedUnits(ts);
+                    const filtered = fullRoster.filter(u => {
+                        if (roster.includes(u)) return true; // faction-roster always available
+                        if (EXTRA_UNITS.includes(u) && !unlocked.has(u)) {
+                            // Only block if some tech actually unlocks this unit.
+                            const hasTechUnlock = Object.values(TECHS).some(t =>
+                                t.unlocks.some(ul => ul.type === 'unit' && ul.id === u));
+                            if (hasTechUnlock) return false;
+                        }
+                        return true;
+                    });
+                    fullRoster.length = 0;
+                    for (const u of filtered) fullRoster.push(u);
+                    // Obsolescence: hide units whose modern replacement's tech
+                    // is researched (fully hidden from the player's build menu).
+                    const obsoleted = applyObsolescence(fullRoster, ts.researched);
+                    if (obsoleted.length > 0) {
+                        fullRoster.length = 0;
+                        for (const u of obsoleted) fullRoster.push(u);
                     }
                 }
-                // Siege engines are unlocked per-city by a Siege Workshop.
-                const hasWorkshop = (gameState.buildings.get(cityKey) || []).includes('SIEGE_WORKSHOP');
+                // Ships require a Harbor in this city's influence AND the unlocking tech.
+                const ts2 = gameState.techState;
+                const unlockedUnits = (ts2 && ts2.researched) ? getUnlockedUnits(ts2) : new Set();
+                const hasHarbor = hasBuildingInInfluence(gameState, tile, 'HARBOR');
+                if (hasHarbor) {
+                    for (const ship of NAVAL_UNITS) {
+                        if (unlockedUnits.has(ship) && !fullRoster.includes(ship)) fullRoster.push(ship);
+                    }
+                }
+                // Siege engines require a Siege Workshop in this city's influence AND the tech.
+                const hasWorkshop = hasBuildingInInfluence(gameState, tile, 'SIEGE_WORKSHOP');
                 if (hasWorkshop) {
                     for (const engine of SIEGE_ENGINES) {
-                        if (!fullRoster.includes(engine)) fullRoster.push(engine);
+                        if (unlockedUnits.has(engine) && !fullRoster.includes(engine)) fullRoster.push(engine);
                     }
                 }
 
@@ -824,6 +975,64 @@ export function bindUI(gameState, callbacks) {
                     if (callbacks.onLevelUpCity) callbacks.onLevelUpCity(tile);
                 };
                 els.buildMenu.appendChild(lvlBtn);
+
+                // Trade routes (Feature 3): a level-2+ player city can establish a
+                // route to another qualifying city (own or friendly ≥ min level).
+                if (cityLevel >= TRADE_ROUTE_MIN_CITY_LEVEL) {
+                    const trHeader = document.createElement('h3');
+                    trHeader.textContent = 'Trade Routes';
+                    trHeader.style.marginTop = '6px';
+                    els.buildMenu.appendChild(trHeader);
+                    const myRoutes = (gameState.tradeRoutes || []).filter(r =>
+                        r.from && r.from.cityKey === `${tile.x},${tile.z}`);
+                    if (myRoutes.length) {
+                        for (const r of myRoutes) {
+                            const rd = document.createElement('div');
+                            rd.style.cssText = 'font-size:11px; color:#9cf; margin:2px 0;';
+                            const tgt = gameState.tiles.get(r.to.cityKey);
+                            const tgtName = tgt ? (tgt.cityName || `City [${tgt.x},${tgt.z}]`) : r.to.cityKey;
+                            rd.textContent = `→ ${tgtName}: +${r.income}g/turn${r.disrupted ? ' (raided!)' : ''}`;
+                            els.buildMenu.appendChild(rd);
+                        }
+                    } else {
+                        const none = document.createElement('div');
+                        none.style.cssText = 'font-size:11px; color:#789; margin:2px 0;';
+                        none.textContent = 'No routes from this city yet.';
+                        els.buildMenu.appendChild(none);
+                    }
+                    // Candidate destinations: other player-owned or peaceful-friendly
+                    // cities ≥ min level, not already routed from this city.
+                    const existingTargets = new Set(myRoutes.map(r => r.to.cityKey));
+                    let anyCandidate = false;
+                    for (const t of gameState.tiles.values()) {
+                        if (t.terrain !== 'CITY') continue;
+                        if (t === tile) continue;
+                        if ((t.cityLevel || 1) < TRADE_ROUTE_MIN_CITY_LEVEL) continue;
+                        const tkey = `${t.x},${t.z}`;
+                        if (existingTargets.has(tkey)) continue;
+                        // Same owner always allowed; otherwise require peace/trade/alliance.
+                        const friendly = t.owner === PLAYER_FACTION ||
+                            (gameState.diplomacy && ['peace', 'trade_pact', 'alliance', 'non_aggression', 'ceasefire']
+                                .includes(getRelation(gameState.diplomacy, PLAYER_FACTION, t.owner).state));
+                        if (!t.owner || !friendly) continue;
+                        anyCandidate = true;
+                        const tb = document.createElement('button');
+                        const tName = t.cityName || `City [${t.x},${t.z}]`;
+                        const tFac = t.owner === PLAYER_FACTION ? '(yours)' : `(${fcOf(t.owner).name || t.owner})`;
+                        tb.textContent = `Establish → ${tName} ${tFac}`;
+                        tb.style.cssText = 'display:block; margin:2px; padding:4px; width:100%; background:#2a3a2a;';
+                        tb.onclick = () => {
+                            if (callbacks.onEstablishTrade) callbacks.onEstablishTrade(`${tile.x},${tile.z}`, tkey);
+                        };
+                        els.buildMenu.appendChild(tb);
+                    }
+                    if (!anyCandidate) {
+                        const nc = document.createElement('div');
+                        nc.style.cssText = 'font-size:11px; color:#789;';
+                        nc.textContent = 'No qualifying destination cities (need level 2+ friendly city).';
+                        els.buildMenu.appendChild(nc);
+                    }
+                }
 
                 const trainHeader = document.createElement('h3');
                 trainHeader.textContent = 'Train Unit';
@@ -926,8 +1135,9 @@ export function bindUI(gameState, callbacks) {
             `;
 
             // Action buttons only on rows involving the player. The available
-            // action set depends on the current state.
-            if (involvesPlayer) {
+            // action set depends on the current state. Spectate mode is
+            // view-only: no propose/declare-war buttons or peace forms.
+            if (involvesPlayer && !gameState.spectateMode) {
                 if (rel.state === 'neutral') {
                     div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
@@ -949,6 +1159,35 @@ export function bindUI(gameState, callbacks) {
                 } else if (rel.state === 'war') {
                     div.appendChild(mkBtn(`Propose Ceasefire`, 'proposeCeasefire', target));
                     div.appendChild(mkBtn(`Propose Peace`, 'proposePeace', target));
+                    // Peace Negotiation with demands: gold reparations, territory
+                    // cession, or ongoing tribute. Visible only while at war.
+                    const wear = (gameState.diplomacy.warWeariness || {})[target] || 0;
+                    const neg = document.createElement('div');
+                    neg.style.cssText = 'margin-top:6px; padding:4px; border-left:3px solid #ff8844; font-size:11px;';
+                    neg.innerHTML = `
+                        <b>Peace Negotiation</b> <span style="opacity:.6;">(war weariness ${Math.round(wear)})</span><br>
+                        <label>Gold: </label><input type="number" id="peace-gold-${target}" value="100" min="0" max="500" style="width:54px; background:#222; color:#fff; border:1px solid #555;">
+                        &nbsp;<label>Tribute g/turn: </label><input type="number" id="peace-trib-${target}" value="0" min="0" max="15" style="width:40px; background:#222; color:#fff; border:1px solid #555;">
+                        <input type="number" id="peace-tribturns-${target}" value="10" min="1" max="20" style="width:36px; background:#222; color:#fff; border:1px solid #555;">t<br>
+                        <label>Territory (e.g. 5,6 7,8): </label><input type="text" id="peace-terr-${target}" placeholder="x,z ..." style="width:120px; background:#222; color:#fff; border:1px solid #555;"><br>
+                        <button class="btn" id="propose-peace-${target}" style="margin-top:3px;">Propose Peace w/ Demands</button>
+                    `;
+                    div.appendChild(neg);
+                    const pBtn = neg.querySelector(`#propose-peace-${target}`);
+                    if (pBtn) {
+                        pBtn.onclick = () => {
+                            const gold = parseInt(neg.querySelector(`#peace-gold-${target}`)?.value) || 0;
+                            const tribPerTurn = parseInt(neg.querySelector(`#peace-trib-${target}`)?.value) || 0;
+                            const tribTurns = parseInt(neg.querySelector(`#peace-tribturns-${target}`)?.value) || 0;
+                            const terrStr = (neg.querySelector(`#peace-terr-${target}`)?.value || '').trim();
+                            const tiles = terrStr.split(/\s+/).filter(t => t.includes(','));
+                            let demands;
+                            if (tiles.length > 0) demands = { type: 'territory', tiles };
+                            else if (tribPerTurn > 0) demands = { type: 'tribute', perTurn: tribPerTurn, duration: tribTurns };
+                            else demands = { type: 'gold', amount: gold };
+                            callbacks.onPeaceNegotiation && callbacks.onPeaceNegotiation(target, demands);
+                        };
+                    }
                 } else if (rel.state === 'peace') {
                     div.appendChild(mkBtn(`Propose NAP`, 'proposeNap', target));
                     div.appendChild(mkBtn(`Propose Trade`, 'proposeTrade', target));
@@ -981,8 +1220,10 @@ export function bindUI(gameState, callbacks) {
                 row.style.cssText = 'margin:3px 0; padding:3px; border-left:3px solid #4488ff; font-size:11px;';
                 const kind = o.type === 'peace' ? 'Peace' : o.type === 'trade_pact' ? 'Trade Pact' : o.type === 'non_aggression' ? 'NAP' : o.type === 'ceasefire' ? 'Ceasefire' : 'Alliance';
                 row.innerHTML = `${fromName} proposes <b>${kind}</b>`;
-                row.appendChild(mkBtn('Accept', 'acceptOffer', i));
-                row.appendChild(mkBtn('Decline', 'declineOffer', i));
+                if (!gameState.spectateMode) {
+                    row.appendChild(mkBtn('Accept', 'acceptOffer', i));
+                    row.appendChild(mkBtn('Decline', 'declineOffer', i));
+                }
                 els.diplomacyPanel.appendChild(row);
             }
         }
@@ -1091,10 +1332,295 @@ export function bindUI(gameState, callbacks) {
         });
     }
 
+    // Tab key toggles the Victory Progress panel (Feature 5). preventDefault keeps
+    // Tab from stealing focus while the player is browsing the map. The panel is
+    // hidden by default; first Tab shows it (and showVictoryPanel populates it on
+    // the next updateAll), second Tab hides it.
+    if (els.victoryPanelWrap) {
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Tab') return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            e.preventDefault();
+            const wrap = els.victoryPanelWrap;
+            const open = wrap.style.display === 'block';
+            wrap.style.display = open ? 'none' : 'block';
+            if (!open) showVictoryPanel();
+        });
+    }
+
+    // T key toggles the Tech Tree panel.
+    if (els.techPanelWrap) {
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 't' && e.key !== 'T') return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (gameState && gameState.spectateMode) return;
+            e.preventDefault();
+            const wrap = els.techPanelWrap;
+            const open = wrap.style.display === 'block';
+            wrap.style.display = open ? 'none' : 'block';
+            if (!open) showTechPanel();
+        });
+    }
+
+    // Scoreboard button: shows the faction rankings panel.
+    const sbBtn = document.getElementById('btn-scoreboard');
+    if (sbBtn) {
+        sbBtn.addEventListener('click', () => {
+            showScoreboard();
+        });
+    }
+
     function updateAll() {
         updateResourceBar();
         showDiplomacyPanel();
         showLordPanel();
+        showAIGoalsPanel();
+        showAIDebugPanel();
+        showArmyGroupsPanel();
+        showVictoryPanel();
+        showTechPanel();
+    }
+
+    // Spectate-only debug panel: each AI faction's current ordered goal
+    // sequence (kind, priority, horizon, target tile). Rendered from the pure
+    // buildAIGoalsHTML helper so the panel logic stays unit-testable. No-op when
+    // the panel wrapper is hidden (normal play) — avoids wasted DOM work.
+    function showAIGoalsPanel() {
+        if (!els.aiGoalsPanel || !els.aiGoalsPanelWrap) return;
+        if (els.aiGoalsPanelWrap.style.display === 'none') return;
+        els.aiGoalsPanel.innerHTML = buildAIGoalsHTML(
+            gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors, true);
+    }
+
+    // AI Debug Panel: shows per-faction unit composition (actual vs target),
+    // resource stockpiles + per-turn income, army groups, active goals, and
+    // recent actions. Rendered from the pure buildAIDebugHTML helper so the
+    // logic stays unit-testable.
+    function showAIDebugPanel() {
+        if (!els.aiDebugPanel || !els.aiDebugPanelWrap) return;
+        if (els.aiDebugPanelWrap.style.display === 'none') return;
+        els.aiDebugPanel.innerHTML = buildAIDebugHTML(
+            gameState.units, gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors,
+            gameState.tiles, gameState.resources, gameState.buildings, gameState.lords);
+    }
+
+    // Army Groups panel (separate from AI Debug): per-faction army groups with
+    // leader, stance, objective, power, and unit-type composition. Rendered
+    // from the pure buildArmyGroupsHTML helper. No-op when hidden.
+    function showArmyGroupsPanel() {
+        if (!els.armyGroupsPanel || !els.armyGroupsPanelWrap) return;
+        if (els.armyGroupsPanelWrap.style.display === 'none') return;
+        els.armyGroupsPanel.innerHTML = buildArmyGroupsHTML(
+            gameState.aiState, FACTIONS, gameState.factionDefs, gameState.factionColors);
+    }
+
+    // Victory Progress Tracker (Feature 5): a glanceable panel summarizing the
+    // player's progress toward each of the four victory conditions (domination,
+    // science, economic, score). Rendered from the pure getVictoryProgress()
+    // callback so the logic stays in game.js and the panel stays declarative.
+    // No-op when the panel wrapper is hidden.
+    function showVictoryPanel() {
+        if (!els.victoryPanel || !els.victoryPanelWrap) return;
+        if (els.victoryPanelWrap.style.display === 'none') return;
+        if (typeof callbacks.getVictoryProgress !== 'function') return;
+        let p;
+        try { p = callbacks.getVictoryProgress(); }
+        catch (e) { return; }
+        if (!p) return;
+
+        const bar = (frac) => {
+            const pct = Math.max(0, Math.min(1, frac)) * 100;
+            return `<div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(0)}%"></div></div>`;
+        };
+        const fmt = (n) => Math.floor(n);
+
+        const dom = p.domination || {};
+        const sci = p.science || {};
+        const eco = p.economic || {};
+        const sc = p.score || {};
+        const html = `
+            <div class="victory-section">
+                <div class="victory-label">⚔️ Domination</div>
+                <div class="victory-detail">${fmt(dom.eliminated||0)}/${fmt(dom.total||0)} rivals eliminated</div>
+                ${bar(dom.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">🔬 Science</div>
+                <div class="victory-detail">${fmt(sci.researched||0)}/${fmt(sci.total||0)} techs${sci.currentTech ? ' · researching '+sci.currentTech : ''}</div>
+                ${bar(sci.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">💰 Economic</div>
+                <div class="victory-detail">${fmt(eco.gold||0)}g / ${fmt(eco.goldTarget||0)}g · ${fmt(eco.tradeRoutes||0)}/${fmt(eco.routeTarget||0)} routes</div>
+                ${bar(eco.progress||0)}
+            </div>
+            <div class="victory-section">
+                <div class="victory-label">🏆 Score (turn ${fmt(sc.turn||0)}/${fmt(sc.maxTurn||0)})</div>
+                <div class="victory-detail">You ${fmt(sc.playerScore||0)} · Best AI ${fmt(sc.aiScore||0)}</div>
+                ${bar(sc.progress||0)}
+            </div>`;
+
+        // Per-faction standings: every faction's closest path to victory,
+        // sorted by score. Uses getAllFactionProgress (score, victory target,
+        // closest victory + progress per faction, elimination flags).
+        let standingsHtml = '';
+        if (typeof callbacks.getAllFactionProgress === 'function') {
+            let all = null;
+            try { all = callbacks.getAllFactionProgress(); } catch (e) { all = null; }
+            if (all) {
+                const vIcon = { domination: '⚔️', science: '🔬', economic: '💰', score: '🏆' };
+                const rows = Object.entries(all)
+                    .map(([slot, fp]) => ({ slot, fp }))
+                    .sort((a, b) => (b.fp.score || 0) - (a.fp.score || 0))
+                    .map(({ slot, fp }) => {
+                        const fc = fcOf(slot);
+                        const hex = (fc && typeof fc.tile === 'number')
+                            ? '#' + fc.tile.toString(16).padStart(6, '0') : '#888';
+                        const def = gameState.factionDefs && gameState.factionDefs[slot];
+                        const name = (def && def.name) || (fc && fc.name) || slot;
+                        if (fp.eliminated) {
+                            return `<div class="vp-faction-row vp-eliminated"><span class="vp-chip" style="background:${hex}"></span><span class="vp-name">${name}</span><span class="vp-detail">eliminated</span></div>`;
+                        }
+                        const pct = Math.max(0, Math.min(1, fp.closestProgress || 0)) * 100;
+                        const you = slot === PLAYER_FACTION && !gameState.spectateMode ? ' (You)' : '';
+                        const crown = fp.isDominant ? ' 👑' : '';
+                        const target = fp.victoryTarget ? ` · aims ${fp.victoryTarget}` : '';
+                        return `<div class="vp-faction-row"><span class="vp-chip" style="background:${hex}"></span><span class="vp-name">${name}${you}${crown}</span><span class="vp-detail">${vIcon[fp.closestVictory] || ''} ${fp.closestVictory || '—'} ${Math.round(pct)}%${target} · score ${fmt(fp.score || 0)}</span><div class="progress-track"><div class="progress-fill" style="width:${pct.toFixed(0)}%;background:${hex};"></div></div></div>`;
+                    }).join('');
+                standingsHtml = `<div class="victory-section"><div class="victory-label">🌍 Standings</div>${rows}</div>`;
+            }
+        }
+        els.victoryPanel.innerHTML = html + standingsHtml;
+    }
+
+    // Tech Tree Panel: shows all techs grouped by era, with status indicators
+    // (researched, available, locked). Clicking an available tech starts research.
+    function showTechPanel() {
+        if (!els.techPanel || !els.techPanelWrap) return;
+        if (els.techPanelWrap.style.display === 'none') return;
+        const ts = gameState.techState;
+        if (!ts) { els.techPanel.innerHTML = '<p>No tech state available.</p>'; return; }
+
+        const eraOrder = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern'];
+        const eraNames = { ancient: 'Ancient', classical: 'Classical', medieval: 'Medieval', industrial: 'Industrial', renaissance: 'Renaissance', enlightenment: 'Enlightenment', modern: 'Modern' };
+        const eraColor = { ancient: '#c8a06e', classical: '#d4af37', medieval: '#8b5cf6', industrial: '#6b7280', renaissance: '#3b82f6', enlightenment: '#f59e0b', modern: '#ef4444' };
+
+        let html = '<h3>Research</h3>';
+        if (ts.current) {
+            const curTech = TECHS[ts.current];
+            if (curTech) {
+                const pct = curTech.cost > 0 ? Math.floor((ts.progress / curTech.cost) * 100) : 0;
+                html += `<div style="margin:4px 0;padding:6px;border-left:3px solid #4caf50;background:#1a2a1a;font-size:12px;">
+                    Researching: <b>${curTech.name}</b><br>
+                    <div class="progress-track" style="margin-top:4px;"><div class="progress-fill" style="width:${pct}%"></div></div>
+                    <span style="opacity:.7;">${ts.progress}/${curTech.cost} pts</span>
+                </div>`;
+            }
+        } else {
+            html += '<div style="margin:4px 0;padding:6px;border-left:3px solid #888;font-size:12px;opacity:.7;">No tech selected — pick one below.</div>';
+        }
+
+        for (const era of eraOrder) {
+            const techs = Object.values(TECHS).filter(t => t.era === era);
+            if (techs.length === 0) continue;
+            html += `<div style="margin:6px 0 2px;"><b style="color:${eraColor[era] || '#aaa'};">${eraNames[era]}</b></div>`;
+            for (const tech of techs) {
+                const researched = ts.researched.has(tech.id);
+                const available = !researched && tech.prerequisites.every(p => ts.researched.has(p));
+                const isCurrent = ts.current === tech.id;
+                const borderColor = researched ? '#4caf50' : isCurrent ? '#2196f3' : available ? '#ff9800' : '#444';
+                const opacity = researched ? '0.7' : available ? '1' : '0.5';
+                const cursor = available && !isCurrent ? 'pointer' : 'default';
+                const unlockText = tech.unlocks.map(u => {
+                    if (u.type === 'building') return BUILDING_TYPE[u.id]?.name || u.id;
+                    if (u.type === 'unit') return UNIT_TYPE[u.id]?.name || u.id;
+                    return u.id;
+                }).join(', ');
+                html += `<div style="margin:2px 0;padding:4px 6px;border-left:3px solid ${borderColor};opacity:${opacity};cursor:${cursor};font-size:12px;background:#1a1a2a;"
+                    data-tech-id="${tech.id}" class="tech-card">
+                    <b>${tech.name}</b> (${tech.cost} pts)
+                    ${researched ? ' ✓' : ''}
+                    ${unlockText ? `<br><span style="opacity:.7;">Unlocks: ${unlockText}</span>` : ''}
+                    ${tech.bonus && Object.keys(tech.bonus).length ? `<br><span style="opacity:.7;">Bonus: ${tech.desc.split('.').pop().trim()}</span>` : ''}
+                </div>`;
+            }
+        }
+
+        els.techPanel.innerHTML = html;
+
+        // Attach click handlers for available techs
+        els.techPanel.querySelectorAll('.tech-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const id = card.dataset.techId;
+                if (!id) return;
+                const t = TECHS[id];
+                if (!t) return;
+                const researched = ts.researched.has(id);
+                const available = !researched && t.prerequisites.every(p => ts.researched.has(p));
+                if (available && callbacks.onResearch) {
+                    callbacks.onResearch(id);
+                    showTechPanel();
+                }
+            });
+        });
+    }
+
+    // Scoreboard Panel: shows all factions' power rankings, scores, and
+    // closest victory progress. Accessible via the scoreboard button.
+    function showScoreboard() {
+        if (typeof callbacks.getAllFactionProgress !== 'function') return;
+        let progress;
+        try { progress = callbacks.getAllFactionProgress(); }
+        catch (e) { return; }
+        if (!progress) return;
+
+        // Sort by score descending
+        const sorted = Object.entries(progress)
+            .filter(([, p]) => !p.eliminated)
+            .sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+
+        const eliminated = Object.entries(progress).filter(([, p]) => p.eliminated);
+
+        let html = '<div class="scoreboard">';
+        html += '<h3>Scoreboard</h3>';
+        html += '<div class="sb-header"><span>#</span><span>Faction</span><span>Score</span><span>Cities</span><span>Tech</span><span>Gold</span><span>Target</span><span>Closest Victory</span></div>';
+
+        sorted.forEach(([faction, data], i) => {
+            const color = callbacks.factionColors && callbacks.factionColors[faction];
+            const hex = color ? '#' + color.tile.toString(16).padStart(6, '0') : '#888';
+            const name = color?.name || faction;
+            const pct = Math.round((data.closestProgress || 0) * 100);
+            const isDom = data.isDominant ? ' <span class="dominant-tag">DOMINANT</span>' : '';
+            html += `<div class="sb-row" style="border-left:3px solid ${hex};">
+                <span>${i + 1}</span>
+                <span style="color:${hex};font-weight:600;">${name}${isDom}</span>
+                <span>${data.score || 0}</span>
+                <span>${data.cities || 0}</span>
+                <span>${data.techs || 0}/${data.totalTechs || 16}</span>
+                <span>${data.gold || 0}g</span>
+                <span>${data.victoryTarget || '—'}</span>
+                <span>${data.closestVictory} ${pct}%</span>
+            </div>`;
+        });
+
+        if (eliminated.length) {
+            html += '<div class="sb-eliminated"><h4>Eliminated</h4>';
+            eliminated.forEach(([f]) => {
+                const name = callbacks.factionColors && callbacks.factionColors[f] ? callbacks.factionColors[f].name : f;
+                html += `<span class="eliminated-tag">${name}</span> `;
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
+
+        // Display in the victory panel area or a dedicated panel
+        if (els.victoryPanel) {
+            els.victoryPanel.innerHTML = html;
+            if (els.victoryPanelWrap) els.victoryPanelWrap.style.display = 'block';
+        }
     }
 
     return {
@@ -1105,6 +1631,10 @@ export function bindUI(gameState, callbacks) {
         showBuildMenu,
         showDiplomacyPanel,
         showLordPanel,
+        showAIGoalsPanel,
+        showVictoryPanel,
+        showTechPanel,
+        showScoreboard,
         addCombatLog,
         updateAll
     };

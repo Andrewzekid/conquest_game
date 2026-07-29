@@ -2,7 +2,7 @@
 import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAIN, UNIT_TYPE, UNIT_COST, CAPTURE_COST, INITIAL_RESOURCES,
          DIPLOMACY_STATES, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, EXTRA_UNITS, BUILDING_TYPE,
          SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_TURNS, SIEGE_TOWER_BUILD_RADIUS, NAVAL_UNITS,
-         SIEGE_ENGINES, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
+         SIEGE_ENGINES, SIEGE_ENGINE_BUILD_COST, SIEGE_ENGINE_BUILD_TURNS, AOE_RADIUS, AOE_SPLASH_FRACTION, BURN_TURNS, BURN_DAMAGE_PER_TURN,
          PILLAGE_GOLD_REWARD,
          CONCEAL_TERRAINS, CONCEAL_TURNS_MOUNTAIN, CONCEAL_TURNS_FOREST, CONCEAL_MAX_PER_TILE,
          CONCEAL_MAX_TURNS, CONCEAL_REVEAL_COOLDOWN,
@@ -11,13 +11,17 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
          CHARGE_EXHAUST_TURNS, CHARGE_EXHAUST_RANGED_VULN,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_STUN_TURNS,
          CHARIOT_CHARGE_ATTACK_BONUS, CHARIOT_CHARGE_VULN_TYPES, CHARIOT_CHARGE_VULN_MULT,
-         RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES,
+         RANGED_BOMBARD_FORT_DAMAGE, RANGED_BOMBARD_TYPES, HEAVY_SIEGE_FORT_CHIP_TYPES,
+         SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX,
          LADDER_COST, LADDER_BUILD_TURNS, LADDER_BUILD_RADIUS,
          STRUCTURE_TYPE, STRUCTURE_COST,
          FACTIONS, PLAYER_FACTION, FACTION_COLORS, CITY_INFLUENCE_RADIUS,
          GRIEVANCE_WAR_THRESHOLD, NEUTRAL_CITY_GRUDGE_RADIUS, MIN_CITY_SPACING,
           CITY_LEVEL_UP_COST, CITY_MAX_LEVEL,
-          MILITARY_BUILDING_LEVELS } from './config.js';
+          MILITARY_BUILDING_LEVELS, ESPIONAGE_GRIPERANCE, CITY_RAZE_GRIPERANCE,
+          WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
+          WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
+          WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory } from './map.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
@@ -27,18 +31,37 @@ import { computeAIActions, kingRangedResponse } from './ai.js';
 import { GameRenderer } from './renderer.js';
 import { bindUI } from './ui.js';
 import { computeVisibility, updateExplored } from './fog.js';
-import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey, getTension, addGrievance, grievanceLevel } from './diplomacy.js';
+import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar, aiDecideTreaty, isAllied, relKey, getTension, addGrievance, grievanceLevel,
+         createPeaceDemand, evaluatePeaceDemand, getWarWeariness, applyWarWeariness, processWarWeariness, PEACE_DEMAND_LIMITS,
+         formCoalition, eligibleCoalitionAllies, declareCoalitionWar, getCoalition } from './diplomacy.js';
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
-         lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp } from './lords.js';
+         lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp,
+         getAvailableSkills, investSkillPoint, getSkillEffects, applyKingTechBonuses } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
-import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD } from './config.js';
-import { collectResources, processUpkeep, getUnitCap, countCities, countTiles } from './economy.js';
-import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS } from './faction.js';
+import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST, WAR_WEARINESS_RATES } from './config.js';
+import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
+         createTradeRoute, validateTradeRoute, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
+import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
+         getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
+import { initAIState, createAIState, serializeAIState, deserializeAIState, chooseVictoryTarget, reevaluateVictoryTarget } from './ai_goals.js';
+import { shouldDeclareWar, shouldAcceptPeace, adjustDiplomacyByGoal } from './ai_diplomacy.js';
+import { addEvent as addEventEntry } from './eventlog.js';
+import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
+import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
+import { buildMinimapData, getCityJumpList, getArmyComposition } from './ui_data.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
 import { saveGame, loadGame, loadSavedExists, clearSave } from './save.js';
 import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
 import { nextStepToward, goalValid } from './path.js';
+import { createTechState, serializeTechState, deserializeTechState,
+         addResearch, selectResearch, getResearchProgress, calculateResearchOutput,
+         getUnlockedUnits, getUnlockedBuildings, getTechBonuses, getCurrentEra,
+         isUnitUnlocked,
+         TECHS, ERA_NAMES, canResearch, getAvailableTechs } from './tech.js';
+import { VICTORY_TYPES, SCORE_VICTORY_TURN, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
+         ECONOMIC_VICTORY_GOLD, ECONOMIC_VICTORY_TRADE_ROUTES, COALITION_MAX_ALLIES, AI_PERSONALITIES } from './config.js';
+import { isObsolete } from './unit_obsolescence.js';
 
 const DRAG_THRESHOLD = 6; // px; under this a press→release is a click
 
@@ -70,7 +93,7 @@ export class Game {
         const maxAi = Math.max(0, FACTIONS.length - 1);
         const others = (options.aiFactionIds && options.aiFactionIds.length)
             ? options.aiFactionIds.slice(0, maxAi)
-            : ['crimson', 'verdant', 'violet', 'azure', 'obsidian']
+            : ['crimson', 'roman', 'viking', 'azure', 'byzantine', 'verdant', 'spanish', 'polish', 'violet', 'obsidian', 'golden', 'iron', 'shadow', 'storm']
                   .filter(id => id !== (playerFactionId || '_none_'))
                   .slice(0, maxAi);
         this._buildFactionBindings(playerFactionId, others);
@@ -121,7 +144,8 @@ export class Game {
         }
     }
 
-    /** Spectate mode UI: show fast-forward / auto controls, hide end turn. */
+    /** Spectate mode UI: show fast-forward / auto controls, hide end turn, and
+     *  reveal the AI Goals debug panel. */
     _initSpectateUI() {
         const endBtn = document.getElementById('btn-end-turn');
         const spectateControls = document.getElementById('spectate-controls');
@@ -129,6 +153,21 @@ export class Game {
         if (spectateControls) {
             spectateControls.style.display = 'flex';
         }
+        const aiGoalsPanel = document.getElementById('ai-goals-panel');
+        if (aiGoalsPanel) aiGoalsPanel.style.display = 'block';
+        const aiDebugPanel = document.getElementById('ai-debug-panel');
+        if (aiDebugPanel) aiDebugPanel.style.display = 'block';
+        const armyGroupsPanel = document.getElementById('army-groups-panel');
+        if (armyGroupsPanel) armyGroupsPanel.style.display = 'block';
+        // Hide player-facing panels that are meaningless in spectate mode.
+        // Diplomacy panel is kept visible so the viewer can inspect AI relations.
+        for (const id of ['tech-panel', 'build-menu']) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        }
+        // gameState.spectateMode is set authoritatively in initState (which runs
+        // after this in the constructor); don't touch it here — gameState isn't
+        // built yet when _initSpectateUI is called.
     }
 
     /** Run N full rounds in spectate mode automatically. A monotonically
@@ -156,7 +195,12 @@ export class Game {
                 return;
             }
             this._rebuildDiploCache();
+            // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+            // regeneration never resurrects a dead unit/lord.
+            this._sweepDeadCombatants();
             this.gameState.turnManager.endPlayerTurn();
+            if (this.ui) this.ui.updateAll();
+            if (this.renderer) this.renderAll();
             done++;
             if (myToken === this._ffToken && status)
                 status.textContent = `Fast-forwarding ${n - done} turns...`;
@@ -179,7 +223,12 @@ export class Game {
     _autoFFLoop() {
         if (!this._autoFF || this.gameState.gameOver || this.gameState.paused) return;
         this._rebuildDiploCache();
+        // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+        // regeneration never resurrects a dead unit/lord.
+        this._sweepDeadCombatants();
         this.gameState.turnManager.endPlayerTurn();
+        if (this.ui) this.ui.updateAll();
+        if (this.renderer) this.renderAll();
         setTimeout(() => this._autoFFLoop(), 250);
     }
 
@@ -195,6 +244,7 @@ export class Game {
             buildings: new Map(),
             buildingState: new Map(),
             tradeRoutes: [],
+            tradeRouteNextId: 1,
             resources: Object.fromEntries(FACTIONS.map(f => [f, { ...INITIAL_RESOURCES }])),
             diplomacy: createDiplomacyState(FACTIONS),
             turn: 1,
@@ -238,12 +288,60 @@ export class Game {
             eliminated: new Set(),
             // Per-faction reputation (0-100, starts 50). Breaking treaties or
             // declaring war on peaceful factions lowers it; long peace raises it.
-            // AI uses it to decide whether to deal with you.
-            reputation: Object.fromEntries(FACTIONS.map(f => [f, 50])),
+            // AI uses it to decide whether to deal with you. Byzantine Empire's
+            // diplomacyBonus raises its starting reputation.
+            reputation: Object.fromEntries(FACTIONS.map(slot => {
+                const def = this.factionAssignments ? getFactionDef(this.factionAssignments[slot]) : null;
+                return [slot, Math.min(100, 50 + getDiplomacyBonus(def))];
+            })),
             gameOver: false,
             winner: null,
-            paused: false
+            paused: false,
+            // Spectate flag mirrored onto gameState so pure render/UI code
+            // (e.g. renderer.js) can read it without reaching back into the
+            // Game instance. Set here in initState so it always exists before
+            // any reader — _initSpectateUI used to set it before gameState was
+            // built, throwing "can't access spectateMode of undefined".
+            spectateMode: this.spectateMode,
+            // Feature 6: rolling event log (capped; oldest drop off).
+            eventLog: [],
+            // Feature 8: active difficulty preset key (defaults to NORMAL).
+            difficulty: this.difficulty || 'NORMAL'
         };
+
+        // Tech tree state (4X feature): single-track research progress.
+        this.gameState.techState = createTechState();
+
+        // Per-faction AI tech states (player uses the global techState).
+        this.gameState.aiTechStates = {};
+        for (const f of FACTIONS) {
+            if (f === PLAYER_FACTION && !this.spectateMode) continue;
+            this.gameState.aiTechStates[f] = createTechState();
+        }
+
+        // Victory tracking state.
+        this.gameState.victoryState = {
+            // Science victory: projects built per faction
+            projects: {},
+            // Economic victory: trade routes per faction
+            tradeRoutes: {},
+            // Score victory: snapshot at key turns
+            scoreSnapshots: {}
+        };
+
+        // Per-faction AI goal-sequence state (see src/ai_goals.js). Persists the
+        // faction's ordered goals + scarcity streak across turns so plans are
+        // stable instead of recomputed (and thrashing) every turn.
+        this.gameState.aiState = initAIState(FACTIONS);
+
+        // Choose victory targets for AI factions based on personality.
+        for (const slot of FACTIONS) {
+            // In spectate mode slot 0 is an AI too - it needs a victory target.
+            if (slot === PLAYER_FACTION && !this.spectateMode) continue;
+            const def = this.factionDefs[slot];
+            const personality = (def && def.aiPersonality) || 'BALANCED';
+            this.gameState.aiState[slot].victoryTarget = chooseVictoryTarget(personality, 1, 0, 0, 0);
+        }
 
         // Create a starting unit + king lord for each faction at its start city.
         for (const slot of FACTIONS) {
@@ -259,6 +357,7 @@ export class Game {
             // king flag is set, recompute so the king gets its full HP (>=50).
             king.maxHp = lordMaxHp(king);
             king.hp = king.maxHp;
+            applyKingTechBonuses(king, this.gameState.techState);
             this.gameState.lords.push(king);
             assignArmy(king, unit.id);
             unit.lordId = king.id;
@@ -293,23 +392,84 @@ export class Game {
         this.factions = FACTIONS;
         this.gameState = state;
         this.tiles = state.tiles;
+        // Backfill city-unrest fields for saves made before the unrest system.
+        // calculateUnrest already tolerates undefined, but normalizing here keeps
+        // tile.unrest a stable number for the UI right after load.
+        if (this.tiles) {
+            for (const tile of this.tiles.values()) {
+                if (tile.terrain !== 'CITY') continue;
+                if (tile.unrest == null) tile.unrest = 0;
+                if (tile.lastConqueredTurn == null) tile.lastConqueredTurn = 0;
+                if (!Array.isArray(tile.unrestReasons)) tile.unrestReasons = [];
+            }
+        }
+        // Trade routes (Feature 3): backfill the array + id counter for old saves.
+        if (!Array.isArray(this.gameState.tradeRoutes)) this.gameState.tradeRoutes = [];
+        if (!this.gameState.tradeRouteNextId) this.gameState.tradeRouteNextId = this.gameState.tradeRoutes.length + 1;
+        // War-weariness store (Feature 2): backfill for old saves.
+        if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
+        if (!this.gameState.diplomacy.warWeariness) this.gameState.diplomacy.warWeariness = {};
+        // Mirror the instance spectate flag onto gameState for pure render/UI
+        // code (loaded games skip initState, where this is normally set).
+        this.gameState.spectateMode = this.spectateMode;
+        // Backfill unit.factionId for saves made before Phase G (battle.js reads
+        // faction passives off it). Derive from the slot->def assignment.
+        if (this.gameState.factionAssignments) {
+            for (const u of this.gameState.units.values()) {
+                if (!u.factionId) u.factionId = this.gameState.factionAssignments[u.owner] || null;
+            }
+        }
         this.gameState.moveTargets = new Set();
         this.gameState.attackTargets = [];
         this.gameState.bridgeTargets = [];
         if (!this.gameState.production) this.gameState.production = new Map();
         if (!this.gameState.construction) this.gameState.construction = new Map();
-        if (!this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) this.gameState.structures = new Map();
+                        if (!this.gameState.structures) this.gameState.structures = new Map();
         if (!this.gameState.bridges) this.gameState.bridges = new Set();
         if (!this.gameState.scryRevealed) this.gameState.scryRevealed = new Set();
         if (!this.gameState.concealedUnits) this.gameState.concealedUnits = new Map();
         if (!this.gameState.chargeTargets) this.gameState.chargeTargets = [];
+        // Tech tree state (4X feature) — absent on old saves.
+        if (!this.gameState.techState) this.gameState.techState = createTechState();
+        if (this.gameState.techState && this.gameState.techState.researched && Array.isArray(this.gameState.techState.researched)) {
+            this.gameState.techState.researched = new Set(this.gameState.techState.researched);
+        }
+        // Per-faction AI tech states — absent on old saves.
+        if (!this.gameState.aiTechStates) this.gameState.aiTechStates = {};
+        for (const f of FACTIONS) {
+            if (f === PLAYER_FACTION) continue;
+            if (!this.gameState.aiTechStates[f]) {
+                this.gameState.aiTechStates[f] = createTechState();
+            } else if (this.gameState.aiTechStates[f].researched &&
+                       Array.isArray(this.gameState.aiTechStates[f].researched)) {
+                this.gameState.aiTechStates[f].researched = new Set(this.gameState.aiTechStates[f].researched);
+            }
+        }
+        // Victory state — absent on old saves.
+        if (!this.gameState.victoryState) {
+            this.gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+        }
         // Reputation may be absent in pre-Phase-E saves �?default everyone to 50.
         if (!this.gameState.reputation) {
             this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
         }
+        // AI goal-sequence state — absent on saves created before the goal
+        // revamp. Backfill a fresh record per faction so old saves load fine.
+        if (!this.gameState.aiState) {
+            this.gameState.aiState = initAIState(FACTIONS);
+        } else {
+            for (const f of FACTIONS) {
+                if (!this.gameState.aiState[f]) this.gameState.aiState[f] = createAIState();
+            }
+        }
         // pendingOffers may be absent on old saves.
         if (!this.gameState.diplomacy) this.gameState.diplomacy = createDiplomacyState(FACTIONS);
         if (!this.gameState.diplomacy.pendingOffers) this.gameState.diplomacy.pendingOffers = [];
+        // Feature 6 event log + Feature 8 difficulty — absent on old saves.
+        if (!Array.isArray(this.gameState.eventLog)) this.gameState.eventLog = [];
+        if (!this.gameState.difficulty) this.gameState.difficulty = 'NORMAL';
+        // Feature 12 coalition store — absent on old saves.
+        if (!this.gameState.diplomacy.coalitions) this.gameState.diplomacy.coalitions = {};
         this.gameState.pendingAmbush = null;
         this.gameState.selectedUnit = null;
         this.gameState.selectedLord = null;
@@ -339,10 +499,27 @@ export class Game {
                 if (def) lord.active = def.king.active;
             }
             // Backfill combat fields for pre-lord-combat saves: lords now have
-            // HP and can attack once per turn.
-            if (typeof lord.maxHp !== 'number') lord.maxHp = lordMaxHp(lord);
-            if (typeof lord.hp !== 'number') lord.hp = lord.maxHp;
+            // HP and can attack once per turn. level/xp must be sanitized
+            // FIRST -- lordMaxHp reads lord.level (undefined level => NaN hp).
+            if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
+            if (typeof lord.xp !== 'number' || !Number.isFinite(lord.xp)) lord.xp = 0;
+            if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
+            if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
+            if (lord.isKing) applyKingTechBonuses(lord, this.gameState.techState);
             if (typeof lord.hasAttackedThisTurn !== 'boolean') lord.hasAttackedThisTurn = false;
+        }
+        // Backfill unit combat fields for pre-HP saves: a unit missing
+        // hp/maxHp/level/xp turns NaN on its first level-up, burn tick or
+        // trap (the "NaN / 60" combat-log bug), and NaN-hp units are
+        // unkillable (NaN <= 0 is false).
+        for (const u of this.gameState.units.values()) {
+            const ubase = UNIT_TYPE[u.type];
+            if (typeof u.level !== 'number' || !Number.isFinite(u.level)) u.level = 1;
+            if (typeof u.xp !== 'number' || !Number.isFinite(u.xp)) u.xp = 0;
+            if (typeof u.maxHp !== 'number' || !Number.isFinite(u.maxHp)) {
+                u.maxHp = (ubase ? ubase.hp : 10) + (u.level - 1) * 3;
+            }
+            if (typeof u.hp !== 'number' || !Number.isFinite(u.hp)) u.hp = u.maxHp;
         }
         if (!this.gameState.turnManager) {
             this.gameState.turnManager = createTurnManager(
@@ -378,9 +555,15 @@ export class Game {
             onBuild: (buildingType, tile) => this.handleBuild(buildingType, tile),
             onTrain: (unitType, tile) => this.handleTrain(unitType, tile),
             onDiplomacy: (action, target) => this.handleDiplomacy(action, target),
+            onPeaceNegotiation: (target, demands) => this.handlePeaceNegotiation(target, demands),
             onRecruitLord: this.spectateMode ? null : () => this.handleRecruitLord(),
             onLevelUpCity: (tile) => this.handleLevelUpCity(tile),
+            onEstablishTrade: (cityKey, targetCityKey) => this.handleEstablishTrade(cityKey, targetCityKey),
             onActivateKing: (lord) => this.handleActivateKing(lord),
+            onSkillInvestment: (lordId, skillId) => this.handleSkillInvestment(lordId, skillId),
+            getVictoryProgress: () => this.getVictoryProgress(),
+            getAllFactionProgress: () => this.getAllFactionProgress(),
+            factionColors: this.factionColors,
             onCancelGoal: (unit) => this.handleCancelGoal(unit),
             onFoundCity: (unit) => this.handleFoundCity(unit),
             onBuildSiegeTower: (unit) => this.handleBuildSiegeTower(unit),
@@ -399,6 +582,7 @@ export class Game {
             onCharge: (unit, targetId) => this.handleChargeById(unit, targetId),
             onAmbushConfirm: () => this.handleAmbushConfirm(),
             onAmbushDecline: () => this.handleAmbushDecline(),
+            onResearch: (techId) => this.handleResearch(techId),
             onEndTurn: () => this.endPlayerTurn()
         });
     }
@@ -660,12 +844,17 @@ export class Game {
             if (dist === 1) { this.handleBuildBridge(sel, tile); return; }
         }
 
-        // 1) Besiege: a selected player SIEGE/ARTILLERY clicks an adjacent fortified enemy city.
+        // 1) Besiege: a selected player SIEGE/ARTILLERY clicks a fortified enemy
+        //    city within besiege range. Ranged siege (CATAPULT/TREBUCHET/CANNON/
+        //    SIEGE_CANNON/etc.) can besiege from their full attackRange; melee
+        //    siege (SIEGE_TOWER) must be adjacent.
         if (sel && sel.owner === PLAYER_FACTION && tile && tile.terrain === 'CITY' &&
             tile.owner !== PLAYER_FACTION && (tile.fortification || 0) > 0 &&
             UNIT_TYPE[sel.type].besiege && !sel.hasAttackedThisTurn) {
+            const udef = UNIT_TYPE[sel.type];
+            const besiegeRange = (udef.attackRange) || 1;
             const dist = Math.abs(sel.x - tile.x) + Math.abs(sel.z - tile.z);
-            if (dist <= 1) { this.handleBesiege(sel, tile); return; }
+            if (dist <= besiegeRange) { this.handleBesiege(sel, tile); return; }
         }
 
         // 1c) Arrow bombard: a selected player Archer/Longbowman fires at an
@@ -817,27 +1006,34 @@ export class Game {
         }
 
         if (!unit.hasAttackedThisTurn) {
-            // Only factions we're at war with may be attacked �?peace, trade
+            // Only factions we're at war with may be attacked — peace, trade
             // pact, and alliance units are never valid attack targets.
             const warTargets = getAttackTargets(unit, this.gameState.units)
                 .filter(t => canAttack(this.gameState.diplomacy, unit.owner, t.owner));
-            this.gameState.attackTargets = warTargets;
+            // Siege-only units (SIEGE) can only target cities, not units.
+            const udef = UNIT_TYPE[unit.type];
+            this.gameState.attackTargets = (udef && udef.siegeOnly)
+                ? []  // siege-only: no unit targets; city siege uses handleBesiege
+                : warTargets;
             // Lords/kings fight too: an EXPOSED enemy lord (no friendly unit
             // bodyguarding it on the same tile) within attack range can be
             // struck directly. A lord stacked with a unit is protected by that
             // unit (attack the unit first; once it dies the lord is exposed).
-            const udef = UNIT_TYPE[unit.type];
             const range = (udef && udef.attackRange) || (udef && udef.ranged ? 2 : 1);
-            for (const l of (this.gameState.lords || [])) {
-                if (!l || l.owner === unit.owner) continue;
-                if ((l.hp || 0) <= 0) continue;
-                if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
-                const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
-                if (dist > range) continue;
-                const guarded = [...this.gameState.units.values()].some(
-                    u => u.owner === l.owner && u.x === l.x && u.z === l.z);
-                if (guarded) continue;
-                this.gameState.attackTargets.push(lordCombatant(l));
+            // Siege-only units can't target lords either.
+            if (!(udef && udef.siegeOnly)) {
+                for (const l of (this.gameState.lords || [])) {
+                    if (!l || l.owner === unit.owner) continue;
+                    // 0-hp lords ARE valid targets: a 0-hp combatant is dead and
+                    // must be finishable (skipping them made 0-hp kings unkillable).
+                    if (!canAttack(this.gameState.diplomacy, unit.owner, l.owner)) continue;
+                    const dist = Math.max(Math.abs(unit.x - l.x), Math.abs(unit.z - l.z));
+                    if (dist > range) continue;
+                    const guarded = [...this.gameState.units.values()].some(
+                        u => u.owner === l.owner && u.x === l.x && u.z === l.z);
+                    if (guarded) continue;
+                    this.gameState.attackTargets.push(lordCombatant(l));
+                }
             }
         } else {
             this.gameState.attackTargets = [];
@@ -957,7 +1153,8 @@ export class Game {
             }
             for (const other of (this.gameState.lords || [])) {
                 if (!other || other === lord || other.owner === lord.owner) continue;
-                if ((other.hp || 0) <= 0) continue;
+                // 0-hp lords ARE valid targets: a 0-hp combatant is dead and
+                // must be finishable (skipping them made 0-hp kings unkillable).
                 if (!canAttack(this.gameState.diplomacy, lord.owner, other.owner)) continue;
                 if (Math.max(Math.abs(other.x - lord.x), Math.abs(other.z - lord.z)) > 1) continue;
                 const guarded = [...this.gameState.units.values()].some(
@@ -980,12 +1177,19 @@ export class Game {
         if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) {
             return;
         }
+        // Same city-entry gate as moveUnit: a city that can't be captured
+        // this move (walls up, breach delay, or garrisoned) can't be entered.
+        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner) {
+            const lordCanEnter = (canCaptureTile(lord.owner, destTile, this.gameState.resources[lord.owner], null, this.gameState.turn || 0) ||
+                this.siegeTowerAdjacentTo(destTile, lord.owner)) && !this._cityOccupied(destTile, null);
+            if (!lordCanEnter) return;
+        }
         lord.x = x;
         lord.z = z;
         lord.hasMovedThisTurn = true;
         const pool = this.gameState.resources[lord.owner];
         if (destTile && destTile.terrain === 'CITY' && destTile.owner !== lord.owner &&
-            (canCaptureTile(lord.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
+            (canCaptureTile(lord.owner, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, lord.owner))) {
             pool.gold -= CAPTURE_COST;
             const prevOwner = destTile.owner;
             const wasNeutral = !prevOwner;
@@ -1005,17 +1209,20 @@ export class Game {
     }
 
     moveUnit(unit, x, z) {
-        unit.x = x;
-        unit.z = z;
-        unit.hasMovedThisTurn = true;
-
         const destTile = this.tiles.get(`${x},${z}`);
         const pool = this.gameState.resources[unit.owner];
         // Civ6 territory: units capture CITIES only. A city is captured if it's
         // breached (fortification 0) OR stormed via an adjacent friendly Siege
-        // Tower (canAssault bypasses the fortification gate).
-        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner &&
-            (canCaptureTile(unit.owner, destTile, pool) || this.siegeTowerAdjacentTo(destTile, unit.owner))) {
+        // Tower (canAssault bypasses the fortification gate) AND no defender
+        // holds the tile. A city that can't be captured this move (walls up,
+        // breach delay, or garrisoned) can't be ENTERED either.
+        if (destTile && destTile.terrain === 'CITY' && destTile.owner !== unit.owner) {
+            const capturable = (canCaptureTile(unit.owner, destTile, pool, null, this.gameState.turn || 0) ||
+                this.siegeTowerAdjacentTo(destTile, unit.owner)) && !this._cityOccupied(destTile, unit.id);
+            if (!capturable) {
+                this.log(`${UNIT_TYPE[unit.type].name} can't enter ${destTile.cityName || 'the city'} -- its defenses hold.`);
+                return;
+            }
             pool.gold -= CAPTURE_COST;
             const prevOwner = destTile.owner;
             const wasNeutral = !prevOwner;
@@ -1023,6 +1230,9 @@ export class Game {
             sfx.capture();
             this._awardCaptureGrievances(destTile, unit.owner, prevOwner, wasNeutral);
         }
+        unit.x = x;
+        unit.z = z;
+        unit.hasMovedThisTurn = true;
         // Arrived at goal �?clear it.
         if (unit.goal && unit.goal.x === x && unit.goal.z === z) unit.goal = null;
 
@@ -1041,6 +1251,30 @@ export class Game {
         this.checkVictory();
     }
 
+    /** Ranged attacks against a defender standing on an UNBREACHED enemy city
+     *  also chip the city's fortification: heavy siege artillery (CANNON,
+     *  TREBUCHET, ...) chips by its besiegePower, lighter ranged units
+     *  (archers) by RANGED_BOMBARD_FORT_DAMAGE. Melee attacks never chip —
+     *  walls only yield to shot and shell. Shared by the player
+     *  (handleAttack) and AI attack paths. */
+    _applyCityFortChip(attacker, defenderTile) {
+        if (!defenderTile || defenderTile.terrain !== 'CITY') return;
+        if (defenderTile.owner === attacker.owner) return; // don't chip own city
+        const atkDef = UNIT_TYPE[attacker.type];
+        if (!atkDef || !atkDef.ranged) return;
+        if ((defenderTile.fortification || 0) <= 0) return; // already breached
+        const chip = HEAVY_SIEGE_FORT_CHIP_TYPES.includes(attacker.type)
+            ? (atkDef.besiegePower || RANGED_BOMBARD_FORT_DAMAGE)
+            : RANGED_BOMBARD_FORT_DAMAGE;
+        defenderTile.fortification = Math.max(0, defenderTile.fortification - chip);
+        defenderTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (defenderTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
+        this.log(`${atkDef.name} chips the walls of city [${defenderTile.x}, ${defenderTile.z}] — fortification ${defenderTile.fortification}/${defenderTile.fortMax}.`);
+        if (defenderTile.fortification <= 0) {
+            if (!defenderTile.breachedTurn) defenderTile.breachedTurn = (this.gameState.turn || 0) + 1;
+            this.log(`City at [${defenderTile.x}, ${defenderTile.z}] is BREACHED — it can now be captured!`);
+        }
+    }
+
     handleAttack(attacker, defender) {
         if (attacker.hasAttackedThisTurn) return;
         if (!canAttack(this.gameState.diplomacy, attacker.owner, defender.owner)) {
@@ -1055,9 +1289,13 @@ export class Game {
 
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+        this._battleWeariness(attacker.owner, defender.owner);
+
+        // Ranged fire vs an unbreached enemy city also chips its fortification.
+        this._applyCityFortChip(attacker, defenderTile);
 
         this._playAttackAnimation(attacker, defender);
         attacker.hasAttackedThisTurn = true;
@@ -1074,6 +1312,7 @@ export class Game {
             this.log(`${nameOf(attacker)} destroyed!`);
             this.gameState.selectedUnit = null;
         }
+        this._sweepDeadCombatants(); // finish off any other 0-hp stragglers
 
         // Long-range siege engines (CATAPULT, TREBUCHET): AOE splash damage to
         // enemy units adjacent to the target, and a burn DoT on survivors.
@@ -1139,9 +1378,10 @@ export class Game {
         const defenderLord = def._isLord ? null : findCommandingLord(this.gameState.lords, def);
         const result = resolveCombat(atk, def, terrain, null, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         sfx.attack();
+        this._battleWeariness(lord.owner, def.owner);
         this._playAttackAnimation(atk, def);
         lord.hasAttackedThisTurn = true;
         syncLordHp(atk); // resolveCombat already syncs, but be safe.
@@ -1156,6 +1396,7 @@ export class Game {
             this.log(`${nameOf(atk)} fell in battle!`);
             this.gameState.selectedLord = null;
         }
+        this._sweepDeadCombatants(); // finish off any other 0-hp stragglers
         this.gameState.moveTargets.clear();
         this.gameState.attackTargets = [];
         this.renderer.clearHighlights();
@@ -1170,6 +1411,23 @@ export class Game {
         if (!c) return;
         if (c._isLord) this._onLordDeath(c._lord);
         else this._onUnitDeath(c);
+    }
+
+    /** Death sweep: any combatant at hp <= 0 is dead, even when the damage
+     *  source (a king ability, starvation attrition, a mispredicted combat,
+     *  a dodged finishing blow) never routed its death. Removes such units and
+     *  lords — a dead king still eliminates his faction via _onKingDeath. Runs
+     *  after battles and at end of turn so corpses never linger (or regen back
+     *  to life) between turns. */
+    _sweepDeadCombatants() {
+        for (const u of [...this.gameState.units.values()]) {
+            // NaN/undefined hp counts as dead: corrupted combatants must be
+            // buried, not left immortal (NaN <= 0 is false).
+            if (typeof u.hp !== 'number' || !Number.isFinite(u.hp) || u.hp <= 0) this._onUnitDeath(u);
+        }
+        for (const l of [...(this.gameState.lords || [])]) {
+            if (l && (typeof l.hp !== 'number' || !Number.isFinite(l.hp) || l.hp <= 0)) this._onLordDeath(l);
+        }
     }
 
     /** A lord/king has fallen. Removes the lord, frees its army, and �?if it was
@@ -1187,6 +1445,7 @@ export class Game {
         const title = wasKing ? 'King' : 'Lord';
         const nm = lord.name || title;
         this.log(`${title} ${nm} has fallen in battle!`);
+        this._addWarWeariness(lord.owner, WAR_WEARINESS_RATES.PER_UNIT_LOST);
         if (wasKing) this._onKingDeath(lord);
     }
 
@@ -1198,7 +1457,18 @@ export class Game {
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
         if (this.gameState.eliminated.has(f)) return;
         this.gameState.eliminated.add(f);
-        this.log(`${name}'s king has fallen �?${name} is eliminated!`);
+        this.log(`${name}'s king has fallen - ${name} is eliminated!`);
+        // City razing: all living factions get grievances against the killer.
+        // This models the international backlash against total conquest.
+        if (CITY_RAZE_GRIPERANCE > 0) {
+            const killer = king.attacker || null;
+            if (killer && killer !== f) {
+                for (const of2 of FACTIONS) {
+                    if (of2 === f || of2 === killer || (this.gameState.eliminated && this.gameState.eliminated.has(of2))) continue;
+                    addGrievance(this.gameState.diplomacy, of2, killer, CITY_RAZE_GRIPERANCE, 'faction eliminated');
+                }
+            }
+        } 
         // Remove the faction's remaining units and lords.
         for (const u of [...this.gameState.units.values()]) {
             if (u.owner === f) this._onUnitDeath(u);
@@ -1209,7 +1479,7 @@ export class Game {
             if (t.owner === f) { t.owner = null; t.loyalty = 0; }
         }
         // Its defensive structures collapse with the faction.
-        if (this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) {
+        if (this.gameState.structures) {
             for (const [skey, s] of [...this.gameState.structures]) {
                 if (s.owner === f) this.gameState.structures.delete(skey);
             }
@@ -1263,9 +1533,13 @@ export class Game {
         }
         sfx.attack();
         this._playAttackAnimation(attacker, defender);
-        // Apply charge bonus temporarily
+        // Apply charge bonus temporarily. Polish Winged Hussars passive adds
+        // extra charge damage on top of the base charge bonus.
         const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
-        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+        const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
+        const wingedBonus = (this.gameState.tempBonuses[attacker.owner] &&
+            this.gameState.tempBonuses[attacker.owner].cavalryCharge) || 0;
+        attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef) + wingedBonus;
         // Execute combat
         const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
         const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
@@ -1273,7 +1547,7 @@ export class Game {
         const defenderLord = findCommandingLord(this.gameState.lords, defender);
         const result = resolveCombat(attacker, defender, terrain, attackerLord, defenderLord,
             this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
         result.messages.forEach(m => this.log(m));
         // Restore original attack
         attacker.attack = originalAttack;
@@ -1387,7 +1661,7 @@ export class Game {
             const result = resolveCombat(attacker, defender, terrain, atkLord, defLord,
                 this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses,
                 false, this.gameState.structures,
-                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true);
+                !!(defTile && defTile.terrain === 'CITY' && (defTile.fortification || 0) <= 0), true, this.gameState.units);
             result.messages.forEach(m => this.log(m));
             attacker.attack = originalAttack;
             if (result.defenderDied) {
@@ -1671,6 +1945,28 @@ export class Game {
         this.handleCharge(attacker, defender);
     }
 
+    /** War weariness from casualties: only factions currently at war
+     *  accumulate weariness (it decays at peace via processWarWeariness).
+     *  Guards against counting peacetime attrition (starvation, burn cleanup). */
+    _addWarWeariness(faction, amount) {
+        if (!faction || !this.gameState.diplomacy) return;
+        for (const f of FACTIONS) {
+            if (f !== faction &&
+                getRelation(this.gameState.diplomacy, faction, f).state === DIPLOMACY_STATES.WAR) {
+                applyWarWeariness(this.gameState.diplomacy, faction, amount);
+                return;
+            }
+        }
+    }
+
+    /** War weariness from fighting a battle: both participants wear down.
+     *  Called once per battle by the attack handlers (not per combat round). */
+    _battleWeariness(ownerA, ownerB) {
+        if (!this.gameState.diplomacy) return;
+        if (ownerA) applyWarWeariness(this.gameState.diplomacy, ownerA, WAR_WEARINESS_RATES.PER_BATTLE);
+        if (ownerB && ownerB !== ownerA) applyWarWeariness(this.gameState.diplomacy, ownerB, WAR_WEARINESS_RATES.PER_BATTLE);
+    }
+
     /** Record a fallen unit in the graveyard for Raise Dead. */
     _onUnitDeath(unit) {
         this.gameState.units.delete(unit.id);
@@ -1678,6 +1974,7 @@ export class Game {
         this.gameState.graveyard.push({
             type: unit.type, owner: unit.owner, x: unit.x, z: unit.z, level: unit.level
         });
+        this._addWarWeariness(unit.owner, WAR_WEARINESS_RATES.PER_UNIT_LOST);
     }
 
     /**
@@ -1701,7 +1998,7 @@ export class Game {
             if (u.owner === attacker.owner) continue;
             if (u.boarded) continue;
             if (!canAttack(this.gameState.diplomacy, attacker.owner, u.owner)) continue;
-            if (Math.max(Math.abs(u.x - primary.x), Math.abs(u.z - primary.z)) <= AOE_RADIUS) {
+            if (Math.max(Math.abs(u.x - primary.x), Math.abs(u.z - primary.z)) <= (atkDef.aoeRadius || AOE_RADIUS)) {
                 splashVictims.push(u);
             }
         }
@@ -1744,7 +2041,15 @@ export class Game {
         const capital = getOwnedCities(this.tiles, owner)[0] || this.tiles.get(`${g.x},${g.z}`);
         if (!capital) return;
         const unit = createUnit(g.type, owner, capital.x, capital.z, { factionDef: def });
-        if (g.level > 1) { unit.level = g.level; }
+        if (g.level > 1) {
+            // Restore the fallen unit's level WITH its per-level stat bumps --
+            // setting level alone left maxHp/attack/defense at level-1 values.
+            unit.maxHp += (g.level - 1) * 3;
+            unit.hp = unit.maxHp;
+            unit.attack += (g.level - 1);
+            unit.defense += (g.level - 1);
+            unit.level = g.level;
+        }
         this.gameState.units.set(unit.id, unit);
         this.gameState.graveyard = this.gameState.graveyard.filter(x => x !== g);
         const name = this.factionColors[owner].name || owner;
@@ -1754,6 +2059,11 @@ export class Game {
     /** Player SIEGE/ARTILLERY besieges an adjacent enemy city (an action, no move). */
     handleBesiege(unit, cityTile) {
         const msgs = besiegeCity(unit, cityTile);
+        // Breach delay: record the turn the city was breached so it can't be
+        // captured immediately on the same turn.
+        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
+            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
+        }
         msgs.forEach(m => this.log(m));
         if (msgs.length) sfx.besiege();
         unit.hasAttackedThisTurn = true; // besieging uses the unit's action
@@ -1778,6 +2088,12 @@ export class Game {
         const fort = cityTile.fortification || 0;
         if (fort <= 0) { this.log('That city is already breached.'); return; }
         cityTile.fortification = Math.max(0, fort - RANGED_BOMBARD_FORT_DAMAGE);
+        // Bombardment wears the city's recovery down (siege pressure), so a
+        // breached city stays at 0 through the next turn.
+        cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
+        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
+            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
+        }
         unit.hasAttackedThisTurn = true;
         sfx.attack();
         this.log(`🏹 ${UNIT_TYPE[unit.type].name} bombards city [${cityTile.x}, ${cityTile.z}] �?fortification ${cityTile.fortification}/${cityTile.fortMax}.`);
@@ -1864,6 +2180,20 @@ export class Game {
         return false;
     }
 
+    /** Is a city tile occupied by any unit or living lord (optionally ignoring
+     *  one unit)? A garrisoned city can't be captured or walked into -- the
+     *  defender must be killed first. */
+    _cityOccupied(tile, exceptId = null) {
+        for (const u of this.gameState.units.values()) {
+            if (u.id === exceptId || u.boarded) continue;
+            if (u.x === tile.x && u.z === tile.z) return true;
+        }
+        for (const l of (this.gameState.lords || [])) {
+            if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) return true;
+        }
+        return false;
+    }
+
     /** Find an enemy (at-war) city within Chebyshev `radius` of `tile` for an
      *  Engineer to build a Siege Tower against. Returns the city tile or null. */
     _siegeTargetNear(engineer, radius) {
@@ -1910,6 +2240,10 @@ export class Game {
     handleBuildSiegeEngine(unit, engineType) {
         if (!unit || unit.type !== 'ENGINEER' || unit.owner !== PLAYER_FACTION) return;
         if (!SIEGE_ENGINES.includes(engineType)) { this.log('Invalid siege engine type.'); return; }
+        // Tech gate: Catapult requires MATHEMATICS, Trebuchet requires SIEGE_CRAFT.
+        if (!isUnitUnlocked(engineType, this.gameState.techState)) {
+            this.log('That siege engine requires a tech you have not yet researched.'); return;
+        }
         if (unit.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
         if (this.gameState.construction && this.gameState.construction.has(unit.id)) {
             this.log('This engineer is already building something.'); return;
@@ -1938,7 +2272,11 @@ export class Game {
      *  within a city's influence, and free of an existing structure. Pays
      *  STRUCTURE_COST up front; the structure completes after buildTurns. */
     handleBuildStructure(engineer, structureType) {
-        if (!engineer || engineer.type !== 'ENGINEER' || engineer.owner !== PLAYER_FACTION) return;
+        // Any unit with the canBuildStructure flag (Engineer, Legionnaire) may
+        // build defensive structures on its current tile.
+        if (!engineer || engineer.owner !== PLAYER_FACTION) return;
+        const usd = UNIT_TYPE[engineer.type];
+        if (!usd || !usd.canBuildStructure) return;
         const sdef = STRUCTURE_TYPE[structureType];
         if (!sdef) { this.log('Invalid structure type.'); return; }
         if (engineer.hasAttackedThisTurn) { this.log('This engineer has already acted this turn.'); return; }
@@ -1982,7 +2320,7 @@ export class Game {
      *  takes damage and is stunned (skips its next turn), and the trap is
      *  consumed. Friendly structures do nothing. */
     _checkFallTrap(unit) {
-        if (!unit || !this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) return;
+        if (!unit || !this.gameState.structures) return;
         const skey = `${unit.x},${unit.z}`;
         const s = this.gameState.structures.get(skey);
         if (!s || s.type !== 'FALL_TRAP' || s.owner === unit.owner) return;
@@ -2015,7 +2353,7 @@ export class Game {
      *  has enemy SPIKES, the charger is impaled before its blow lands.
      *  Returns true if the charger survives (false if the spikes killed it). */
     _applySpikesOnCharge(attacker) {
-        if (!attacker || !this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) return true;
+        if (!attacker || !this.gameState.structures) return true;
         const s = this.gameState.structures.get(`${attacker.x},${attacker.z}`);
         if (!s || s.type !== 'SPIKES' || s.owner === attacker.owner) return true;
         const dmg = (STRUCTURE_TYPE.SPIKES && STRUCTURE_TYPE.SPIKES.damageVsCavalry) || 4;
@@ -2093,7 +2431,7 @@ export class Game {
         if (unit.owner !== PLAYER_FACTION || transport.owner !== PLAYER_FACTION) return;
         const ndef = UNIT_TYPE[unit.type], tdef = UNIT_TYPE[transport.type];
         if (!ndef || ndef.naval) { this.log('Only land units can board a transport.'); return; }
-        if (!tdef || !tdef.naval || transport.type !== 'TRANSPORT') { this.log('Only transports can be boarded.'); return; }
+        if (!tdef || !tdef.naval || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) { this.log('Only transports can be boarded.'); return; }
         if (unit.boarded) { this.log('This unit is already aboard a transport.'); return; }
         const cap = tdef.capacity || 2;
         if ((transport.cargo && transport.cargo.length) || 0 >= cap) { this.log('That transport is full.'); return; }
@@ -2117,7 +2455,7 @@ export class Game {
     /** A Transport with cargo disembarks one carried unit onto an orthogonally
      *  adjacent passable land tile. Disembarking uses the transport's move. */
     handleDisembark(transport) {
-        if (!transport || transport.owner !== PLAYER_FACTION || transport.type !== 'TRANSPORT') return;
+        if (!transport || transport.owner !== PLAYER_FACTION || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) return;
         if (!transport.cargo || transport.cargo.length === 0) { this.log('This transport is empty.'); return; }
         // Find the adjacent land tile (reusing the same logic as the UI helper).
         let dest = null;
@@ -2195,7 +2533,7 @@ export class Game {
                     const skey = `${proj.x},${proj.z}`;
                     if (tile && tile.owner === faction &&
                         !(this.gameState.structures && this.gameState.structures.has(skey))) {
-                        if (!this.gameState.structures, this.gameState.buildings, this.gameState.buildingState) this.gameState.structures = new Map();
+        if (!this.gameState.structures) this.gameState.structures = new Map();
                         const sName = (STRUCTURE_TYPE[proj.structureType] || {}).name || proj.structureType;
                         this.gameState.structures.set(skey, { type: proj.structureType, owner: faction });
                         this.log(`${factionName}: ${sName} completed at [${proj.x}, ${proj.z}]!`);
@@ -2259,7 +2597,7 @@ export class Game {
 
     handleBuild(buildingType, tile) {
         const influence = getInfluencedTiles(this.tiles, PLAYER_FACTION, CITY_INFLUENCE_RADIUS);
-        const messages = constructBuilding(buildingType, tile, this.gameState.resources.player, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+        const messages = constructBuilding(buildingType, tile, this.gameState.resources.player, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, this.gameState.techState);
         messages.forEach(m => this.log(m));
         sfx.click();
         this.ui.showBuildMenu(tile);
@@ -2278,7 +2616,7 @@ export class Game {
         if (tile.owner !== PLAYER_FACTION) { this.log('Workers can only build on your own tiles.'); return; }
         const influence = getInfluencedTiles(this.tiles, PLAYER_FACTION, CITY_INFLUENCE_RADIUS);
         const messages = constructBuilding(buildingType, tile, this.gameState.resources.player,
-            this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+            this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, this.gameState.techState);
         if (messages.length && messages[0].startsWith('Built')) {
             worker.hasAttackedThisTurn = true; // building uses the worker's action
             sfx.click();
@@ -2412,11 +2750,36 @@ export class Game {
             this.log('Your faction cannot train that unit.');
             return;
         }
+        // Tech gating: EXTRA_UNITS unlocked by a tech require that tech to be
+        // researched before the player can train them. Faction-roster units are
+        // always available (they don't need tech gating). Mirrors the AI filter.
+        if (!def.roster.includes(unitType) && EXTRA_UNITS.includes(unitType)) {
+            const ts = this.gameState.techState;
+            const unlocked = ts && ts.researched ? getUnlockedUnits(ts) : new Set();
+            const hasTechUnlock = Object.values(TECHS).some(t =>
+                t.unlocks.some(ul => ul.type === 'unit' && ul.id === unitType));
+            if (hasTechUnlock && !unlocked.has(unitType)) {
+                this.log('That unit requires a tech you have not yet researched.');
+                return;
+            }
+        }
+        // Obsolescence: a unit whose modern replacement's tech is researched
+        // can no longer be trained (it's obsolete). Applies to faction-roster
+        // units too — they bypass the tech gate but not obsolescence. Catches
+        // stale UI actions and save-games with an obsolete unit queued.
+        const pts = this.gameState.techState;
+        if (pts && pts.researched && isObsolete(unitType, pts.researched)) {
+            this.log('That unit is obsolete — a modern replacement is available.');
+            return;
+        }
         // Ships require a Harbor in this city's influence (and the harbor must be coastal).
         if (NAVAL_UNITS.includes(unitType)) {
             const harborInfo = this.bestMilitaryLevel(tile, 'HARBOR');
             if (!harborInfo) { this.log('Ships require a Harbor in this city (or its influence).'); return; }
-            // 6c �?Enemy warship blockade: an adjacent enemy ship blocks ship production.
+            if (!isUnitUnlocked(unitType, this.gameState.techState)) {
+                this.log('That ship requires a tech you have not yet researched.'); return;
+            }
+            // 6c Enemy warship blockade: an adjacent enemy ship blocks ship production.
             const blocked = this._isHarborBlockaded(tile.x, tile.z);
             if (blocked) { this.log('The harbor is blockaded by enemy ships!'); return; }
         }
@@ -2424,6 +2787,9 @@ export class Game {
         if (SIEGE_ENGINES.includes(unitType)) {
             const workshop = this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP');
             if (!workshop) { this.log('Siege engines require a Siege Workshop in this city (or its influence).'); return; }
+            if (!isUnitUnlocked(unitType, this.gameState.techState)) {
+                this.log('That siege engine requires a tech you have not yet researched.'); return;
+            }
         }
         // A city already busy with multi-turn production can't start another.
         if (this.gameState.production && this.gameState.production.has(cityKey)) {
@@ -2477,12 +2843,31 @@ export class Game {
         this.ui.updateResourceBar();
     }
 
+    /** Select a technology to research for the player faction. */
+    handleResearch(techId) {
+        const tech = TECHS[techId];
+        if (!tech) { this.log('Unknown technology.'); return; }
+        const ts = this.gameState.techState;
+        if (!ts) { this.log('No tech state available.'); return; }
+        if (ts.researched && ts.researched.has(techId)) {
+            this.log(`${tech.name} already researched.`);
+            return;
+        }
+        if (!selectResearch(ts, techId)) {
+            this.log(`${tech.name} not available yet (prerequisites not met).`);
+            return;
+        }
+        sfx.click();
+        this.log(`Researching ${tech.name}...`);
+        this.renderAll();
+    }
+
     /** Upgrade a military building (BARRACKS/HARBOR) on a tile to the next level. */
     handleUpgradeBuilding(buildingType, tile) {
         if (!tile) return;
-        const msgs = upgradeBuilding(buildingType, tile, this.gameState.resources.player,
+        const msg = upgradeBuilding(buildingType, tile, this.gameState.resources.player,
             this.gameState.buildings, this.gameState.buildingState);
-        msgs.forEach(m => this.log(m));
+        this.log(msg);
         sfx.click();
         this.ui.showBuildMenu(tile);
         this.renderAll();
@@ -2513,6 +2898,8 @@ export class Game {
     }
 
     handleDiplomacy(action, target) {
+        // Spectate mode is view-only: ignore any diplomacy action.
+        if (this.spectateMode) { this.log('Diplomacy is view-only while spectating.'); return; }
         const diplo = this.gameState.diplomacy;
         if (!this.gameState.reputation) this.gameState.reputation = Object.fromEntries(FACTIONS.map(f => [f, 50]));
         const rep = this.gameState.reputation;
@@ -2619,15 +3006,155 @@ export class Game {
         this.ui.showDiplomacyPanel();
     }
 
+    /** Handle a player-proposed peace with demands (gold reparations, territory
+     *  cession, or ongoing tribute). The target AI evaluates the demand using
+     *  its personality, the power ratio, war weariness, and the relationship
+     *  score; on acceptance the demand is applied and peace is established. */
+    handlePeaceNegotiation(target, demands) {
+        const diplo = this.gameState.diplomacy;
+        const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        const rel = getRelation(diplo, PLAYER_FACTION, target);
+
+        if (rel.state !== DIPLOMACY_STATES.WAR) {
+            this.log(`Can only negotiate peace during war with ${nameOf(target)}.`);
+            sfx.click();
+            this.ui.showDiplomacyPanel();
+            return;
+        }
+
+        // Validate demand magnitude against the configured caps.
+        if (demands.type === 'gold' && demands.amount > PEACE_DEMAND_LIMITS.MAX_GOLD_DEMAND) {
+            this.log(`Gold demand capped at ${PEACE_DEMAND_LIMITS.MAX_GOLD_DEMAND}.`);
+            return;
+        }
+        if (demands.type === 'territory' && (demands.tiles || []).length > PEACE_DEMAND_LIMITS.MAX_TERRITORY_TILES) {
+            this.log(`Territory demand capped at ${PEACE_DEMAND_LIMITS.MAX_TERRITORY_TILES} tiles.`);
+            return;
+        }
+        if (demands.type === 'tribute') {
+            if (demands.perTurn > PEACE_DEMAND_LIMITS.MAX_TRIBUTE_PER_TURN ||
+                demands.duration > PEACE_DEMAND_LIMITS.MAX_TRIBUTE_DURATION) {
+                this.log(`Tribute capped at ${PEACE_DEMAND_LIMITS.MAX_TRIBUTE_PER_TURN}g for ${PEACE_DEMAND_LIMITS.MAX_TRIBUTE_DURATION} turns.`);
+                return;
+            }
+        }
+
+        const playerPower = this._factionPower(PLAYER_FACTION);
+        const targetPower = this._factionPower(target);
+        const powerRatio = playerPower / Math.max(1, targetPower);
+        const weariness = getWarWeariness(diplo, target);
+        const demand = createPeaceDemand(demands.type, demands);
+        const targetDef = this.factionDefs ? this.factionDefs[target] : null;
+        const personality = (targetDef && targetDef.aiPersonality) || 'DEFENSIVE';
+        const targetRes = this.gameState.resources && this.gameState.resources[target] || { gold: 0 };
+
+        const result = evaluatePeaceDemand(
+            demand, target, PLAYER_FACTION, diplo, targetRes, powerRatio, weariness, personality
+        );
+
+        if (result.accepted) {
+            if (demand.type === 'gold' && demand.amount > 0) {
+                const tr = this.gameState.resources[target];
+                const pr = this.gameState.resources[PLAYER_FACTION];
+                const paid = Math.min(demand.amount, (tr && tr.gold) || 0);
+                if (tr) tr.gold = Math.max(0, (tr.gold || 0) - paid);
+                if (pr) pr.gold = (pr.gold || 0) + paid;
+                this.log(`${nameOf(target)} pays ${paid} gold in reparations.`);
+            } else if (demand.type === 'territory') {
+                let transferred = 0;
+                for (const tileKey of demand.tiles) {
+                    const tile = this.tiles.get(tileKey);
+                    if (tile && tile.owner === target) {
+                        tile.owner = PLAYER_FACTION;
+                        transferred++;
+                    }
+                }
+                this.log(`${nameOf(target)} cedes ${transferred} tile(s).`);
+            } else if (demand.type === 'tribute') {
+                // Store the tribute on the relation; the turn manager pays it out
+                // each turn until the duration expires.
+                rel.tribute = { from: target, to: PLAYER_FACTION,
+                                perTurn: demand.perTurn, turnsLeft: demand.duration };
+                this.log(`${nameOf(target)} agrees to pay ${demand.perTurn} gold/turn for ${demand.duration} turns.`);
+            }
+            setRelation(diplo, PLAYER_FACTION, target, DIPLOMACY_STATES.PEACE, this.gameState.turn || 0);
+            this.log(`Peace established with ${nameOf(target)}.`);
+        } else {
+            this.log(`${nameOf(target)} rejects your peace terms (chance ${Math.round(result.chance * 100)}%).`);
+        }
+
+        sfx.click();
+        this.ui.showDiplomacyPanel();
+        this.renderAll();
+    }
+
+    /** Establish a trade route from one of the player's cities (≥ min level) to
+     *  a target city. Routes pay income per turn based on distance + both city
+     *  levels; enemy units on the route's path can raid and disrupt them. Each
+     *  established route also counts toward the economic victory threshold. */
+    handleEstablishTrade(cityKey, targetCityKey) {
+        const nameOf = (f) => this.factionColors[f] ? this.factionColors[f].name : f;
+        const fromTile = this.tiles.get(cityKey);
+        const toTile = this.tiles.get(targetCityKey);
+        if (!fromTile || !toTile) { this.log('Trade route: city not found.'); return; }
+        const targetOwner = toTile.owner;
+        if (!targetOwner) { this.log('Trade route: destination is not a founded city.'); return; }
+
+        const validation = validateTradeRoute(
+            this.tiles, this.gameState.diplomacy,
+            PLAYER_FACTION, targetOwner, cityKey, targetCityKey,
+            this.gameState.tradeRoutes
+        );
+        if (!validation.valid) { this.log(`Trade route rejected: ${validation.reason}`); sfx.click(); return; }
+
+        if (!this.gameState.tradeRouteNextId) this.gameState.tradeRouteNextId = 1;
+        const route = createTradeRoute({
+            id: this.gameState.tradeRouteNextId++,
+            from: { owner: PLAYER_FACTION, cityKey, x: fromTile.x, z: fromTile.z },
+            to: { owner: targetOwner, cityKey: targetCityKey, x: toTile.x, z: toTile.z },
+            fromLevel: fromTile.cityLevel || 1,
+            toLevel: toTile.cityLevel || 1,
+            turn: this.gameState.turn || 0
+        });
+        this.gameState.tradeRoutes.push(route);
+        // Economic victory counter: track routes per faction.
+        if (!this.gameState.victoryState) this.gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+        const vr = this.gameState.victoryState.tradeRoutes || (this.gameState.victoryState.tradeRoutes = {});
+        vr[PLAYER_FACTION] = (vr[PLAYER_FACTION] || 0) + 1;
+        this.log(`Trade route established to ${nameOf(targetOwner)}! +${route.income} gold/turn.`);
+        sfx.click();
+        this.ui.updateResourceBar();
+        this.renderAll();
+    }
+
     /** Award grievances when a city is captured. Former owner gets the biggest
      *  grievance; neutral cities within NEUTRAL_CITY_GRUDGE_RADIUS of a faction's
      *  city also generate a smaller grievance (Civ6 border tension). */
     _awardCaptureGrievances(cityTile, newOwner, prevOwner, wasNeutral) {
         const diplo = this.gameState.diplomacy;
         const other = newOwner;
-        // Former owner gets +25 grievance for losing a city
+        // Spanish Conquistadors passive: plunder gold on city conquest.
+        const conquerorDef = this.factionDefs ? this.factionDefs[other] : null;
+        const plunder = getGoldPerConquest(conquerorDef);
+        if (plunder > 0) {
+            const res = this.gameState.resources && this.gameState.resources[other];
+            if (res) {
+                res.gold = (res.gold || 0) + plunder;
+                this.log(`${(conquerorDef && conquerorDef.name) || other} plunders ${plunder} gold from the conquered city!`);
+            }
+        }
+        // City unrest: a freshly-captured city starts at elevated unrest and
+        // remembers the conquest turn (the recent-conquest spike decays over
+        // UNREST_INCREASE_RATES.RECENT_CONQUEST_DECAY_TURNS via calculateUnrest).
+        if (cityTile) {
+            cityTile.lastConqueredTurn = this.gameState.turn || 0;
+            cityTile.unrest = UNREST_INCREASE_RATES.CAPTURE_INITIAL;
+        }
+        // Former owner gets +25 grievance for losing a city, and its people
+        // grow war-weary from the loss.
         if (prevOwner && prevOwner !== other) {
             addGrievance(diplo, prevOwner, other, 25, 'city captured');
+            applyWarWeariness(diplo, prevOwner, WAR_WEARINESS_RATES.PER_CITY_LOST);
         }
         // Neutral capture: factions with cities within the grudge radius
         // see it as an aggressive land grab.
@@ -2729,6 +3256,21 @@ export class Game {
         this.activateKing(PLAYER_FACTION);
     }
 
+    /** Spend a lord's skill point on a skill-tree node (Feature 4). Only the
+     *  player's own lords can be invested in; AI lords auto-spend is handled
+     *  separately in runAITurn. */
+    handleSkillInvestment(lordId, skillId) {
+        const lord = this.gameState.lords.find(l => l.id === lordId);
+        if (!lord || lord.owner !== PLAYER_FACTION) { this.log('Lord not found.'); return; }
+        const result = investSkillPoint(lord, skillId);
+        this.log(result.message);
+        if (result.success) {
+            sfx.click();
+            this.ui.showLordInfo(lord);
+            this.renderAll();
+        }
+    }
+
     /** Apply a faction's king active ability (player or AI). */
     activateKing(faction) {
         const def = this.factionDefs[faction];
@@ -2788,13 +3330,14 @@ export class Game {
                 this.log(`${name}: King ${king.name} calls a Stampede! +2 attack this turn.`);
                 break;
             case 'ironwill': {
-                this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 3, siegeAttack: 4 };
                 for (const t of this.tiles.values()) {
                     if (t.terrain === 'CITY' && t.owner === faction) {
-                        t.fortification = (t.fortification || 0) + 3;
+                        const max = t.fortMax || (t.fortification || 0);
+                        t.fortification = Math.min(max, (t.fortification || 0) + 3);
                     }
                 }
-                this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification to all cities.`);
+                this.log(`${name}: King ${king.name} invokes Iron Will! +3 defense, +3 fortification, +4 siege attack this turn.`);
                 break;
             }
             case 'vanish':
@@ -2820,6 +3363,55 @@ export class Game {
             case 'wintersgrasp':
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
                 this.log(`${name}: King ${king.name} casts Winter's Grasp! +2 defense this turn.`);
+                break;
+            case 'discipline':
+                this.gameState.tempBonuses[faction] = { attack: 3, defense: 2 };
+                this.log(`${name}: King ${king.name} invokes Discipline! +3 attack, +2 defense this turn.`);
+                break;
+            case 'berserker_rage':
+                this.gameState.tempBonuses[faction] = { attack: 4, lifesteal: 0.5, lifestealTypes: ['BERSERKER', 'INFANTRY'] };
+                this.log(`${name}: King ${king.name} enters Berserker Rage! BERSERKER/INFANTRY +4 attack, lifesteal 50%.`);
+                break;
+            case 'golden_gate': {
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0 };
+                // +5 fortification to all owned cities.
+                let citiesUpgraded = 0;
+                for (const t of this.tiles.values()) {
+                    if (t.terrain === 'CITY' && t.owner === faction) {
+                        const max = t.fortMax || (t.fortification || 0) + 5;
+                        t.fortification = Math.min(max, (t.fortification || 0) + 5);
+                        citiesUpgraded++;
+                    }
+                }
+                // Heal all friendly units to full HP (the dead stay dead — no resurrection).
+                let healed = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner !== faction) continue;
+                    if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
+                        u.hp = u.maxHp || 10;
+                        healed++;
+                    }
+                }
+                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +5 fort, ${healed} units healed to full.`);
+                break;
+            }
+            case 'manifest_destiny': {
+                this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
+                // Free Settler if fewer than 3 cities.
+                const ownedCities = getOwnedCities(this.tiles, faction);
+                let settlerMsg = '';
+                if (ownedCities.length < 3 && ownedCities.length > 0) {
+                    const cap = ownedCities[0];
+                    const settler = createUnit('SETTLER', faction, cap.x, cap.z, { factionDef: def });
+                    this.gameState.units.set(settler.id, settler);
+                    settlerMsg = ' Free Settler spawned!';
+                }
+                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${settlerMsg}`);
+                break;
+            }
+            case 'winged_charge':
+                this.gameState.tempBonuses[faction] = { cavalryCharge: 3 };
+                this.log(`${name}: King ${king.name} leads a Winged Charge! Cavalry free charge attacks +3 bonus damage.`);
                 break;
         }
         this.gameState.kingCooldowns[faction] = cd;
@@ -2862,6 +3454,10 @@ export class Game {
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
                     break; // stop adjacent; player can besiege/capture manually
                 }
+                // Don't auto-walk onto a garrisoned city -- kill the defender first.
+                if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && this._cityOccupied(dest, unit.id)) {
+                    break;
+                }
                 // Perform a plain move (no capture cost for friendly tiles; capture if possible).
                 unit.x = step.x; unit.z = step.z; unit.hasMovedThisTurn = true; moved = true;
                 // An enemy fall trap on the destination springs now.
@@ -2869,7 +3465,7 @@ export class Game {
                 if (!this.gameState.units.has(unit.id)) break; // the trap killed it
                 const pool = this.gameState.resources[PLAYER_FACTION];
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION &&
-                    (canCaptureTile(PLAYER_FACTION, dest, pool) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
+                    (canCaptureTile(PLAYER_FACTION, dest, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(dest, PLAYER_FACTION))) {
                     pool.gold -= CAPTURE_COST;
                     captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
                     sfx.capture();
@@ -2906,8 +3502,14 @@ export class Game {
                     this.log(`🎯 Lord ${lord.name} can't reach its goal �?cancelled.`);
                     break;
                 }
-                // Don't step onto a fortified enemy city (must besiege first).
+                // Don't step onto impassable terrain (water, river, mountain).
                 const dest = this.tiles.get(`${step.x},${step.z}`);
+                if (dest && (dest.terrain === 'WATER' || dest.terrain === 'RIVER' || dest.terrain === 'MOUNTAIN')) {
+                    lord.goal = null;
+                    this.log(`🎯 Lord ${lord.name}'s goal is on impassable terrain — cancelled.`);
+                    break;
+                }
+                // Don't step onto a fortified enemy city (must besiege first).
                 if (dest && dest.terrain === 'CITY' && dest.owner !== PLAYER_FACTION && (dest.fortification || 0) > 0) {
                     lord.goal = null;
                     this.log(`🎯 Lord ${lord.name}'s goal is a fortified city �?cancelled (besiege it first).`);
@@ -2915,7 +3517,7 @@ export class Game {
                 }
                 lord.x = step.x; lord.z = step.z; lord.hasMovedThisTurn = true; moved = true;
                 // Capture a breached enemy city on arrival (like units do).
-                if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION])) {
+                if (dest && dest.terrain === 'CITY' && canCaptureTile(PLAYER_FACTION, dest, this.gameState.resources[PLAYER_FACTION], null, this.gameState.turn || 0)) {
                     this.gameState.resources[PLAYER_FACTION].gold -= CAPTURE_COST;
                     captureCityTerritory(this.tiles, dest, PLAYER_FACTION, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(m));
                     sfx.capture();
@@ -2969,10 +3571,6 @@ export class Game {
                 if (Array.isArray(bs) && bs.includes('WALLS')) power[t.owner] += 5;
             }
         }
-        for (const f of FACTIONS) {
-            const gold = (this.gameState.resources[f] && this.gameState.resources[f].gold) || 0;
-            power[f] += Math.floor(gold / 100);
-        }
         // Pairwise nearest-city Manhattan distance (O(cities_a × cities_b) per
         // pair �?tiny compared to the old O(tiles²) scan).
         const dist = {};
@@ -2996,8 +3594,8 @@ export class Game {
     /** Invalidate the diplomacy cache (e.g. after a city capture mid-turn). */
     _invalidateDiploCache() { this._diploCache = null; }
 
-    /** Rough military/economic power of a faction: units + cities (weighted) +
-     *  a gold contribution. Used by the AI to judge whether it has the advantage
+    /** Rough military power of a faction: units + cities (weighted).
+     *  Used by the AI to judge whether it has the advantage
      *  to declare war. Uses the per-turn cache when available. */
     _factionPower(faction) {
         if (this._diploCache && this._diploCache.turn === this.gameState.turn) {
@@ -3010,8 +3608,50 @@ export class Game {
         for (const t of this.tiles.values()) {
             if (t.owner === faction && t.terrain === 'CITY') cities++;
         }
-        const gold = (this.gameState.resources[faction] && this.gameState.resources[faction].gold) || 0;
-        return units + cities * 2 + Math.floor(gold / 100);
+        return units + cities * 2;
+    }
+
+    /** Calculate comprehensive power rankings for all factions.
+     *  Returns { factionId: { score, cities, units, techs, gold, tilePercent, isDominant, isLeading } } */
+    calculatePowerRankings() {
+        const gs = this.gameState;
+        const rankings = {};
+        const totalTiles = this.tiles.size;
+
+        for (const f of FACTIONS) {
+            if (gs.eliminated && gs.eliminated.has(f)) continue;
+            let cities = 0, units = 0, tilesOwned = 0;
+            for (const t of this.tiles.values()) {
+                if (t.owner === f) {
+                    tilesOwned++;
+                    if (t.terrain === 'CITY') cities++;
+                }
+            }
+            for (const u of gs.units.values()) {
+                if (u.owner === f && !u.boarded) units++;
+            }
+            const gold = (gs.resources[f] && gs.resources[f].gold) || 0;
+            const fTs = this._factionTechState(f);
+            const techs = fTs && fTs.researched ? fTs.researched.size : 0;
+            const tilePercent = totalTiles > 0 ? tilesOwned / totalTiles : 0;
+
+            const score = cities * 20 + units * 3 + techs * 10 + Math.floor(tilePercent * 100);
+
+            rankings[f] = {
+                score, cities, units, techs, gold, tilesOwned,
+                tilePercent,
+                isDominant: tilePercent > 0.3 || cities >= 6,
+                isLeading: false
+            };
+        }
+
+        let maxScore = 0, leader = null;
+        for (const [f, r] of Object.entries(rankings)) {
+            if (r.score > maxScore) { maxScore = r.score; leader = f; }
+        }
+        if (leader) rankings[leader].isLeading = true;
+
+        return rankings;
     }
 
     /** AI may unilaterally declare war on a faction it's at peace/trade/
@@ -3025,11 +3665,12 @@ export class Game {
      *  - ECONOMIC: Prefers trade, avoids war, seeks distant alliances for security
      *  - BALANCED: "Attack close, ally far" - wars on neighbors, allies with distant factions */
     _getDiplomaticStrategy(personality) {
+        const isSpectate = this.spectateMode;
         const strategies = {
-            AGGRESSIVE: { warThreshold: 1.1, allyThreshold: 0.6, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: 1.5 },
-            DEFENSIVE:  { warThreshold: 1.6, allyThreshold: 0.9, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.0 },
-            ECONOMIC:   { warThreshold: 2.0, allyThreshold: 0.7, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: 2.5 },
-            BALANCED:   { warThreshold: 1.3, allyThreshold: 0.8, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: 1.8 }
+            AGGRESSIVE: { warThreshold: isSpectate ? 0.7 : 0.9, allyThreshold: 0.15, preferNeighbors: true, seekDistantAllies: false, breakAllianceThreshold: isSpectate ? 1.0 : 1.3, peaceCooldown: isSpectate ? 2 : 4 },
+            DEFENSIVE:  { warThreshold: isSpectate ? 1.0 : 1.3, allyThreshold: 0.25, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.2 : 1.7, peaceCooldown: isSpectate ? 3 : 5 },
+            ECONOMIC:   { warThreshold: isSpectate ? 1.2 : 1.6, allyThreshold: 0.35, preferNeighbors: false, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.5 : 2.0, peaceCooldown: isSpectate ? 3 : 5 },
+            BALANCED:   { warThreshold: isSpectate ? 0.9 : 1.1, allyThreshold: 0.2, preferNeighbors: true, seekDistantAllies: true, breakAllianceThreshold: isSpectate ? 1.1 : 1.5, peaceCooldown: isSpectate ? 2 : 4 }
         };
         return strategies[personality] || strategies.DEFENSIVE;
     }
@@ -3068,12 +3709,89 @@ export class Game {
         return false;
     }
 
+    /** Should this AI faction consider forming or joining a coalition against
+     *  a dominant/leading faction? Returns { target, allies } or null. */
+    _evaluateCoalition(faction) {
+        const gs = this.gameState;
+        const rankings = this.calculatePowerRankings();
+        const myRank = rankings[faction];
+        if (!myRank) return null;
+
+        // Find the dominant or leading faction
+        let target = null;
+        for (const [f, r] of Object.entries(rankings)) {
+            if (f === faction) continue;
+            if (r.isDominant || r.isLeading) {
+                target = f;
+                break;
+            }
+        }
+        if (!target) return null;
+
+        // Check if we're already at war with the target
+        const relTarget = getRelation(gs.diplomacy, faction, target);
+        if (relTarget.state === DIPLOMACY_STATES.WAR) return null;
+
+        // Find potential allies: factions that are NOT the target and are at peace
+        const candidates = FACTIONS.filter(f =>
+            f !== faction && f !== target &&
+            !(gs.eliminated && gs.eliminated.has(f)) &&
+            getRelation(gs.diplomacy, f, target).state !== DIPLOMACY_STATES.WAR
+        );
+
+        // Score potential allies by relationship with us
+        const allies = [];
+        for (const a of candidates) {
+            const rel = getRelation(gs.diplomacy, faction, a);
+            if (rel.state === DIPLOMACY_STATES.ALLIANCE || (rel.relationship || 0) >= 30) {
+                allies.push(a);
+            }
+        }
+
+        if (allies.length === 0) return null;
+
+        return { target, allies: allies.slice(0, COALITION_MAX_ALLIES) };
+    }
+
     /** AI may declare war based on personality, strategy, and distance ("attack close").
-     *  At most one declaration per turn. */
+     *  At most one declaration per turn. Checks for coalition opportunity first. */
     _aiMaybeDeclareWar(faction, def, factionName) {
         if (!def) return;
+
+        // Coalition war: if a faction is dominant, form a coalition against it.
+        const coalition = this._evaluateCoalition(faction);
+        if (coalition) {
+            const targetPower = this._factionPower(coalition.target);
+            const myPower0 = this._factionPower(faction);
+            if (targetPower > myPower0 * 1.2) {
+                let alliedPower = myPower0;
+                for (const a of coalition.allies) alliedPower += this._factionPower(a);
+                if (alliedPower > targetPower * 0.8) {
+                    const joiners = declareCoalitionWar(
+                        this.gameState.diplomacy, faction, coalition.target,
+                        coalition.allies, this.gameState.turn
+                    );
+                    if (this.logger) {
+                        const targetName = this.factionColors[coalition.target]?.name || coalition.target;
+                        const joinerNames = joiners.filter(j => j !== faction)
+                            .map(j => this.factionColors[j]?.name || j).join(', ');
+                        this.logger(`${factionName} formed a coalition against ${targetName}! Allies: ${joinerNames}`);
+                    }
+                    return; // coalition war declared, skip solo war
+                }
+            }
+        }
+
         const personality = def.aiPersonality || 'DEFENSIVE';
         const strategy = this._getDiplomaticStrategy(personality);
+        // Goal-driven diplomacy: the faction's active goal sequence shifts its
+        // willingness to go to war — a conquest goal lowers the power threshold
+        // it needs before striking, defensive/economic goals raise it.
+        const declAiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        const goalAdj = adjustDiplomacyByGoal(declAiSt && declAiSt.goals, this.gameState.diplomacy,
+            faction, personality, this.gameState.turn || 0);
+        const baseWarChance = (AI_PERSONALITIES[personality] || AI_PERSONALITIES.DEFENSIVE).warChance;
+        const warThreshold = Math.max(0.5, strategy.warThreshold - ((goalAdj.warChance || baseWarChance) - baseWarChance));
         const myPower = this._factionPower(faction);
         if (myPower <= 0) return;
         let declared = false;
@@ -3086,21 +3804,26 @@ export class Game {
             const ratio = myPower / theirPower;
             const distance = this._factionDistance(faction, other);
             let score = 0;
-            // "Attack close" �?prefer nearby targets
+            // "Attack close": prefer nearby targets. Neighbors are the most
+            // natural targets — they share borders, compete for land, and are
+            // reachable. The old values (30/15/-10) left distance as a minor
+            // factor vs power ratio (×20) and grievances (×0.3). We now
+            // heavily weight proximity so AI neighbors war far more often.
             if (strategy.preferNeighbors) {
-                if (distance <= 5) score += 30;
-                else if (distance <= 10) score += 15;
-                else score -= 10;
+                if (distance <= 4) score += 50;
+                else if (distance <= 7) score += 30;
+                else if (distance <= 12) score += 5;
+                else score -= 20;
             } else {
-                score -= distance * 0.5;
+                score -= distance * 0.8;
             }
-            if (ratio < strategy.warThreshold) return { other, score: -Infinity };
+            if (ratio < warThreshold) return { other, score: -Infinity };
             score += (ratio - 1) * 20;
             const isAlly = rel.state === DIPLOMACY_STATES.ALLIANCE;
             if (isAlly && ratio < strategy.breakAllianceThreshold) return { other, score: -Infinity };
             if (isAlly) score -= 30;
-            const PEACE_COOLDOWN = 6;
-            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < PEACE_COOLDOWN) return { other, score: -Infinity };
+            const peaceCooldown = strategy.peaceCooldown || 6;
+            if (rel.state !== DIPLOMACY_STATES.WAR && (rel.turnsAtPeace || 0) < peaceCooldown) return { other, score: -Infinity };
             score += (100 - theirPower) * 0.1;
             if (other === PLAYER_FACTION) score += 10;
             // Grievance tension: the angrier we are, the more we want war
@@ -3110,6 +3833,31 @@ export class Game {
             // we're not badly outmatched, this is a strong candidate to strike
             // first (Civ6 "grievance builds until war").
             if (tension >= GRIEVANCE_WAR_THRESHOLD && ratio >= 0.8) score += 50;
+            // Threat assessment: target dominant/leading factions more aggressively.
+            const rankings = this.calculatePowerRankings();
+            const targetRank = rankings[other];
+            if (targetRank) {
+                if (targetRank.isDominant) score += 40;
+                if (targetRank.isLeading) score += 20;
+            }
+            // Rivalry bonus: factions with the same personality are natural
+            // rivals (competing for the same playstyle). Also, factions that
+            // share a border and have similar power levels are geopolitical
+            // rivals. This adds a non-grievance reason to go to war.
+            const otherDef = this.factionDefs && this.factionDefs[other];
+            const otherPersonality = otherDef && otherDef.aiPersonality;
+            if (otherPersonality && otherPersonality === def.aiPersonality) {
+                score += 15; // same personality = natural rival
+            }
+            // Geopolitical rival: close, similar power, not allied
+            if (distance <= 6 && ratio >= 0.7 && ratio <= 1.4 && !isAlly) {
+                score += 10;
+            }
+            // Direct neighbor bonus: sharing a border is the strongest
+            // predictor of future conflict. A neighbor at peace is a threat;
+            // a neighbor at war is a conquest target. This makes neighbors
+            // the primary war targets regardless of other factors.
+            if (distance <= 5 && !isAlly) score += 25;
             return { other, score };
         });
         scored.sort((a, b) => b.score - a.score);
@@ -3121,7 +3869,13 @@ export class Game {
             const distance = this._factionDistance(faction, other);
             const isNeighbor = distance <= 8;
             const tension = getTension(this.gameState.diplomacy, faction, other);
-            if (!aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension)) continue;
+            // Strategic war decision: if we have a conquest goal targeting this
+            // faction and we're strong enough, declare war immediately without
+            // the random roll. This makes goal-driven wars more reliable.
+            const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+            const strategic = shouldDeclareWar(aiSt, this.gameState.diplomacy, faction, other, ratio);
+            const shouldWar = strategic.declare || aiDecideWar(personality, ratio, rel.relationship || 0, 0, isNeighbor, tension, this.spectateMode);
+            if (!shouldWar) continue;
             const prevState = rel.state;
             const turn = this.gameState.turn || 0;
             setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR, turn);
@@ -3196,8 +3950,8 @@ export class Game {
                 if (strategy.seekDistantAllies && isDistant) allianceScore += 40;
                 // Weak factions seek alliances against strong threats
                 if (ratio < 0.9) allianceScore += 30;
-                // Shared enemy bonus
-                if (sharedEnemy) allianceScore += 50;
+                // Shared enemy bonus — co-belligerents strongly prefer alliances
+                if (sharedEnemy) allianceScore += 80;
                 // "Attack close, ally far" (BALANCED): ally with distant factions
                 if (strategy.preferNeighbors && isDistant) allianceScore += 25;
                 // Don't ally with neighbors we're stronger than (likely war targets)
@@ -3209,6 +3963,9 @@ export class Game {
                 if (rel.state === DIPLOMACY_STATES.PEACE) allianceScore += 10;
                 // No alliance if vastly stronger (no need)
                 if (ratio > strategy.allyThreshold * 2) allianceScore -= 40;
+                // Shared enemy weakens the "too strong" penalty — even a strong
+                // faction benefits from coordinating against a common foe.
+                if (sharedEnemy && ratio > strategy.allyThreshold * 2) allianceScore += 30;
             }
 
             // --- TRADE scoring ---
@@ -3247,7 +4004,7 @@ export class Game {
         candidates.sort((a, b) => Math.max(b.peaceScore, b.allianceScore, b.tradeScore, b.napScore, b.ceasefireScore) - Math.max(a.peaceScore, a.allianceScore, a.tradeScore, a.napScore, a.ceasefireScore));
 
         for (const c of candidates) {
-            const { other, ratio, theirPower, rel, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
+            const { other, ratio, theirPower, rel, distance, allianceScore, tradeScore, peaceScore, napScore, ceasefireScore, sharedEnemy, isDistant } = c;
             let type = null;
 
             // Pick best treaty type based on strategic scores
@@ -3273,6 +4030,29 @@ export class Game {
 
             if (!type) continue;
 
+            // Hierarchy check: don't propose a treaty if the relationship is
+            // already at or above that level (e.g., don't propose NAP if
+            // already at TRADE_PACT or ALLIANCE).
+            const hierarchy = [
+                DIPLOMACY_STATES.NAP,
+                DIPLOMACY_STATES.CEASEFIRE,
+                DIPLOMACY_STATES.TRADE_PACT,
+                DIPLOMACY_STATES.PEACE,
+                DIPLOMACY_STATES.ALLIANCE
+            ];
+            const currentIdx = hierarchy.indexOf(rel.state);
+            const proposedIdx = hierarchy.indexOf(type);
+            if (currentIdx >= 0 && proposedIdx >= 0 && currentIdx >= proposedIdx) continue;
+
+            // Cooldown: don't propose the same treaty type to the same
+            // faction more than once every 5 turns.
+            const recentProposal = diplo.pendingOffers.some(o =>
+                o.from === faction && o.to === other && o.type === type &&
+                (this.gameState.turn - (o.turnProposed || 0)) < 5);
+            // Also check recently accepted treaties (already applied)
+            if (!recentProposal && rel.state === type && (rel.turnsAtPeace || 0) < 5) continue;
+            if (recentProposal) continue;
+
             const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
             const label = type === DIPLOMACY_STATES.PEACE ? 'peace'
                 : type === DIPLOMACY_STATES.TRADE_PACT ? 'a trade pact'
@@ -3296,7 +4076,18 @@ export class Game {
             const theirGriev = rel.grievances || 0;
             const bt = rel.brokenTreaties || 0;
             const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, 0, false, theirGriev);
-            const b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            let b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, 0, false, theirGriev);
+            // Goal-driven peace: the recipient's active goals shape its answer
+            // to a peace offer — war weariness, heavy losses, or a long/
+            // directionless war push toward acceptance, while an active
+            // conquest of the proposer blocks it outright.
+            if (type === DIPLOMACY_STATES.PEACE) {
+                const otherAiSt = this.gameState.aiState && this.gameState.aiState[other];
+                const peace = shouldAcceptPeace(otherAiSt, diplo, other, faction,
+                    rel.turnsAtWar || 0, 0, { powerRatio: theirPower / myPower, sharedBorder: distance <= 8 });
+                if (peace.accept) b = true;
+                else if (peace.reason === 'conquest_in_progress') b = false;
+            }
             if (a && b) {
                 const turn = this.gameState.turn || 0;
                 const duration = type === DIPLOMACY_STATES.NAP ? 15 :
@@ -3419,9 +4210,11 @@ export class Game {
                 const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
                 if (!step || (step.x === lord.x && step.z === lord.z)) break;
                 const destTile = this.tiles.get(`${step.x},${step.z}`);
+                // Lords cannot walk on water or unbridged rivers.
+                if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) break;
                 // Lords may enter a capturable city (breached / siege-tower adjacent).
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
-                    !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
+                    !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
                 lord.x = step.x; lord.z = step.z;
             }
             lord.hasMovedThisTurn = true;
@@ -3440,10 +4233,15 @@ export class Game {
             u.owner === faction && !['SCOUT', 'SETTLER', 'WORKER'].includes(u.type));
         const ownCities = getOwnedCities(this.tiles, faction);
         const nearestOwnCity = () => {
-            let best = null, bestD = Infinity;
+            let best = null, bestScore = Infinity;
             for (const c of ownCities) {
                 const d = Math.abs(c.x - lord.x) + Math.abs(c.z - lord.z);
-                if (d < bestD) { bestD = d; best = c; }
+                let score = d;
+                for (const eu of enemyUnits) {
+                    const ed = Math.max(Math.abs(eu.x - c.x), Math.abs(eu.z - c.z));
+                    if (ed <= 4) score += (5 - ed) * 1.5;
+                }
+                if (score < bestScore) { bestScore = score; best = c; }
             }
             return best;
         };
@@ -3451,13 +4249,29 @@ export class Game {
         const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
         const enemyLords = this.gameState.lords.filter(l => l.owner !== faction && atWar(l.owner));
 
-        // Local power within Chebyshev radius (units + lords).
-        const localPower = (x, z, radius, friendly) => {
+        // Mobility-weighted threat: a foe whose strike reach (moveRange +
+        // attackRange) meets or exceeds its distance to the king can attack
+        // THIS turn (full threat, plus AI_KING_MOBILITY_THREAT_FACTOR per tile
+        // of reach surplus); a foe that can't reach the king this turn counts
+        // at half weight. Slow melee 3 tiles away scares the king less than
+        // cavalry at the same distance.
+        const threatMobilityWeight = (u, x, z) => {
+            const def = UNIT_TYPE[u.type] || {};
+            const reach = (def.moveRange || 1) + (def.attackRange || (def.ranged ? 2 : 1));
+            const dist = Math.max(Math.abs(u.x - x), Math.abs(u.z - z));
+            if (dist > reach) return 0.5;
+            return 1 + (reach - dist) * AI_KING_MOBILITY_THREAT_FACTOR;
+        };
+
+        // Local power within Chebyshev radius (units + lords). With
+        // `mobilityWeighted`, enemy unit power is scaled by threatMobilityWeight.
+        const localPower = (x, z, radius, friendly, mobilityWeighted = false) => {
             let power = 0;
             for (const u of this.gameState.units.values()) {
                 if ((u.owner === faction) !== friendly) continue;
                 if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
-                power += (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0);
+                const w = (mobilityWeighted && !friendly) ? threatMobilityWeight(u, x, z) : 1;
+                power += ((u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0)) * w;
             }
             for (const l of this.gameState.lords) {
                 if ((l.owner === faction) !== friendly) continue;
@@ -3468,11 +4282,12 @@ export class Game {
         };
         const friendLocal = localPower(lord.x, lord.z, 3, true);
         const foeLocal = localPower(lord.x, lord.z, 3, false);
+        const foeLocalMobile = localPower(lord.x, lord.z, 3, false, true);
 
         // 1) Capture a breached/unclaimed city that is within reach and empty.
         for (const t of this.tiles.values()) {
             if (t.terrain !== 'CITY' || t.owner === faction) continue;
-            if (!canCaptureTile(faction, t, pool) && !this.siegeTowerAdjacentTo(t, faction)) continue;
+            if (!canCaptureTile(faction, t, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(t, faction)) continue;
             const dist = Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z));
             if (dist > 2) continue;
             const enemyOnTile = enemyUnits.some(u => u.x === t.x && u.z === t.z);
@@ -3481,8 +4296,59 @@ export class Game {
             return;
         }
 
-        // 2) Retreat when locally outmatched (power-ratio based, not a fixed count).
-        if (foeLocal > 0 && foeLocal > friendLocal * 1.3) {
+        // 2) Retreat when locally outmatched. The HP threshold scales with
+        //    danger level: more enemies, nearby artillery/siege, or superior
+        //    foe attack power all raise the bar so the king retreats earlier
+        //    when the situation is more dire.
+        const kingHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
+        // Count enemy military units within Chebyshev 4, weighted by mobility
+        // (threatMobilityWeight): fast / long-reach foes that can strike the
+        // king this turn raise the retreat threshold more than slow ones.
+        let foeCount = 0;
+        let foeAttackPower = 0;
+        let hasArtilleryThreat = false;
+        let hasRangedThreat = false;
+        const SIEGE_SET = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON',
+            'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN']);
+        for (const eu of enemyUnits) {
+            const dist = Math.max(Math.abs(eu.x - lord.x), Math.abs(eu.z - lord.z));
+            if (dist > 4) continue;
+            const mw = threatMobilityWeight(eu, lord.x, lord.z);
+            foeCount += mw;
+            foeAttackPower += ((eu.attack ?? 0) + ((UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attack) || 0)) * mw;
+            // Artillery/siege within their attack range of the king = lethal threat.
+            if (!hasArtilleryThreat && SIEGE_SET.has(eu.type)) {
+                const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
+                if (dist <= atkRange) hasArtilleryThreat = true;
+            }
+            // Any ranged unit (attackRange >= 2) within range = ranged threat.
+            if (!hasRangedThreat && !SIEGE_SET.has(eu.type)) {
+                const atkRange = (UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attackRange) || 1;
+                if (atkRange >= 2 && dist <= atkRange) hasRangedThreat = true;
+            }
+        }
+        let friendAttackPower = 0;
+        for (const fu of this.gameState.units.values()) {
+            if (fu.owner !== faction) continue;
+            if (Math.max(Math.abs(fu.x - lord.x), Math.abs(fu.z - lord.z)) > 3) continue;
+            friendAttackPower += (fu.attack ?? 0) + ((UNIT_TYPE[fu.type] && UNIT_TYPE[fu.type].attack) || 0);
+        }
+        // Dynamic retreat threshold: base 0.55, scales up with danger.
+        // Raised from 0.50 so the king doesn't wait until too late.
+        let retreatThreshold = 0.55;
+        retreatThreshold += Math.min(0.15, foeCount * 0.05);         // +0.05 per foe (cap +0.15)
+        if (hasArtilleryThreat) retreatThreshold += 0.10;             // artillery nearby = deadly
+        if (hasRangedThreat) retreatThreshold += 0.10;                // ranged units chip away
+        if (foeAttackPower > friendAttackPower) retreatThreshold += 0.05;  // foe outguns us
+        retreatThreshold = Math.min(0.75, retreatThreshold);          // cap at 75%
+
+        if (kingHpFrac < retreatThreshold) {
+            const home = nearestOwnCity();
+            if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
+        }
+        // Also retreat when power-ratio is bad (subsumes the old 1.3x check).
+        // Mobility-weighted: foes that can actually strike this turn count more.
+        if (foeLocalMobile > 0 && foeLocalMobile > friendLocal * 1.3) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
@@ -3571,6 +4437,26 @@ export class Game {
             }
         }
 
+        // 3c) Proactive king hunting. When an "attack-king" goal is the top
+        //     goal (i.e., conquest/defense are NOT higher priority) and an
+        //     exposed enemy king is within reach, advance our king toward it.
+        //     The king should NOT chase enemy kings when a conquest objective
+        //     exists — it should join the conquest group instead.
+        const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        const topGoalKind = aiSt && aiSt.goals && aiSt.goals[0] ? aiSt.goals[0].kind : null;
+        if (atWar && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
+            const enemyKing = enemyLords.find(l => l.isKing);
+            if (enemyKing) {
+                const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
+                const guarded = [...this.gameState.units.values()]
+                    .some(u => u.owner === enemyKing.owner && u.x === enemyKing.x && u.z === enemyKing.z);
+                if (!guarded && d > 1 && d <= 10 && friendLocal > foeLocal * 0.8) {
+                    this._aiStepLord(lord, enemyKing.x, enemyKing.z, faction, pool, factionName);
+                    return;
+                }
+            }
+        }
+
         // 4) Anchor to the main conquest group or military centroid once we have
         //    a modest force (3+ military units). This gets the king into fights.
         if (military.length >= 3) {
@@ -3599,7 +4485,7 @@ export class Game {
         const adjacentEnemyCity = [...this.tiles.values()].find(t =>
             t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
             Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z)) <= 1);
-        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
+        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
             lord.campTurns = (lord.campTurns || 0) + 1;
             if (lord.campTurns >= 2) {
                 const home = nearestOwnCity();
@@ -3629,14 +4515,20 @@ export class Game {
         const step = nextStepToward(this.tiles, this.gameState.units, lord, { x: targetX, z: targetZ }, 200, faction);
         if (step && (step.x !== lord.x || step.z !== lord.z)) {
             const destTile = this.tiles.get(`${step.x},${step.z}`);
+            // HARD STOP: never let a lord/king walk onto water or unbridged
+            // river, even if a stale BFS slipped through.
+            if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) {
+                lord.hasMovedThisTurn = true;
+                return;
+            }
             // Block entry into enemy city that is not yet capturable.
             if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
-                !canCaptureTile(faction, destTile, pool) && !this.siegeTowerAdjacentTo(destTile, faction)) {
+                !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) {
                 // no step
             } else {
                 lord.x = step.x; lord.z = step.z;
                 if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
-                    (canCaptureTile(faction, destTile, pool) || this.siegeTowerAdjacentTo(destTile, faction))) {
+                    (canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, faction))) {
                     pool.gold -= CAPTURE_COST;
                     const prevOwner = destTile.owner;
                     const wasNeutral = !prevOwner;
@@ -3738,6 +4630,15 @@ export class Game {
                 return this.gameState.graveyard.some(g => g.owner === faction);
             case 'scry':
                 return false; // AI already has full map knowledge; don't pollute player fog
+            case 'discipline':
+            case 'berserker_rage':
+                return enemyCityNear || enemyUnits.length >= 3;
+            case 'golden_gate':
+                return threatened || enemyNearKing;
+            case 'manifest_destiny':
+                return enemyCityNear || ownCities.length < 3;
+            case 'winged_charge':
+                return enemyNearKing || enemyUnits.length >= 2;
         }
         return false;
     }
@@ -3760,6 +4661,14 @@ export class Game {
         // need or friendship. AI->player offers land in pendingOffers. ---
         this._aiMaybeProposeTreaty(faction, def, factionName);
 
+        // Re-evaluate victory target every 20 turns if falling behind.
+        const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        if (aiSt) {
+            const scores = this._calculateScores();
+            const personality = (def && def.aiPersonality) || 'BALANCED';
+            reevaluateVictoryTarget(aiSt, personality, scores, faction, this.gameState.turn);
+        }
+
         // Tick this AI faction's in-progress Siege Tower builds.
         this._tickConstructionFor(faction);
 
@@ -3773,7 +4682,11 @@ export class Game {
         this._aiLordAttack(faction);
 
         const actions = computeAIActions(this.gameState.units, this.gameState.tiles, pool, faction, this.gameState.buildings, influence, def, this.gameState.diplomacy,
-            this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState);
+            this.gameState.lords, this.gameState.tempBonuses, this.gameState.structures, this.gameState.buildingState,
+            this.gameState.aiState ? this.gameState.aiState[faction] : null,
+            this.gameState.aiTechStates || null,
+            this.gameState.victoryState || null,
+            this.gameState.turn || 0);
 
         // AI king: activate when off cooldown and a heuristic trigger is met.
         if ((this.gameState.kingCooldowns[faction] || 0) <= 0 && this._aiShouldActivateKing(faction, def)) {
@@ -3786,8 +4699,17 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
                         if (this.gameState.trainedThisTurn.has(action.tileKey)) break;
-                        // Siege engines require a Siege Workshop in this city's influence.
+                        // Obsolescence: skip units whose modern replacement's tech
+                        // is researched. Defense-in-depth -- the AI roster builder
+                        // already filters these, but stale/queued actions (or a
+                        // faction-roster unit that bypasses the tech gate) could
+                        // still slip through.
+                        const aiTsObs = (this.gameState.aiTechStates || {})[faction];
+                        if (aiTsObs && aiTsObs.researched && isObsolete(action.unitType, aiTsObs.researched)) break;
+                        // Siege engines (CATAPULT/TREBUCHET) require a Siege Workshop in this city's influence.
                         if (SIEGE_ENGINES.includes(action.unitType) && !this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP')) break;
+                        // SIEGE unit also requires a Siege Workshop (siege-only city breacher).
+                        if (action.unitType === 'SIEGE' && !this.bestMilitaryLevel(tile, 'SIEGE_WORKSHOP')) break;
                         // Ships require a Harbor in this city's influence.
                         if (NAVAL_UNITS.includes(action.unitType)) {
                             if (!this.bestMilitaryLevel(tile, 'HARBOR')) break;
@@ -3811,6 +4733,14 @@ export class Game {
                             this.gameState.trainedThisTurn.add(action.tileKey);
                             this.log(`${factionName} trained ${UNIT_TYPE[action.unitType].name}`);
                         }
+                    }
+                    break;
+                }
+                case 'disband': {
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (unit && unit.owner === faction) {
+                        this.gameState.units.delete(unit.id);
+                        this.log(`${factionName} disbanded ${UNIT_TYPE[unit.type].name}`);
                     }
                     break;
                 }
@@ -3839,7 +4769,8 @@ export class Game {
                 case 'build': {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
-                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+                        const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
+                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, aiTs);
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                     }
                     break;
@@ -3850,7 +4781,8 @@ export class Game {
                     const tile = unit ? this.tiles.get(`${unit.x},${unit.z}`) : null;
                     if (unit && tile && unit.type === 'WORKER' && tile.owner === faction &&
                         !unit.hasAttackedThisTurn && influence && influence.has(`${tile.x},${tile.z}`)) {
-                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState);
+                        const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
+                        const msgs = constructBuilding(action.buildingType, tile, pool, this.gameState.buildings, influence, this.tiles, this.gameState.buildingState, aiTs);
                         if (msgs.length && msgs[0].startsWith('Built')) {
                             unit.hasAttackedThisTurn = true;
                             msgs.forEach(m => this.log(`${factionName}: ${m}`));
@@ -3861,9 +4793,18 @@ export class Game {
                 case 'upgradeBuilding': {
                     const tile = this.tiles.get(action.tileKey);
                     if (tile) {
-                        const msgs = upgradeBuilding(action.buildingType, tile, pool, this.gameState.buildings, this.gameState.buildingState);
-                        msgs.forEach(m => this.log(`${factionName}: ${m}`));
+                        const msg = upgradeBuilding(action.buildingType, tile, pool, this.gameState.buildings, this.gameState.buildingState);
+                        this.log(`${factionName}: ${msg}`);
                     }
+                    break;
+                }
+                case 'buildSpaceProgram': {
+                    if (!this.gameState.victoryState) this.gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+                    if (!this.gameState.victoryState.projects) this.gameState.victoryState.projects = {};
+                    const prev = this.gameState.victoryState.projects[faction] || 0;
+                    this.gameState.victoryState.projects[faction] = prev + 1;
+                    const prog = this.gameState.victoryState.projects[faction];
+                    this.log(`${factionName}: Space Program ${prog}/${SCIENCE_VICTORY_BUILD_TURNS}`);
                     break;
                 }
                 case 'pillage': {
@@ -3912,16 +4853,21 @@ export class Game {
                 case 'move': {
                     const unit = this.gameState.units.get(action.unitId);
                     if (unit) {
-                        unit.x = action.tx; unit.z = action.tz; unit.hasMovedThisTurn = true;
                         const dest = this.tiles.get(`${action.tx},${action.tz}`);
-                        if (dest && dest.terrain === 'CITY' && dest.owner !== faction &&
-                            (canCaptureTile(faction, dest, pool) || this.siegeTowerAdjacentTo(dest, faction))) {
+                        // City-entry gate (mirrors moveUnit): a city that can't
+                        // be captured this move -- walls up, breach delay, or
+                        // a defender still inside -- can't be ENTERED either.
+                        if (dest && dest.terrain === 'CITY' && dest.owner !== faction) {
+                            const capturable = (canCaptureTile(faction, dest, pool, null, this.gameState.turn || 0) ||
+                                this.siegeTowerAdjacentTo(dest, faction)) && !this._cityOccupied(dest, unit.id);
+                            if (!capturable) break;
                             pool.gold -= CAPTURE_COST;
                             const prevOwner = dest.owner;
                             const wasNeutral = !prevOwner;
                             captureCityTerritory(this.tiles, dest, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
                             this._awardCaptureGrievances(dest, faction, prevOwner, wasNeutral);
                         }
+                        unit.x = action.tx; unit.z = action.tz; unit.hasMovedThisTurn = true;
                         // An enemy fall trap on the destination springs now.
                         this._checkFallTrap(unit);
                     }
@@ -3938,8 +4884,11 @@ export class Game {
                         const defenderLord = findCommandingLord(this.gameState.lords, defender);
                         const result = resolveCombat(attacker, defender, terrain,
                             attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+                            !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                         result.messages.forEach(m => this.log(m));
+                        this._battleWeariness(attacker.owner, defender.owner);
+                        // Ranged fire vs an unbreached enemy city also chips its fortification.
+                        this._applyCityFortChip(attacker, defenderTile);
                         attacker.hasAttackedThisTurn = true;
                         this._playAttackAnimation(attacker, defender);
                         if (result.defenderDied) {
@@ -3961,15 +4910,32 @@ export class Game {
                     const tile = this.tiles.get(action.tileKey);
                     // Ownership re-checked: another unit may have taken the city
                     // earlier in this same action loop.
-                    if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction && pool.gold >= CAPTURE_COST) {
-                        pool.gold -= CAPTURE_COST;
-                        const prevOwner = tile.owner;
-                        const wasNeutral = !prevOwner;
-                        captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
-                        this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
-                        // Garrison the capturing unit on the city tile.
-                        unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
-                        this.renderer.updateTileTerrain(tile);
+                    if (unit && tile && tile.terrain === 'CITY' && tile.owner !== faction) {
+                        // The defender must be killed first: refuse to capture a
+                        // city tile still occupied by any unit or living lord —
+                        // no teleporting onto an occupied city.
+                        let occupied = false;
+                        for (const u of this.gameState.units.values()) {
+                            if (u.id !== unit.id && u.x === tile.x && u.z === tile.z) { occupied = true; break; }
+                        }
+                        if (!occupied && this.gameState.lords) {
+                            for (const l of this.gameState.lords) {
+                                if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) { occupied = true; break; }
+                            }
+                        }
+                        // Go through canCaptureTile: fort at 0, breach delay
+                        // passed, and enough gold (siege-tower assault bypasses).
+                        if (!occupied &&
+                            (canCaptureTile(faction, tile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(tile, faction))) {
+                            pool.gold -= CAPTURE_COST;
+                            const prevOwner = tile.owner;
+                            const wasNeutral = !prevOwner;
+                            captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
+                            this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
+                            // Garrison the capturing unit on the city tile.
+                            unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
+                            this.renderer.updateTileTerrain(tile);
+                        }
                     }
                     break;
                 }
@@ -3977,7 +4943,15 @@ export class Game {
                     const unit = this.gameState.units.get(action.unitId);
                     const tile = this.tiles.get(action.tileKey);
                     if (unit && tile) {
+                        // Range check: melee siege must be adjacent; ranged
+                        // siege shells from up to its attackRange away.
+                        const bsRange = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].attackRange) || 1;
+                        const bsDist = Math.max(Math.abs(unit.x - tile.x), Math.abs(unit.z - tile.z));
+                        if (bsDist > bsRange) break;
                         const msgs = besiegeCity(unit, tile);
+                        if (tile.fortification <= 0 && !tile.breachedTurn) {
+                            tile.breachedTurn = (this.gameState.turn || 0) + 1;
+                        }
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                         if (msgs.length) sfx.besiege();
                     }
@@ -4056,12 +5030,41 @@ export class Game {
                     this.log(`${factionName}: engineer started a Siege Tower near [${tile.x}, ${tile.z}].`);
                     break;
                 }
-                case 'buildStructure': {
-                    // An AI engineer starts a defensive structure (SPIKES /
-                    // FORTIFICATION / FALL_TRAP) on its current tile. Mirrors the
-                    // player's handleBuildStructure; ticks via _tickConstructionFor.
+                case 'buildSiegeEngine': {
+                    // An AI engineer builds a CATAPULT/TREBUCHET in the field
+                    // for factions that lack roster siege or need field artillery.
                     const unit = this.gameState.units.get(action.unitId);
                     if (!unit || unit.type !== 'ENGINEER' || unit.owner !== faction) break;
+                    if (unit.hasAttackedThisTurn) break;
+                    if (this.gameState.construction && this.gameState.construction.has(unit.id)) break;
+                    const engineType = action.engineType;
+                    if (!engineType || !UNIT_TYPE[engineType] || !SIEGE_ENGINES.includes(engineType)) break;
+                    const here = this.tiles.get(`${unit.x},${unit.z}`);
+                    if (!here || here.owner !== faction || here.terrain === 'WATER' || here.terrain === 'RIVER' || here.terrain === 'MOUNTAIN') break;
+                    let canPayE = true;
+                    for (const [res, amt] of Object.entries(SIEGE_ENGINE_BUILD_COST)) {
+                        if ((pool[res] || 0) < amt) { canPayE = false; break; }
+                    }
+                    if (!canPayE) break;
+                    for (const [res, amt] of Object.entries(SIEGE_ENGINE_BUILD_COST)) pool[res] = (pool[res] || 0) - amt;
+                    this.gameState.construction.set(unit.id, {
+                        type: 'SIEGE_ENGINE', engineType, turnsLeft: SIEGE_ENGINE_BUILD_TURNS,
+                        x: unit.x, z: unit.z, faction
+                    });
+                    unit.hasAttackedThisTurn = true;
+                    sfx.besiege();
+                    this.log(`${factionName}: engineer started building ${UNIT_TYPE[engineType].name} at [${unit.x}, ${unit.z}].`);
+                    break;
+                }
+                case 'buildStructure': {
+                    // An AI engineer (or Legionnaire) starts a defensive structure
+                    // (SPIKES / FORTIFICATION / FALL_TRAP) on its current tile.
+                    // Mirrors the player's handleBuildStructure; ticks via
+                    // _tickConstructionFor.
+                    const unit = this.gameState.units.get(action.unitId);
+                    if (!unit || unit.owner !== faction) break;
+                    const usd2 = UNIT_TYPE[unit.type];
+                    if (!usd2 || !usd2.canBuildStructure) break;
                     if (unit.hasAttackedThisTurn) break;
                     if (this.gameState.construction && this.gameState.construction.has(unit.id)) break;
                     const sdef = STRUCTURE_TYPE[action.structureType];
@@ -4114,10 +5117,10 @@ export class Game {
                     const unit = this.gameState.units.get(action.unitId);
                     const transport = this.gameState.units.get(action.transportId);
                     if (!unit || !transport || unit.owner !== faction || transport.owner !== faction) break;
-                    if (transport.type !== 'TRANSPORT' || unit.boarded) break;
+                    if ((transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT') || unit.boarded) break;
                     const ndef = UNIT_TYPE[unit.type];
                     if (!ndef || ndef.naval) break;
-                    const cap = UNIT_TYPE.TRANSPORT.capacity || 2;
+                    const cap = (UNIT_TYPE[transport.type] && UNIT_TYPE[transport.type].capacity) || 2;
                     if (((transport.cargo || []).length) >= cap) break;
                     if (Math.abs(unit.x - transport.x) + Math.abs(unit.z - transport.z) !== 1) break;
                     if (!transport.cargo) transport.cargo = [];
@@ -4133,7 +5136,7 @@ export class Game {
                     // An AI transport unloads one carried unit onto an adjacent
                     // passable land tile (mirrors handleDisembark, no UI).
                     const transport = this.gameState.units.get(action.unitId);
-                    if (!transport || transport.owner !== faction || transport.type !== 'TRANSPORT') break;
+                    if (!transport || transport.owner !== faction || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) break;
                     if (!transport.cargo || transport.cargo.length === 0) break;
                     let dest = null;
                     for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
@@ -4172,16 +5175,20 @@ export class Game {
                     if (!this.gameState.units.has(attacker.id)) break; // died to a trap
                     if (!this._applySpikesOnCharge(attacker)) break;   // impaled on spikes
                     const originalAttack = attacker.attack ?? UNIT_TYPE[attacker.type].attack;
-                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS;
+                    const cdef = this.factionDefs ? this.factionDefs[attacker.owner] : null;
+                    const wingedBonus = (this.gameState.tempBonuses[attacker.owner] &&
+                        this.gameState.tempBonuses[attacker.owner].cavalryCharge) || 0;
+                    attacker.attack = originalAttack + CHARGE_ATTACK_BONUS + getCavalryChargeBonus(cdef) + wingedBonus;
                     const defenderTile = this.tiles.get(`${defender.x},${defender.z}`);
                     const terrain = defenderTile ? defenderTile.terrain : 'PLAINS';
                     const attackerLord = findCommandingLord(this.gameState.lords, attacker);
                     const defenderLord = findCommandingLord(this.gameState.lords, defender);
                     const result = resolveCombat(attacker, defender, terrain,
                         attackerLord, defenderLord, this.gameState.buildings, this.gameState.lords, this.gameState.tempBonuses, false, this.gameState.structures,
-                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0));
+                        !!(defenderTile && defenderTile.terrain === 'CITY' && (defenderTile.fortification || 0) <= 0), false, this.gameState.units);
                     attacker.attack = originalAttack;
                     result.messages.forEach(m => this.log(m));
+                    this._battleWeariness(attacker.owner, defender.owner);
                     attacker.hasAttackedThisTurn = true;
                     attacker.hasMovedThisTurn = true;
                     attacker.chargeExhausted = CHARGE_EXHAUST_TURNS;
@@ -4216,8 +5223,12 @@ export class Game {
         // enemy lord is fair game). Runs after the main action loop so it never
         // pre-empts a unit's planned move/attack.
         this._aiUnitAttackLords(faction);
+        this._sweepDeadCombatants(); // bury 0-hp combatants before the next faction acts
         this.updateFog();
         this.checkVictory();
+        // Feature 6: record a turn-summary event so the event log captures AI
+        // activity even when no specific combat/capture event fired.
+        this.addEvent('turn', `${factionName} completed turn ${this.gameState.turn || 0}.`);
     }
 
     updateFog() {
@@ -4325,6 +5336,9 @@ export class Game {
             // Rebuild the diplomacy cache once per round so the AI diplomacy
             // phase (power/distance scoring) is O(cities²) instead of O(tiles²).
             this._rebuildDiploCache();
+            // Bury any 0-hp combatants BEFORE the turn advances, so turn-start
+            // regeneration never resurrects a dead unit/lord.
+            this._sweepDeadCombatants();
             this.gameState.turnManager.endPlayerTurn();
             this.ui.updateAll();
         } finally {
@@ -4333,11 +5347,9 @@ export class Game {
     }
 
     checkVictory() {
-        if (this.spectateMode) return; // no victory/defeat in spectate mode
         if (this.gameState.gameOver) return;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
-        // Elimination runs in spectate mode too �?a faction that loses its
-        // last city (or its king) is out, even with no human player.
+        // Elimination: a faction that loses all cities is out (runs in all modes).
         for (const f of FACTIONS) {
             if (this.gameState.eliminated.has(f)) continue;
             if (countCities(this.tiles, f) === 0) {
@@ -4346,29 +5358,320 @@ export class Game {
                 this.log(`${name} has lost all cities and is eliminated!`);
             }
         }
-        if (this.spectateMode) return; // no victory/defeat screen in spectate mode
+
+        // --- Spectate mode: announce victory but keep the game running ---
+        // (no endGame call — that would set gameOver and stop auto-advance)
+        if (this.spectateMode) {
+            const aiAlive = FACTIONS.filter(f => !this.gameState.eliminated.has(f));
+            if (aiAlive.length === 1) {
+                const winner = aiAlive[0];
+                const allCitiesOwned = [...this.tiles.values()].filter(t => t.terrain === 'CITY');
+                const winnerCities = allCitiesOwned.filter(t => t.owner === winner);
+                if (allCitiesOwned.length > 0 && winnerCities.length === allCitiesOwned.length) {
+                    const name = this.factionColors[winner] ? this.factionColors[winner].name : winner;
+                    this.log(`${name} has conquered all rivals and WON!`);
+                    return;
+                }
+            }
+            return;
+        }
+
         const playerAlive = !this.gameState.eliminated.has(PLAYER_FACTION);
-        const aiRemaining = FACTIONS.filter(f => f !== PLAYER_FACTION && !this.gameState.eliminated.has(f));
-        if (!playerAlive) this.endGame('defeat');
-        else if (aiRemaining.length === 0) this.endGame('victory');
+
+        // Check multiple victory conditions for the player.
+        const victoryType = this._checkPlayerVictory();
+        if (victoryType) {
+            this.endGame('victory', victoryType);
+            return;
+        }
+
+        // Domination defeat: player eliminated.
+        if (!playerAlive) {
+            this.endGame('defeat');
+            return;
+        }
+
+        // Domination victory: player owns EVERY city on the map (all AI
+        // eliminated + all neutral cities captured). This is the hardest
+        // victory condition — total map conquest.
+        const allCitiesOwned = [...this.tiles.values()].filter(t => t.terrain === 'CITY');
+        const playerCities = allCitiesOwned.filter(t => t.owner === PLAYER_FACTION);
+        if (allCitiesOwned.length > 0 && playerCities.length === allCitiesOwned.length) {
+            this.endGame('victory', VICTORY_TYPES.DOMINATION);
+        }
     }
 
-    endGame(result) {
+    /** Check if the player has achieved any non-domination victory condition. */
+    _checkPlayerVictory() {
+        const gs = this.gameState;
+        const ts = gs.techState;
+        const vs = gs.victoryState || {};
+
+        // Science Victory: research all techs + build space program project.
+        if (ts && ts.researched && ts.researched.size >= Object.keys(TECHS).length) {
+            const projects = vs.projects || {};
+            if ((projects.player || 0) >= SCIENCE_VICTORY_BUILD_TURNS) {
+                return VICTORY_TYPES.SCIENCE;
+            }
+        }
+
+        // Economic Victory: accumulate enough gold + enough trade routes.
+        const playerGold = (gs.resources && gs.resources.player && gs.resources.player.gold) || 0;
+        const playerTradeRoutes = (vs.tradeRoutes && vs.tradeRoutes.player) || 0;
+        if (playerGold >= ECONOMIC_VICTORY_GOLD && playerTradeRoutes >= ECONOMIC_VICTORY_TRADE_ROUTES) {
+            return VICTORY_TYPES.ECONOMIC;
+        }
+
+        // Score Victory: highest score at the configured turn.
+        if (gs.turn >= SCORE_VICTORY_TURN) {
+            const scores = this._calculateScores();
+            const playerScore = scores[PLAYER_FACTION] || 0;
+            let highest = 0;
+            for (const f of FACTIONS) {
+                if (f === PLAYER_FACTION) continue;
+                if ((scores[f] || 0) > highest) highest = scores[f] || 0;
+            }
+            if (playerScore > highest) {
+                return VICTORY_TYPES.SCORE;
+            }
+        }
+
+        return null;
+    }
+
+    /** Calculate faction scores for score victory. */
+    /** The tech state to read for any faction slot. In spectate mode the
+     *  'player' slot is AI-run and its research lives in aiTechStates['player']
+     *  -- reading gs.techState for it (the dormant human state) made the
+     *  selected spectate faction report 0 techs researched everywhere
+     *  (scores, rankings, victory progress). */
+    _factionTechState(f) {
+        const gs = this.gameState;
+        if (f === PLAYER_FACTION && !this.spectateMode) return gs.techState;
+        return gs.aiTechStates && gs.aiTechStates[f];
+    }
+
+    _calculateScores() {
+        const gs = this.gameState;
+        const scores = {};
+        for (const f of FACTIONS) {
+            let score = 0;
+            // Cities owned (5 pts each).
+            score += countCities(this.tiles, f) * 3;
+            // Tiles owned (1 pt each).
+            score += countTiles(this.tiles, f);
+            // Units alive (2 pts each).
+            for (const u of gs.units.values()) {
+                if (u.owner === f) score += 1;
+            }
+            // Techs researched (10 pts each) — all factions.
+            const fTs = this._factionTechState(f);
+            if (fTs && fTs.researched) {
+                score += fTs.researched.size * 3;
+            }
+            scores[f] = score;
+        }
+        return scores;
+    }
+
+    /** Victory progress data for the tracker panel (Feature 5). Pulls the
+     *  same numbers `_checkPlayerVictory` and `_calculateScores` use, so the
+     *  tracker always agrees with the actual victory checks. */
+    getVictoryProgress() {
+        const gs = this.gameState;
+        const ts = gs.techState;
+        const vs = gs.victoryState || {};
+        const scores = this._calculateScores();
+        const totalTechs = Object.keys(TECHS).length;
+        const researchedTechs = ts && ts.researched ? ts.researched.size : 0;
+
+        const aiFactions = FACTIONS.filter(f => f !== PLAYER_FACTION);
+        const aiEliminated = aiFactions.filter(f => gs.eliminated && gs.eliminated.has(f)).length;
+        const playerGold = (gs.resources && gs.resources[PLAYER_FACTION] && gs.resources[PLAYER_FACTION].gold) || 0;
+        const playerRoutes = (vs.tradeRoutes && vs.tradeRoutes[PLAYER_FACTION]) || 0;
+        let bestAiScore = 0;
+        for (const f of aiFactions) bestAiScore = Math.max(bestAiScore, scores[f] || 0);
+        const playerScore = scores[PLAYER_FACTION] || 0;
+
+        return {
+            domination: {
+                eliminated: aiEliminated,
+                total: aiFactions.length,
+                progress: aiFactions.length ? aiEliminated / aiFactions.length : 0
+            },
+            science: {
+                researched: researchedTechs,
+                total: totalTechs,
+                currentTech: ts ? ts.current : null,
+                progress: totalTechs ? researchedTechs / totalTechs : 0
+            },
+            economic: {
+                gold: playerGold,
+                goldTarget: ECONOMIC_VICTORY_GOLD,
+                tradeRoutes: playerRoutes,
+                routeTarget: ECONOMIC_VICTORY_TRADE_ROUTES,
+                progress: Math.min(
+                    playerGold / Math.max(1, ECONOMIC_VICTORY_GOLD),
+                    playerRoutes / Math.max(1, ECONOMIC_VICTORY_TRADE_ROUTES)
+                )
+            },
+            score: {
+                playerScore,
+                aiScore: bestAiScore,
+                turn: gs.turn || 0,
+                maxTurn: SCORE_VICTORY_TURN,
+                progress: Math.min(1, (gs.turn || 0) / Math.max(1, SCORE_VICTORY_TURN))
+            }
+        };
+    }
+
+    /** Get victory progress for ALL factions (not just the player).
+     *  Used by the scoreboard/ranking panel. */
+    getAllFactionProgress() {
+        const gs = this.gameState;
+        const result = {};
+        const totalTechs = Object.keys(TECHS).length;
+        const scores = this._calculateScores();
+        // Leader-relative score progress: the score victory is a RACE, so a
+        // faction's score progress is its score vs the current leader's (the
+        // old turn/200 value was identical for every faction -- the standings
+        // panel showed the same % for everyone).
+        const maxScore = Math.max(1, ...FACTIONS.filter(f => !(gs.eliminated && gs.eliminated.has(f)))
+            .map(f => scores[f] || 0));
+
+        for (const f of FACTIONS) {
+            if (gs.eliminated && gs.eliminated.has(f)) {
+                result[f] = { eliminated: true, score: 0 };
+                continue;
+            }
+
+            const fTs = this._factionTechState(f);
+            const techs = fTs && fTs.researched ? fTs.researched.size : 0;
+            const cities = countCities(this.tiles, f);
+            const gold = (gs.resources[f] && gs.resources[f].gold) || 0;
+            const tradeRoutes = (gs.victoryState && gs.victoryState.tradeRoutes &&
+                gs.victoryState.tradeRoutes[f]) || 0;
+
+            // Victory-specific progress
+            let dominationProg = 0, scienceProg = 0, economicProg = 0;
+            const otherFactions = FACTIONS.filter(x => x !== f && !(gs.eliminated && gs.eliminated.has(x)));
+            if (otherFactions.length > 0) {
+                const eliminated = otherFactions.filter(x => gs.eliminated && gs.eliminated.has(x)).length;
+                dominationProg = eliminated / otherFactions.length;
+            }
+            scienceProg = techs / totalTechs;
+            economicProg = Math.min(
+                gold / Math.max(1, ECONOMIC_VICTORY_GOLD),
+                tradeRoutes / Math.max(1, ECONOMIC_VICTORY_TRADE_ROUTES)
+            );
+
+            const scoreProg = (scores[f] || 0) / maxScore;
+
+            // Closest victory
+            const victories = [
+                { type: 'domination', progress: dominationProg },
+                { type: 'science', progress: scienceProg },
+                { type: 'economic', progress: economicProg },
+                { type: 'score', progress: scoreProg }
+            ];
+            const closest = victories.reduce((a, b) => b.progress > a.progress ? b : a);
+
+            const aiSt = gs.aiState && gs.aiState[f];
+
+            result[f] = {
+                score: scores[f] || 0,
+                cities,
+                techs,
+                totalTechs,
+                gold,
+                victoryTarget: aiSt ? aiSt.victoryTarget : null,
+                closestVictory: closest.type,
+                closestProgress: closest.progress,
+                tracks: { domination: dominationProg, science: scienceProg, economic: economicProg, score: scoreProg },
+                isDominant: false // will be set from power rankings if available
+            };
+        }
+
+        // Apply power rankings
+        const rankings = this.calculatePowerRankings();
+        for (const [f, r] of Object.entries(rankings)) {
+            if (result[f]) {
+                result[f].isDominant = r.isDominant || r.isLeading;
+            }
+        }
+
+        return result;
+    }
+
+    /** Append an event to the rolling event log (Feature 6). The log is capped;
+     *  oldest entries drop off. Safe to call before gameState is built. */
+    addEvent(category, message) {
+        if (!this.gameState) return;
+        if (!Array.isArray(this.gameState.eventLog)) this.gameState.eventLog = [];
+        return addEventEntry(this.gameState.eventLog, category, message, this.gameState.turn || 0);
+    }
+
+    /** Set the active difficulty (Feature 8). Called from the start menu. */
+    setDifficulty(key) {
+        this.difficulty = key || 'NORMAL';
+        if (this.gameState) this.gameState.difficulty = this.difficulty;
+    }
+
+    /** Execute a spy action (Feature 11). `spy` is a SPY unit id; `targetFaction`
+     *  is the faction acted against. Spends gold, resolves success/detection,
+     *  applies the relationship penalty to the spy's owner→target relation, and
+     *  logs the outcome. Returns the spy result object. */
+    handleSpyAction(spyId, action, targetFaction, extra = {}) {
+        const spy = this.gameState.units.get(spyId);
+        if (!spy || !isSpyUnit(spy)) return { success: false, detected: false, message: 'No spy unit' };
+        const res = this.gameState.resources[spy.owner];
+        const cost = (SPY_ACTION_COST || { gold: 25 }).gold;
+        if (res && (res.gold || 0) < cost) return { success: false, detected: false, message: 'Not enough gold' };
+        if (res) res.gold -= cost;
+        const result = resolveSpyAction({
+            action, spy, targetFaction,
+            targetTileKey: extra.targetTileKey, targetLordId: extra.targetLordId, targetCityKey: extra.targetCityKey,
+            detectionBonus: extra.detectionBonus || 0, successBonus: extra.successBonus || 0,
+            rng: extra.rng
+        });
+        if (result.relationPenalty) {
+            const rel = getRelation(this.gameState.diplomacy, spy.owner, targetFaction);
+            rel.relationship = Math.max(-100, (rel.relationship || 0) - result.relationPenalty);
+        }
+        // Espionage grievance: detected spy actions generate grievances
+        if (result.detected && ESPIONAGE_GRIPERANCE > 0) {
+            addGrievance(this.gameState.diplomacy, targetFaction, spy.owner, ESPIONAGE_GRIPERANCE, 'espionage detected');
+        }
+        this.addEvent('spy', result.message);
+        return result;
+    }
+
+    /** Declare a coalition war (Feature 12). `leader` invites eligible allies
+     *  and all join the war against `target`. Returns the list of joiners. */
+    handleDeclareCoalitionWar(leader, target, candidateAllies) {
+        const allies = eligibleCoalitionAllies(this.gameState.diplomacy, leader, target, candidateAllies || FACTIONS);
+        const joiners = declareCoalitionWar(this.gameState.diplomacy, leader, target, allies, this.gameState.turn || 0);
+        this.addEvent('diplomacy', `${leader} formed a coalition war against ${target} with ${allies.join(', ') || 'no allies'}`);
+        return joiners;
+    }
+
+    endGame(result, victoryType) {
         this.gameState.gameOver = true;
         this.gameState.winner = result;
         const banner = document.getElementById('game-over');
         const text = document.getElementById('game-over-text');
+        const typeLabel = victoryType ? ` (${victoryType.toUpperCase()})` : '';
         if (text) {
             text.textContent = result === 'victory'
-                ? 'VICTORY �?you conquered every enemy city!'
-                : 'DEFEAT �?you lost your last city.';
+                ? `VICTORY${typeLabel} — you achieved ${victoryType || 'domination'}!`
+                : 'DEFEAT — you lost your last city.';
         }
         if (banner) {
             banner.style.background = result === 'victory' ? 'rgba(20,90,30,0.92)' : 'rgba(100,20,20,0.92)';
             banner.style.display = 'flex';
         }
         if (result === 'victory') sfx.victory(); else sfx.defeat();
-        this.log(result === 'victory' ? 'VICTORY!' : 'DEFEAT.');
+        this.log(result === 'victory' ? `VICTORY (${victoryType})!` : 'DEFEAT.');
         clearSave();
     }
 
@@ -4417,20 +5720,18 @@ export class Game {
     }
 
     start() {
-    const myName = this.factionColors[PLAYER_FACTION] ? this.factionColors[PLAYER_FACTION].name : 'You';
-    this.log(`${myName} — your conquest begins!`);
-    this.log('Click your unit, then a highlighted tile to move (captures it).');
-    this.log('Right-click a tile to set an auto-move goal. Click an enemy unit to attack.');
-    this.log('Click your city to build/train. Besiege enemy cities with Siege units before capturing.');
-    this.log('Drag the map to pan. Esc to pause.');
-    
-    // Announce any Natural Wonders on this map.
-    for (const w of (this._mapWonders || [])) {
-        this.log(`${w.wonder.emoji || '✨'} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] — capture it for a bonus!`);
+        const myName = this.factionColors[PLAYER_FACTION] ? this.factionColors[PLAYER_FACTION].name : 'You';
+        this.log(`${myName}, your conquest begins!`);
+        this.log('Click your unit, then a highlighted tile to move (captures it).');
+        this.log('Right-click a tile to set an auto-move goal. Click an enemy unit to attack.');
+        this.log('Click your city to build/train. Besiege enemy cities with Siege units before capturing.');
+        this.log('Drag the map to pan. Esc to pause.');
+        // Announce any Natural Wonders on this map.
+        for (const w of (this._mapWonders || [])) {
+            this.log(`${w.wonder.emoji || '*'} Natural Wonder: ${w.wonder.name} at [${w.x}, ${w.z}] - capture it for a bonus!`);
+        }
+        // Process any goals on the very first turn too.
+        this.renderAll();
+        this.ui.updateAll();
     }
-    
-    // Process any goals on the very first turn too.
-    this.renderAll();
-    this.ui.updateAll();
-}
 }

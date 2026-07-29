@@ -1,0 +1,902 @@
+/** AI goal-sequence system.
+
+ The previous AI (`src/ai.js` `computeAIActions`) planned every turn from
+ scratch: `detectActiveObjectives` returned a single spatial snapshot that fed
+ only training composition, and `aiPersonality` was ignored entirely. This
+ module introduces a persistent, ordered *goal sequence* per faction (conquest,
+ settle, defense, expand-islands, develop-economy) that survives across turns
+ (so plans don't thrash), is weighted by faction personality, and is consumed
+ by the existing `computeAIActions` blocks to coordinate spending/movement.
+
+ The module is pure: every function operates on the data passed in. The only
+ stateful object is an `aiState` record the caller owns and mutates via
+ `selectGoals`; nothing else is touched. This keeps it unit-testable without a
+ Game instance (mirrors the rest of the codebase's pure-logic layer).
+*/
+import { AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT,
+         WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
+         WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
+         WAR_OBJECTIVE_MIN_CITIES, GRID_SIZE, UNIT_TYPE } from './config.js';
+
+// Goal kinds, in the canonical order used for display/debug.
+export const GOAL_KINDS = ['conquest', 'defense', 'settle', 'expand-islands', 'develop-economy',
+    'diplomacy', 'spy', 'chokepoint', 'scout', 'attack-king',
+    'take-key-city', 'disrupt-victory', 'resource-war', 'develop-army', 'decisive-battle'];
+
+// Personality multipliers on each goal kind's base score. AGGRESSIVE leans into
+// conquest, ECONOMIC into settle/develop-economy, DEFENSIVE into defense. This
+// is the first place `aiPersonality` actually shapes the AI's military/economic
+// posture (it previously only affected diplomacy rolls).
+const PERSONALITY_WEIGHTS = {
+    AGGRESSIVE: { conquest: 1.3, defense: 0.8, settle: 0.8, 'expand-islands': 1.1, 'develop-economy': 0.6,
+                  diplomacy: 0.6, spy: 0.8, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.4, 'develop-army': 1.1,
+                  'decisive-battle': 1.2 },
+    DEFENSIVE:  { conquest: 0.8, defense: 1.4, settle: 1.0, 'expand-islands': 0.8, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 0.9, chokepoint: 1.3, scout: 0.8, 'attack-king': 0.6, 'develop-army': 1.0,
+                  'decisive-battle': 0.9 },
+    ECONOMIC:   { conquest: 0.6, defense: 0.9, settle: 1.3, 'expand-islands': 0.9, 'develop-economy': 1.4,
+                  diplomacy: 1.3, spy: 1.1, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.7, 'develop-army': 0.9,
+                  'decisive-battle': 0.8 },
+    BALANCED:   { conquest: 1.0, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.0, 'develop-army': 1.0,
+                  'decisive-battle': 1.0 },
+};
+
+// Base scores per goal kind before personality weighting.
+const BASE_SCORE = {
+    conquest: 100, defense: 90, settle: 70, 'expand-islands': 80, 'develop-economy': 50,
+    diplomacy: 40, spy: 35, chokepoint: 45, scout: 55, 'attack-king': 85,
+    'take-key-city': 75, 'disrupt-victory': 90, 'resource-war': 65, 'develop-army': 60,
+    'decisive-battle': 80,
+};
+
+function manhattan(ax, az, bx, bz) {
+    return Math.abs(ax - bx) + Math.abs(az - bz);
+}
+
+/** A "field army" unit: military, non-naval, not a settler/worker/scout.
+ *  Used by the conquest-feasibility dampener and the war goals below. */
+function isFieldUnit(u) {
+    return !!u && !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type) &&
+        !(UNIT_TYPE[u.type] && UNIT_TYPE[u.type].naval);
+}
+
+/** Rough combat value of a unit (mirrors ai.js' unitValue). */
+function fieldUnitValue(u) {
+    return (u.hp || 1) + (((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || u.attack || 0) * 2);
+}
+
+/** Total combat value of a field-unit list. */
+function fieldPower(list) {
+    return (list || []).reduce((s, u) => s + fieldUnitValue(u), 0);
+}
+
+/** Cluster field units spatially: a unit joins the cluster whose nearest
+ *  member is within Manhattan 6, else it starts a new cluster. Returns up to
+ *  `max` largest clusters as {x, z, size} centroids, largest first. Used by
+ *  the decisive-battle goal so multiple army groups can be distributed
+ *  across multiple enemy armies at once. */
+function clusterFieldUnits(fieldUnits, max = 3) {
+    const clusters = [];
+    for (const u of fieldUnits) {
+        let best = null, bestD = Infinity;
+        for (const cl of clusters) {
+            for (const m of cl.members) {
+                const d = manhattan(u.x, u.z, m.x, m.z);
+                if (d < bestD) { bestD = d; best = cl; }
+            }
+        }
+        if (best && bestD <= 6) best.members.push(u);
+        else clusters.push({ members: [u] });
+    }
+    clusters.sort((a, b) => b.members.length - a.members.length);
+    return clusters.slice(0, max).map(cl => {
+        let sx = 0, sz = 0;
+        for (const m of cl.members) { sx += m.x; sz += m.z; }
+        return { x: Math.round(sx / cl.members.length), z: Math.round(sz / cl.members.length), size: cl.members.length };
+    });
+}
+
+/** Classify the current game phase by turn number.
+ *  Early game: exploration and expansion. Mid: military buildup and wars.
+ *  Late: victory-condition push. */
+function computeGamePhase(turn) {
+    if (turn < 30) return 'early';
+    if (turn < 80) return 'mid';
+    return 'late';
+}
+
+/** A fresh per-faction AI state record. */
+export function createAIState() {
+    return {
+        goals: [],                 // ordered Goal[]; [0] is the active/dominant goal
+        lastPlanTurn: 0,            // turn the goals were last (re)computed
+        planLockUntil: 0,           // don't replace goals before this turn (stability)
+        progress: {},               // kind -> { since, attempts, lastTileKey }
+        artilleryReserve: AI_ARTILLERY_RESERVE_DEFAULT,
+        settlerScarcityTurns: 0,    // consecutive scarce turns (see ai.js settler block)
+        prevStock: null,            // last turn's resource stock snapshot (for flow calc)
+        drainingResource: null,     // worst per-turn-draining resource this turn (food/wood/iron/gold)
+        lastFlow: null,              // per-resource net change vs prevStock { gold, food, wood, iron }
+        victoryTarget: null,        // chosen victory type string ('domination'|'science'|'economic'|'score')
+        targetComposition: null,    // effective (objective-tweaked) composition target, for the debug panel
+    };
+}
+
+/** Initialize aiState for every faction slot. */
+export function initAIState(factions) {
+    const out = {};
+    for (const f of factions) out[f] = createAIState();
+    return out;
+}
+
+/** Choose a victory target for an AI faction based on personality and game state.
+ *  Returns a VICTORY_TYPES string. */
+export function chooseVictoryTarget(personality, cityCount, techCount, gold, tradeRoutes) {
+    const weights = {
+        AGGRESSIVE: { domination: 60, science: 10, economic: 15, score: 15 },
+        DEFENSIVE:  { domination: 40, science: 15, economic: 20, score: 25 },
+        ECONOMIC:   { domination: 15, science: 25, economic: 45, score: 15 },
+        BALANCED:   { domination: 35, science: 15, economic: 25, score: 25 }
+    };
+    const w = { ...(weights[personality] || weights.BALANCED) };
+
+    // Adjust based on game state
+    if (cityCount >= 5) w.domination += 10;
+    if (cityCount <= 2) w.domination -= 15;
+    if (techCount >= 5) w.science += 15;
+    if (gold > 500) w.economic += 10;
+    if (tradeRoutes >= 3) w.economic += 10;
+
+    // Pick the weighted random winner
+    const entries = Object.entries(w).filter(([, v]) => v > 0);
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    let r = Math.random() * total;
+    for (const [type, weight] of entries) {
+        r -= weight;
+        if (r <= 0) return type;
+    }
+    return 'domination';
+}
+
+/** Re-evaluate victory target every 20 turns. If we're far behind on our
+ *  current target, switch to a more achievable one. */
+export function reevaluateVictoryTarget(aiState, personality, scores, myFaction, turn) {
+    if (turn % 20 !== 0 || turn < 20) return;
+    const myScore = scores[myFaction] || 0;
+    const maxScore = Math.max(...Object.values(scores));
+    if (maxScore === 0) return;
+
+    const ratio = myScore / maxScore;
+    if (ratio >= 0.8) return; // we're competitive, keep current target
+
+    // We're falling behind — consider switching
+    const vt = aiState.victoryTarget;
+    if (vt === 'domination' && ratio < 0.5) {
+        aiState.victoryTarget = personality === 'ECONOMIC' ? 'economic' : 'score';
+    } else if (vt === 'economic' && ratio < 0.6) {
+        aiState.victoryTarget = 'score';
+    }
+}
+
+/** JSON-safe serialization (the record uses only plain objects/arrays). Kept
+ *  for symmetry with tech.js' serializeTechState so a future schema bump has a
+ *  single touchpoint. */
+export function serializeAIState(s) { return s ? JSON.parse(JSON.stringify(s)) : null; }
+export function deserializeAIState(s) { return s ? JSON.parse(JSON.stringify(s)) : null; }
+
+function ensureProgress(aiState) {
+    if (!aiState.progress) aiState.progress = {};
+    return aiState.progress;
+}
+
+// An enemy king at/below this HP fraction counts as vulnerable no matter how
+// strong its surroundings are — a wounded king is worth finishing off.
+export const KING_VULNERABLE_HP_FRAC = 0.5;
+
+/** Is an at-war enemy king currently vulnerable to assassination?
+ *  Vulnerable = unguarded (no bodyguard on its tile) AND either wounded
+ *  (hp <= 50%) or locally outpowered (the attacker's power near the king
+ *  exceeds the defenders', king included). Anything less and an attack-king
+ *  push just distracts armies from conquest objectives that need them.
+ *  Pure: the caller supplies the local power sums. */
+export function isKingVulnerable(king, friendPower = 0, foePower = 0) {
+    if (!king || king.guarded) return false;
+    if ((king.hp || 1) / (king.maxHp || king.hp || 1) <= KING_VULNERABLE_HP_FRAC) return true;
+    return friendPower > foePower * 0.8;
+}
+
+/** Is a goal's precondition still met given the current context? A goal that
+ *  becomes invalid forces a replan even inside the stability lock window.
+ *  `ctx` = { enemies:Set, defensive:boolean, myCityCount, settlerTarget,
+ *            scarcityTriggered, needsNavalExpansion, isIslandFaction,
+ *            foreignMassWithoutCity, neutralFactions:Set, hasSpies:boolean,
+ *            hasChokepoints:boolean, unexploredTiles:number,
+ *            enemyKings:Array, enemyUnits:Array, myPower:number,
+ *            enemyPower:number, hasWeakConquestTarget:boolean } */
+function goalValid(goal, ctx) {
+    switch (goal.kind) {
+        case 'conquest': {
+            // Neutral city goals (meta.neutral) are valid even when not at war
+            // — the AI can capture unowned cities without a war declaration.
+            const isNeutralGoal = goal.meta && goal.meta.neutral;
+            if (!isNeutralGoal) {
+                if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            }
+            // Neutral city captured by someone else: invalidate the goal.
+            if (isNeutralGoal && goal.targetTileKey && ctx.tiles) {
+                const tt = ctx.tiles.get(goal.targetTileKey);
+                if (!tt || tt.owner) return false; // tile gone or now owned
+            }
+            // Re-check reachability for LAND conquest goals: if the target became
+            // unreachable by land (e.g. a bridge was destroyed), force a replan.
+            // NAVAL conquest goals stay valid while at war even without a
+            // transport — the transport/harbor is what the AI is trying to build,
+            // so dropping the goal before the infrastructure exists would prevent
+            // it from ever being built.
+            if (goal.targetTileKey && ctx.tiles && ctx.ownCities.length) {
+                const [tx, tz] = goal.targetTileKey.split(',').map(Number);
+                const tier = (goal.meta && goal.meta.reachability) || 'land';
+                if (tier === 'land') {
+                    let ok = false;
+                    for (const o of ctx.ownCities) {
+                        if (isReachableByLand(ctx.tiles, o.x, o.z, tx, tz)) { ok = true; break; }
+                    }
+                    if (!ok) return false;
+                }
+            }
+            return true;
+        }
+        case 'defense':
+            return !!ctx.defensive;
+        case 'settle':
+            // Valid only when a found spot exists (or scarcity is driving
+            // expansion despite limited land). Without a spot, training
+            // settlers produces idle units that can't found.
+            if (!goal.targetTileKey) return false;
+            return ctx.myCityCount < ctx.settlerTarget || ctx.scarcityTriggered;
+        case 'expand-islands':
+            return ctx.needsNavalExpansion || (ctx.isIslandFaction && ctx.foreignMassWithoutCity);
+        case 'develop-economy':
+            return true; // always a valid fallback
+        case 'diplomacy':
+            return (ctx.neutralFactions && ctx.neutralFactions.size > 0) || ctx.enemies.size === 0;
+        case 'spy':
+            return ctx.enemies.size > 0 && ctx.hasSpies;
+        case 'chokepoint':
+            return !!ctx.hasChokepoints;
+        case 'scout':
+            return (ctx.unexploredTiles || 0) > 20;
+        case 'attack-king': {
+            // Valid only while at war with the target faction AND its king is
+            // still vulnerable (unguarded + wounded or locally outpowered —
+            // recomputed every turn into ctx.enemyKings). Without the
+            // vulnerability re-check the goal outlives the opportunity and
+            // keeps distracting conquest armies from objectives that need them.
+            if (goal.targetFaction ? !ctx.enemies.has(goal.targetFaction) : ctx.enemies.size === 0) return false;
+            const king = (ctx.enemyKings || []).find(k => k.isKing &&
+                (!goal.targetFaction || k.owner === goal.targetFaction));
+            return !!(king && king.vulnerable);
+        }
+        case 'take-key-city':
+            // Valid while at war with a faction that has key cities.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'disrupt-victory':
+            // Valid while at war with a faction that's leading in victory progress.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'resource-war':
+            // Valid while at war with a faction that controls contested resources.
+            return goal.targetFaction ? ctx.enemies.has(goal.targetFaction) : false;
+        case 'develop-army':
+            // Valid while at war with no good conquest target and our army not
+            // clearly stronger (own >= 1.5x enemy means conquest is feasible
+            // again). Both inputs are recomputed every turn from CURRENT data,
+            // so the goal drops as soon as the situation changes.
+            if (ctx.enemies.size === 0) return false;
+            if (ctx.hasWeakConquestTarget) return false;
+            return !(ctx.enemyPower > 0 && ctx.myPower >= ctx.enemyPower * 1.5);
+        case 'decisive-battle': {
+            // Valid while at war and the enemy still fields an army worth
+            // hunting (>= 3 field units). Re-derived from CURRENT units every
+            // turn (never from stale unit ids), so the goal drops the turn
+            // after the enemy army is destroyed.
+            if (ctx.enemies.size === 0) return false;
+            const field = (ctx.enemyUnits || []).filter(u => ctx.enemies.has(u.owner) && isFieldUnit(u));
+            return field.length >= 3;
+        }
+        default:
+            return false;
+    }
+}
+
+/** Pick the nearest at-war enemy city to the home anchor. Returns
+ *  { x, z, owner } or null. Pure, operates on the passed candidate arrays. */
+function nearestEnemyCity(enemyCities, homeAnchor) {
+    if (!enemyCities.length) return null;
+    if (!homeAnchor) return enemyCities[0];
+    let best = null, bestD = Infinity;
+    for (const c of enemyCities) {
+        const d = manhattan(homeAnchor.x, homeAnchor.z, c.x, c.z);
+        if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+}
+
+/** Check if a path between two tiles crosses water or an unbridged river (for
+ *  goal water-barrier filtering). Uses a simple line-of-sight check: if any
+ *  tile along the Chebyshev-1 path is WATER or an unbridged RIVER, the target
+ *  is considered barrier-separated. This prevents lords from trying to walk to
+ *  targets across the sea or an unbridged river, and lets the AI plan to build
+ *  engineers (bridges) or harbors (transports). */
+export function pathCrossesWater(tiles, fromX, fromZ, toX, toZ) {
+    if (!tiles) return false;
+    const dx = Math.sign(toX - fromX);
+    const dz = Math.sign(toZ - fromZ);
+    let x = fromX, z = fromZ;
+    while (x !== toX || z !== toZ) {
+        if (x !== toX) x += dx;
+        else if (z !== toZ) z += dz;
+        const t = tiles.get(`${x},${z}`);
+        if (t && (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge))) return true;
+    }
+    return false;
+}
+
+/** Real land-path reachability via bounded BFS. Returns true if a land unit
+ *  can walk from (fromX,fromZ) to (toX,toZ) without crossing WATER or an
+ *  unbridged RIVER, within `maxSteps` (default GRID_SIZE*4). This replaces the
+ *  naive line-trace `pathCrossesWater` for final reachability decisions: the
+ *  line trace mis-classifies curving coastlines (reachable flagged unreachable)
+ *  and narrow straits (unreachable flagged reachable). The BFS uses the same
+ *  passability rules as src/path.js.
+ *
+ *  Pure: operates only on the passed tiles Map. Returns false if either
+ *  endpoint is missing or the goal is unreachable within the cap. */
+export function isReachableByLand(tiles, fromX, fromZ, toX, toZ, maxSteps) {
+    if (!tiles) return false;
+    const startKey = `${fromX},${fromZ}`;
+    const goalKey = `${toX},${toZ}`;
+    if (startKey === goalKey) return true;
+    if (!tiles.has(startKey) || !tiles.has(goalKey)) return false;
+    const cap = maxSteps || (GRID_SIZE * 4);
+    const visited = new Set([startKey]);
+    // head-indexed queue (O(1) dequeue) — mirrors path.js's BFS pattern.
+    const queue = [[fromX, fromZ]];
+    let head = 0;
+    let steps = 0;
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    while (head < queue.length && steps++ < cap) {
+        const [cx, cz] = queue[head++];
+        for (const [dx, dz] of dirs) {
+            const nx = cx + dx, nz = cz + dz;
+            const k = `${nx},${nz}`;
+            if (visited.has(k)) continue;
+            const t = tiles.get(k);
+            if (!t) continue;
+            // Land passability: WATER is impassable. RIVER counts as passable
+            // — engineers can bridge rivers, so a river-separated target is a
+            // land objective (build bridges), not a naval one. Without this,
+            // factions with a river between them and the target never pursue
+            // it by land (the violet-order scenario).
+            if (t.terrain === 'WATER') {
+                visited.add(k);
+                continue;
+            }
+            if (k === goalKey) return true;
+            visited.add(k);
+            queue.push([nx, nz]);
+        }
+    }
+    return false;
+}
+
+/** Classify a conquest candidate's reachability tier from a given origin.
+ *  Returns 'land' (walkable), 'naval' (different landmass / across water, but
+ *  reachable with transports), or 'unreachable' (no land path and no naval
+ *  capability). Uses isReachableByLand for the land check and falls back to
+ *  pathCrossesWater as a fast pre-filter. Pure. */
+export function classifyReachability(tiles, fromX, fromZ, c, hasTransport) {
+    if (isReachableByLand(tiles, fromX, fromZ, c.x, c.z)) return 'land';
+    // Across a water barrier. Always classified 'naval' — the AI can always
+    // build a harbor + transports to reach it, so 'unreachable' is never the
+    // right classification. The `hasTransport` arg is retained for API compat
+    // but no longer changes the result.
+    return 'naval';
+}
+
+/**
+ * Select (or reconfirm) this faction's ordered goal sequence.
+ *
+ * input = {
+ *   aiState, turn, factionDef,
+ *   enemies,            // iterable of enemy faction ids (at-war)
+ *   enemyCities,        // [{x,z,owner}] at-war enemy cities
+ *   ownCities,          // [{x,z}]
+ *   homeAnchor,         // {x,z}|null (first own city / representative tile)
+ *   activeObjectives,   // { siege, raid, defensive, decisive, kind } from detectActiveObjectives
+ *   threatenedOwnCity,  // {x,z}|null — own city near enemy mil (defense target)
+ *   isIslandFaction, needsNavalExpansion, foreignMassWithoutCity,
+ *   myCityCount, settlerTarget, scarcityTriggered,
+ *   bestFoundSpotKey,   // string|null — cached settle target tile key
+ *   foreignShoreKey,    // string|null — expand-islands target tile key
+ *   bestEconTileKey,    // string|null — develop-economy target tile key
+ *   neutralFactions,    // Set — factions we're not at war with (for diplomacy goal)
+ *   hasSpies,           // boolean — does the faction have SPY units (for spy goal)
+ *   hasChokepoints,     // boolean — are there mountain passes/bridges near borders
+ *   unexploredTiles,    // number — count of tiles not yet owned by anyone (for scout goal)
+ *   spyTargetKey,       // string|null — tile key of nearest enemy city (for spy goal)
+ *   chokepointKey,      // string|null — tile key of a strategic chokepoint
+ *   gold,               // number — current treasury (for conquest feasibility)
+ *   enemyUnits,         // Array of at-war enemy units (for power comparison)
+ * }
+ * Returns the ordered Goal[] (also written to aiState.goals when re-planned).
+ */
+export function selectGoals(input) {
+    const {
+        aiState, turn, factionDef,
+        enemies, enemyCities, ownCities, homeAnchor,
+        activeObjectives = {}, threatenedOwnCity = null,
+        isIslandFaction = false, needsNavalExpansion = false, foreignMassWithoutCity = false,
+        myCityCount = 0, settlerTarget = 8, scarcityTriggered = false,
+        bestFoundSpotKey = null, foreignShoreKey = null, bestEconTileKey = null,
+        neutralFactions = new Set(), hasSpies = false, hasChokepoints = false,
+        unexploredTiles = 0, spyTargetKey = null, chokepointKey = null,
+        enemyKings = [],
+        tiles = null, myUnits = [], gold = 0, enemyUnits = [],
+    } = input;
+
+    const enemySet = new Set(enemies || []);
+    const hasTransportNow = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
+
+    // Own field army (non-naval military units) — feeds the conquest
+    // feasibility check below. Enemy field power feeds develop-army.
+    const myFieldUnits = (myUnits || []).filter(isFieldUnit);
+    const enemyFieldUnits = (enemyUnits || []).filter(u => enemySet.has(u.owner) && isFieldUnit(u));
+    const myPower = fieldPower(myFieldUnits);
+    const enemyPower = fieldPower(enemyFieldUnits);
+
+    // A "good conquest target" for develop-army gating: a land-reachable
+    // weak or neutral city. Computed before the stability check so goalValid
+    // can drop a develop-army goal the moment such a target appears.
+    let hasWeakConquestTarget = false;
+    for (const c of enemyCities || []) {
+        if (c.owner && !enemySet.has(c.owner)) continue;
+        if (!c.neutral && (c.fortification || 0) > 1) continue;
+        if (tiles && ownCities && ownCities.length) {
+            let reach = false;
+            for (const o of ownCities) {
+                if (isReachableByLand(tiles, o.x, o.z, c.x, c.z)) { reach = true; break; }
+            }
+            if (!reach) continue;
+        }
+        hasWeakConquestTarget = true;
+        break;
+    }
+
+    const ctx = {
+        enemies: enemySet, defensive: !!activeObjectives.defensive,
+        myCityCount, settlerTarget, scarcityTriggered,
+        needsNavalExpansion, isIslandFaction, foreignMassWithoutCity,
+        neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
+        tiles: tiles || null, ownCities: ownCities || [], hasTransport: hasTransportNow,
+        enemyKings: enemyKings || [],
+        enemyUnits: enemyUnits || [], myPower, enemyPower,
+        hasWeakConquestTarget,
+    };
+
+    // Stability: keep the existing plan if it's still locked and every goal is
+    // still valid. The dominant (first) goal being invalid forces a replan.
+    if (aiState && Array.isArray(aiState.goals) && aiState.goals.length &&
+        turn < (aiState.planLockUntil || 0)) {
+        if (goalValid(aiState.goals[0], ctx)) return aiState.goals;
+        // else fall through to replan
+    }
+
+    const personality = (factionDef && factionDef.aiPersonality) || 'BALANCED';
+    const weights = PERSONALITY_WEIGHTS[personality] || PERSONALITY_WEIGHTS.BALANCED;
+
+    const candidates = [];
+    const push = (kind, score, targetTileKey, targetFaction, horizon, meta, plan = null) => {
+        candidates.push({
+            kind,
+            priority: 0,            // normalized after sorting
+            horizon,
+            targetTileKey: targetTileKey || null,
+            targetFaction: targetFaction || null,
+            meta: meta || {},
+            plan: plan || null,     // ordered infrastructure steps (Part B)
+            stabilityTurns: AI_GOAL_MIN_STABILITY_TURNS,
+            born: turn,
+            _score: score,           // raw weighted score (stripped before return)
+        });
+    };
+
+    // Conquest: pick the best target city — scored by accessibility, distance,
+    // and whether it's neutral (no diplomacy needed). Neutral cities are valid
+    // conquest targets even when not at war; at-war enemy cities are always valid.
+    // Scoring: neutral bonus, same-landmass bonus, distance penalty, naval
+    // penalty. This ensures the AI picks nearby accessible targets instead of
+    // chasing far-away cities across water.
+    {
+        const hasTransport = myUnits && myUnits.some(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT');
+        const origins = (ownCities && ownCities.length) ? ownCities : (homeAnchor ? [homeAnchor] : []);
+        const hasTiles = !!tiles;
+
+        // Score each candidate city and pick the best.
+        const scored = [];
+        for (const c of enemyCities) {
+            // Skip cities owned by factions we're not at war with (only neutral
+            // and at-war cities are valid targets).
+            if (c.owner && !enemySet.has(c.owner)) continue;
+
+            let score = 0;
+
+            // Neutral bonus: no diplomacy needed, no war grievance from former
+            // owner, just walk up and capture. Strongly prefer these.
+            if (c.neutral) score += 50;
+
+            // Distance from nearest own city + reachability check.
+            let minDist = Infinity;
+            let reachableByLand = false;
+            if (hasTiles && origins.length) {
+                for (const o of origins) {
+                    const d = manhattan(o.x, o.z, c.x, c.z);
+                    if (d < minDist) minDist = d;
+                    if (!reachableByLand && isReachableByLand(tiles, o.x, o.z, c.x, c.z)) {
+                        reachableByLand = true;
+                    }
+                }
+            } else {
+                minDist = homeAnchor ? manhattan(homeAnchor.x, homeAnchor.z, c.x, c.z) : 0;
+                reachableByLand = true; // assume reachable in abstract/test mode
+            }
+
+            // Distance penalty: closer targets are better. Halved for neutral
+            // cities since they're free to capture (no army buildup needed).
+            const distPenalty = c.neutral ? minDist * 0.3 : minDist * 0.5;
+            score -= distPenalty;
+
+            // Land reachability bonus: can walk there without transports.
+            if (reachableByLand) score += 30;
+
+            // Naval penalty: needs harbor + transports (slow, expensive).
+            if (!reachableByLand) score -= 30;
+
+            // Nearby unclaimed cities bonus: if there are other neutral cities
+            // close to this one, capturing it opens up a cluster for expansion.
+            if (c.neutral && hasTiles) {
+                let nearbyNeutral = 0;
+                for (const other of enemyCities) {
+                    if (other === c || !other.neutral) continue;
+                    const d2 = manhattan(c.x, c.z, other.x, other.z);
+                    if (d2 <= 8) nearbyNeutral++;
+                }
+                score += nearbyNeutral * 15;
+            }
+
+            // Resource scarcity + accessibility bonus: when the faction is
+            // resource-scarce, a land-reachable target city is a high-value
+            // expansion opportunity (the new city provides fresh resource tiles).
+            if (scarcityTriggered && reachableByLand && minDist <= 15) {
+                score += 35;
+            }
+
+            scored.push({ ...c, _score: score, _reachableByLand: reachableByLand, _dist: minDist });
+        }
+
+        // Sort by score descending (best target first).
+        scored.sort((a, b) => b._score - a._score);
+
+        if (scored.length > 0) {
+            const tgt = scored[0];
+            const tier = tgt._reachableByLand ? 'land' : 'naval';
+            // Naval conquest objectives are real but can't be pressed until
+            // infrastructure (harbor + transports) is built. Score them lower
+            // so they don't dominate over expand-islands/naval-prep goals.
+            // When an EMPTY foreign landmass exists, penalize naval conquest
+            // much harder: settling free land overseas beats a costly naval
+            // invasion, so expand-islands should win. (If every foreign
+            // landmass has enemy cities, the normal 0.6 penalty keeps naval
+            // conquest worthwhile.)
+            const scoreScale = tier === 'naval' ? (foreignMassWithoutCity ? 0.3 : 0.6) : 1.0;
+            // Resource scarcity amplifies conquest priority: when the faction
+            // is starving for resources, capturing a nearby accessible city
+            // provides fresh tiles and production. Boost by up to 40%.
+            const scarcityBoost = (scarcityTriggered && tgt._reachableByLand && tgt._dist <= 15) ? 1.4 : 1.0;
+            // Long-term infrastructure plan for naval conquest.
+            const navalPlan = tier === 'naval' ? [
+                { kind: 'buildHarbor' },
+                { kind: 'trainTransport', count: 2 },
+                { kind: 'boardArmy' },
+                { kind: 'sailTo', targetTileKey: `${tgt.x},${tgt.z}` },
+            ] : null;
+            // Conquest feasibility (the "golden horde" scenario): a faction
+            // with a tiny army (< 4 field units) AND a weak treasury (< 100
+            // gold) cannot sustain a campaign — barracks, siege engines and
+            // the units themselves all cost gold it doesn't have. Halve the
+            // conquest score so settle/develop-economy win until the economy
+            // can support an army. Neutral (unclaimed) cities are exempt:
+            // capturing one needs no siege army and grows the economy, much
+            // like settling.
+            const feasibility = (!tgt.neutral && myFieldUnits.length < 4 && (gold || 0) < 100) ? 0.5 : 1.0;
+            push('conquest',
+                (BASE_SCORE.conquest + tgt._score) * weights.conquest * scoreScale * scarcityBoost * feasibility,
+                `${tgt.x},${tgt.z}`,
+                tgt.owner,
+                'short',
+                { cityX: tgt.x, cityZ: tgt.z, reachability: tier, requiresNaval: tier === 'naval', neutral: !!tgt.neutral,
+                  // Multi-target conquest: the best few candidate cities (up
+                  // to 3, best first). computeAIActions distributes conquest
+                  // army groups across them — the strongest group always gets
+                  // the primary — so a large empire presses several cities at
+                  // once instead of one objective at a time.
+                  targets: scored.slice(0, 3).map(c => ({ x: c.x, z: c.z, owner: c.owner, neutral: !!c.neutral })) },
+                navalPlan);
+        }
+    }
+
+    // Develop Army: at war but conquest isn't feasible — no land-reachable
+    // weak/neutral city AND the enemy's field army is at least as strong as
+    // ours. Rushing a stronger foe (or a wall of fortified cities) with cheap
+    // infantry is a losing plan, so build military infrastructure and train
+    // siege/high-damage units first. Scores below conquest but above
+    // develop-economy while at war.
+    if (enemySet.size > 0 && !hasWeakConquestTarget && enemyPower > 0 && enemyPower >= myPower) {
+        push('develop-army',
+            BASE_SCORE['develop-army'] * weights['develop-army'],
+            null, null, 'medium', {});
+    }
+
+    // Decisive Battle: at war, the enemy has a massed field army (>= 4 field
+    // units) and ours is comparable (>= 0.8x their power) — hunting that army
+    // down is a war objective in its own right, separate from taking cities.
+    // meta.clusters stores up to 3 enemy army clusters so multiple conquest
+    // groups can be distributed across them (see pickGroupObjective in
+    // ai.js); targetTileKey is the largest cluster's centroid. Scores below
+    // conquest: taking cities still wins wars.
+    if (enemySet.size > 0 && enemyFieldUnits.length >= 4 && myPower >= enemyPower * 0.8) {
+        const clusters = clusterFieldUnits(enemyFieldUnits);
+        if (clusters.length) {
+            push('decisive-battle',
+                BASE_SCORE['decisive-battle'] * weights['decisive-battle'],
+                `${clusters[0].x},${clusters[0].z}`,
+                null, 'short',
+                { clusters });
+        }
+    }
+
+    // War Objectives: targeted strategic goals that make wars more meaningful
+    // and drive AI to pursue specific objectives beyond generic conquest.
+
+    // Take Key City: target a high-value enemy city (capital, or city with
+    // important buildings). Higher priority than generic conquest when we
+    // have enough cities to warrant strategic targeting.
+    if (enemySet.size > 0 && myCityCount >= WAR_OBJECTIVE_MIN_CITIES) {
+        for (const ec of enemyCities) {
+            const isCapital = ec.isCapital;
+            const hasKeyBuilding = ec.hasKeyBuilding;
+            if (!isCapital && !hasKeyBuilding) continue;
+            const bonus = (isCapital ? WAR_OBJECTIVE_CAPITAL_BONUS : 0)
+                + (hasKeyBuilding ? WAR_OBJECTIVE_KEY_BUILDING_BONUS : 0);
+            const score = (BASE_SCORE['take-key-city'] + bonus) * weights.conquest;
+            push('take-key-city',
+                score,
+                `${ec.x},${ec.z}`,
+                ec.owner,
+                'short',
+                { cityX: ec.x, cityZ: ec.z, isCapital, hasKeyBuilding });
+            break; // one take-key-city goal per plan
+        }
+    }
+
+    // Disrupt Victory: target a faction that's leading in victory progress.
+    // This gives other factions a strategic reason to war the leader.
+    if (enemySet.size > 0 && input.victoryLeader && input.victoryLeader !== factionDef.id) {
+        const leaderCities = enemyCities.filter(c => c.owner === input.victoryLeader);
+        if (leaderCities.length > 0) {
+            const tgt = leaderCities[0];
+            push('disrupt-victory',
+                (BASE_SCORE['disrupt-victory'] + WAR_OBJECTIVE_VICTORY_LEADER_BONUS) * weights.conquest,
+                `${tgt.x},${tgt.z}`,
+                input.victoryLeader,
+                'medium',
+                { cityX: tgt.x, cityZ: tgt.z, reason: 'victory threat' });
+        }
+    }
+
+    // Resource War: target a faction that controls a resource we critically
+    // need but don't have. Gives wars an economic justification.
+    if (enemySet.size > 0 && input.contestedResourceFaction) {
+        const rcities = enemyCities.filter(c => c.owner === input.contestedResourceFaction);
+        if (rcities.length > 0) {
+            const tgt = rcities[0];
+            push('resource-war',
+                (BASE_SCORE['resource-war'] + WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS) * weights.conquest,
+                `${tgt.x},${tgt.z}`,
+                input.contestedResourceFaction,
+                'short',
+                { cityX: tgt.x, cityZ: tgt.z, resource: input.contestedResource });
+        }
+    }
+
+    // Defense: an own city is threatened.
+    if (activeObjectives.defensive && threatenedOwnCity) {
+        push('defense',
+            BASE_SCORE.defense * weights.defense,
+            `${threatenedOwnCity.x},${threatenedOwnCity.z}`,
+            null, 'immediate', {});
+    }
+    // Settle: below target city count, or scarce on resources. Only push
+    // when a valid found spot exists — training settlers without a spot
+    // wastes resources and creates idle units.
+    if ((myCityCount < settlerTarget || scarcityTriggered) && bestFoundSpotKey) {
+        push('settle',
+            (BASE_SCORE.settle + (scarcityTriggered ? 40 : 0)) * weights.settle,
+            bestFoundSpotKey, null, 'long', { scarcityTriggered });
+    }
+    // Expand to new islands: needs a fleet to reach foreign land.
+    if (needsNavalExpansion || (isIslandFaction && foreignMassWithoutCity)) {
+        push('expand-islands',
+            BASE_SCORE['expand-islands'] * weights['expand-islands'],
+            foreignShoreKey, null, 'long', {});
+    }
+    // Develop economy: always a valid baseline.
+    push('develop-economy',
+        BASE_SCORE['develop-economy'] * weights['develop-economy'],
+        bestEconTileKey, null, 'long', {});
+
+    // Diplomacy: pursue trade/alliance when at peace with neighbors or not at war.
+    // Higher score when there are neutral factions to trade with and we're not
+    // currently at war (so diplomacy is useful, not wasted).
+    if (neutralFactions.size > 0 || enemySet.size === 0) {
+        const diplomacyBonus = enemySet.size === 0 ? 30 : 0;
+        push('diplomacy',
+            (BASE_SCORE.diplomacy + diplomacyBonus) * weights.diplomacy,
+            null, null, 'medium', {});
+    }
+    // Spy: use espionage when at war and we have spy units.
+    if (enemySet.size > 0 && hasSpies) {
+        push('spy',
+            BASE_SCORE.spy * weights.spy,
+            spyTargetKey, null, 'medium', { spyAction: 'GATHER_INTEL' });
+    }
+    // Chokepoint: control strategic passes/bridges when they exist near borders.
+    if (hasChokepoints) {
+        push('chokepoint',
+            BASE_SCORE.chokepoint * weights.chokepoint,
+            chokepointKey, null, 'medium', {});
+    }
+    // Scout: explore unexplored regions, especially in early game.
+    if (unexploredTiles > 20) {
+        push('scout',
+            BASE_SCORE.scout * weights.scout,
+            null, null, 'long', {});
+    }
+
+    // Attack Enemy King: when an at-war enemy king is VULNERABLE (exposed —
+    // no bodyguard on its tile — AND wounded or locally outpowered, see
+    // isKingVulnerable), consider assassinating it. Uses a low base score (40)
+    // so conquest/defense goals always win when both exist — the king should
+    // join the conquest group, not chase the enemy king across the map. A
+    // full-health king with no local power advantage nearby is NOT a goal:
+    // chasing it endlessly distracts from conquest (goalValid drops such
+    // stale goals even inside the stability lock).
+    {
+        const exposedKing = enemyKings.find(king =>
+            king.owner !== factionDef.id &&
+            enemySet.has(king.owner) &&
+            king.isKing && !king.guarded && king.vulnerable);
+        if (exposedKing && homeAnchor) {
+            const dKing = manhattan(homeAnchor.x, homeAnchor.z, exposedKing.x, exposedKing.z);
+            const score = (40 - dKing * 0.3) * weights['attack-king'];
+            push('attack-king',
+                score,
+                `${exposedKing.x},${exposedKing.z}`,
+                exposedKing.owner,
+                'immediate',
+                { kingId: exposedKing.id });
+        }
+    }
+
+    // Victory-target modifiers: weight goals based on the chosen victory type.
+    const vt = (aiState && aiState.victoryTarget) || 'domination';
+    const vtModifiers = {
+        domination: { conquest: 1.4, defense: 1.1, settle: 0.9, 'expand-islands': 1.0, 'develop-economy': 0.7,
+                      diplomacy: 0.6, spy: 1.2, chokepoint: 1.1, scout: 0.7, 'attack-king': 1.3,
+                      'take-key-city': 1.4, 'disrupt-victory': 1.3, 'resource-war': 1.1, 'develop-army': 0.8,
+                      'decisive-battle': 1.2 },
+        science:    { conquest: 0.6, defense: 1.0, settle: 1.1, 'expand-islands': 0.8, 'develop-economy': 1.3,
+                      diplomacy: 1.0, spy: 1.1, chokepoint: 0.8, scout: 1.0, 'attack-king': 0.9,
+                      'take-key-city': 0.8, 'disrupt-victory': 1.4, 'resource-war': 0.9, 'develop-army': 1.1,
+                      'decisive-battle': 0.7 },
+        economic:   { conquest: 0.5, defense: 0.8, settle: 1.2, 'expand-islands': 1.0, 'develop-economy': 1.5,
+                      diplomacy: 1.3, spy: 0.9, chokepoint: 0.7, scout: 0.9, 'attack-king': 0.8,
+                      'take-key-city': 0.7, 'disrupt-victory': 1.2, 'resource-war': 1.4, 'develop-army': 1.2,
+                      'decisive-battle': 0.6 },
+        score:      { conquest: 0.9, defense: 1.0, settle: 1.1, 'expand-islands': 0.9, 'develop-economy': 1.1,
+                      diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 1.0, 'attack-king': 1.1,
+                      'take-key-city': 1.0, 'disrupt-victory': 1.2, 'resource-war': 1.0, 'develop-army': 1.0,
+                      'decisive-battle': 1.0 }
+    };
+    const vtMod = vtModifiers[vt] || vtModifiers.domination;
+    for (const c of candidates) {
+        c._score *= (vtMod[c.kind] || 1.0);
+    }
+
+    // Game-phase modifiers: early game favors scouting and expansion, mid-game
+    // favors military buildup and conquest, late game pushes victory conditions.
+    const phase = computeGamePhase(turn);
+    const phaseMod = {
+        early:  { conquest: 0.7, defense: 0.8, settle: 1.4, 'expand-islands': 1.2, 'develop-economy': 1.1,
+                  diplomacy: 0.9, spy: 0.5, chokepoint: 0.6, scout: 1.5, 'attack-king': 0.9,
+                  'take-key-city': 0.6, 'disrupt-victory': 0.7, 'resource-war': 0.8, 'develop-army': 1.0,
+                  'decisive-battle': 0.8 },
+        mid:    { conquest: 1.1, defense: 1.0, settle: 1.0, 'expand-islands': 1.0, 'develop-economy': 1.0,
+                  diplomacy: 1.0, spy: 1.0, chokepoint: 1.0, scout: 0.7, 'attack-king': 1.1,
+                  'take-key-city': 1.2, 'disrupt-victory': 1.1, 'resource-war': 1.0, 'develop-army': 1.1,
+                  'decisive-battle': 1.1 },
+        late:   { conquest: 1.3, defense: 1.1, settle: 0.6, 'expand-islands': 0.8, 'develop-economy': 0.8,
+                  diplomacy: 0.7, spy: 1.2, chokepoint: 1.1, scout: 0.4, 'attack-king': 1.3,
+                  'take-key-city': 1.3, 'disrupt-victory': 1.4, 'resource-war': 1.2, 'develop-army': 0.9,
+                  'decisive-battle': 1.2 },
+    };
+    const pm = phaseMod[phase] || phaseMod.mid;
+    for (const c of candidates) {
+        c._score *= (pm[c.kind] || 1.0);
+    }
+
+    // Sort by weighted score desc, keep the top 3.
+    candidates.sort((a, b) => b._score - a._score);
+    const goals = candidates.slice(0, 3);
+
+    // Normalize priorities to 0..1 from the top score.
+    const topScore = goals.length ? goals[0]._score : 1;
+    for (const g of goals) g.priority = topScore > 0 ? g._score / topScore : 0;
+
+    // Strip the raw score helper before persisting/returning.
+    for (const g of goals) delete g._score;
+
+    if (aiState) {
+        aiState.goals = goals;
+        aiState.lastPlanTurn = turn;
+        aiState.planLockUntil = turn + AI_GOAL_MIN_STABILITY_TURNS;
+        // Cache the settle found-spot so ai.js' settler block can reuse it.
+        const prog = ensureProgress(aiState);
+        const settleGoal = goals.find(g => g.kind === 'settle');
+        if (settleGoal && bestFoundSpotKey) {
+            prog.settle = prog.settle || { since: turn, attempts: 0, lastTileKey: null };
+            prog.settle.lastTileKey = bestFoundSpotKey;
+        }
+    }
+    return goals;
+}
+
+/** Build the AI Goals debug-panel HTML (pure string — testable without a DOM).
+ *  `factions` is the ordered list of faction slots to render; `factionDefs` and
+ *  `factionColors` map slot -> def / color. `spectateMode` controls whether the
+ *  player's own slot (if any) is shown too. */
+export function buildAIGoalsHTML(aiState, factions, factionDefs, factionColors, spectateMode = true) {
+    if (!aiState) return '<h3>AI Goals</h3><p class="muted">No AI state</p>';
+    let rows = '';
+    for (const slot of factions) {
+        const st = aiState[slot];
+        if (!st || !Array.isArray(st.goals) || !st.goals.length) continue;
+        const def = factionDefs && factionDefs[slot];
+        const color = factionColors && factionColors[slot];
+        const colorHex = (color && typeof color.tile === 'number')
+            ? '#' + color.tile.toString(16).padStart(6, '0')
+            : '#888';
+        const name = (def && (def.name || (color && color.name))) || slot;
+        const emoji = (def && def.emoji) || '';
+        const goalHtml = st.goals.map((g, i) => {
+            const mark = i === 0 ? '★' : '·';
+            const tgt = g.targetTileKey ? ` → ${g.targetTileKey}` : '';
+            const pct = Math.round((g.priority || 0) * 100);
+            return `<div style="font-size:11px;line-height:1.35;">${mark} <strong>${g.kind}</strong> <span class="muted">(p=${pct}%, ${g.horizon})${tgt}</span></div>`;
+        }).join('');
+        rows += `<div style="margin:4px 0;padding:4px 6px;border-left:3px solid ${colorHex};background:rgba(255,255,255,0.03);">
+  <div style="font-weight:600;">${emoji} ${name}</div>${goalHtml}</div>`;
+    }
+    if (!rows) rows = '<p class="muted">No active goals</p>';
+    return `<h3>AI Goals</h3>${rows}`;
+}

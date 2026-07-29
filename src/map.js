@@ -1,7 +1,7 @@
 /** Map generation: terrain, ownership, starting positions.
  *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
  *  and per-faction city names. */
-import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS } from './config.js';
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY, SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX } from './config.js';
 import { getFactionDef } from './faction.js';
 
 // Per-faction city name counters
@@ -35,23 +35,25 @@ export function cityRadius(tile) {
 /** A city's fortification max scales with its level. Besiege to reduce it to 0
  *  before the city can be captured. */
 export function cityFortMax(tile) {
-    return 2 + ((tile && tile.cityLevel) || 1);
+    return 3 + Math.round(((tile && tile.cityLevel) || 1) * 1.5);
 }
 
 /** Pick 2–4 continent centers spread across the map, each with its own radius:
  *  one large "main" continent, one or two medium ones, and optionally small
- *  islets. Centers are kept far enough apart (relative to their radii) that the
- *  continents stay separated by water instead of merging into one giant blob. */
+ *  islets. Radii are sized so land covers roughly half the map or more (the
+ *  retry loop in generateMap enforces ≥50%); centers are kept far enough apart
+ *  (relative to their radii) that the continents stay separated by water
+ *  instead of merging into one giant blob. */
 function pickContinentCenters() {
     const mapHalf = Math.min(GRID_WIDTH, GRID_HEIGHT) / 2;
     const count = 2 + Math.floor(Math.random() * 3); // 2..4 continents
     const centers = [];
     for (let i = 0; i < count; i++) {
         const radius = i === 0
-            ? mapHalf * (0.50 + Math.random() * 0.15)   // large: 0.50–0.65 of half-map
+            ? mapHalf * (0.75 + Math.random() * 0.15)   // large: 0.75–0.90 of half-map
             : i === 1
-                ? mapHalf * (0.30 + Math.random() * 0.12) // medium: 0.30–0.42
-                : mapHalf * (0.16 + Math.random() * 0.10); // small islets: 0.16–0.26
+                ? mapHalf * (0.45 + Math.random() * 0.10) // medium: 0.45–0.55
+                : mapHalf * (0.25 + Math.random() * 0.10); // small islets: 0.25–0.35
         // Keep most of the disc on the map (a little edge clipping is fine).
         const mx = Math.min(radius * 0.5, (GRID_WIDTH - 1) / 2);
         const mz = Math.min(radius * 0.5, (GRID_HEIGHT - 1) / 2);
@@ -171,6 +173,48 @@ function assignBiomes(tiles) {
             }
         }
     }
+}
+
+/** Carve mountain passes (Feature 9): convert a few MOUNTAIN tiles that sit
+ *  between two distinct land regions into PASS terrain so land units can cross
+ *  mountain ranges. A tile qualifies if it is MOUNTAIN and has ≥2 orthogonal
+ *  non-mountain land neighbors; converting it joins the regions on either
+ *  side. `count` is the target number of passes; fewer may be carved if there
+ *  aren't enough qualifying tiles. Mutates `tiles` in place; returns the list
+ *  of carved pass tiles. */
+export function generatePasses(tiles, count) {
+    const arr = !tiles ? [] : Array.isArray(tiles) ? tiles : Array.from(tiles.values());
+    const byKey = new Map(arr.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const candidates = [];
+    for (const t of arr) {
+        if (t.terrain !== 'MOUNTAIN') continue;
+        let landNbrs = 0;
+        for (const [dx, dz] of dirs) {
+            const n = byKey.get(`${t.x + dx},${t.z + dz}`);
+            if (!n) continue;
+            if (n.terrain !== 'WATER' && n.terrain !== 'MOUNTAIN' && n.terrain !== 'RIVER') landNbrs++;
+        }
+        if (landNbrs >= 2) candidates.push(t);
+    }
+    // Shuffle-ish: take spread-out candidates so passes don't cluster.
+    const carved = [];
+    const taken = new Set();
+    for (const c of candidates) {
+        if (carved.length >= count) break;
+        const k = `${c.x},${c.z}`;
+        if (taken.has(k)) continue;
+        // Keep passes at least 3 tiles apart.
+        let tooClose = false;
+        for (const p of carved) {
+            if (Math.abs(p.x - c.x) + Math.abs(p.z - c.z) < 3) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+        c.terrain = PASS_TERRAIN_KEY;
+        taken.add(k);
+        carved.push(c);
+    }
+    return carved;
 }
 
 /** Guarantee every stamped city is reachable by land units: it must have at
@@ -411,6 +455,61 @@ function groupCitiesByLandmass(tiles, cityTiles) {
     return groups;
 }
 
+/** Post-biome diversity pass: a landmass whose tiles are all (or almost all)
+ *  one terrain type starves its owner of resources — a plains-only island has
+ *  NO wood or iron income at all (the "trapped with 0 wood" scenario). For
+ *  every contiguous landmass, ensure at least 3 distinct terrain types and
+ *  coverage of the core resource terrains (FOREST=wood, HILLS/MOUNTAIN/PASS=
+ *  iron) by converting a slice of its tiles. Runs before city placement, so
+ *  only PLAINS/biome tiles are ever converted (never RIVER/MOUNTAIN/PASS —
+ *  mountains already count toward iron). */
+function ensureLandmassDiversity(tiles) {
+    const byKey = new Map(tiles.map(t => [`${t.x},${t.z}`, t]));
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+    const isLand = (t) => t && t.terrain !== 'WATER';
+    const BIOMES = ['FOREST', 'HILLS', 'DESERT', 'MARSH', 'TUNDRA'];
+    const seen = new Set();
+    for (const start of tiles) {
+        if (!isLand(start) || seen.has(`${start.x},${start.z}`)) continue;
+        const comp = [];
+        const queue = [start];
+        seen.add(`${start.x},${start.z}`);
+        while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const [dx, dz] of dirs) {
+                const k = `${cur.x + dx},${cur.z + dz}`;
+                if (seen.has(k)) continue;
+                const n = byKey.get(k);
+                if (!isLand(n)) continue;
+                seen.add(k);
+                queue.push(n);
+            }
+        }
+        if (comp.length < 6) continue; // specks too small to diversify
+        const types = new Set(comp.map(t => t.terrain));
+        const convertible = comp.filter(t => t.terrain === 'PLAINS' || BIOMES.includes(t.terrain));
+        const wanted = [];
+        // Resource coverage first: wood and iron are what single-biome masses lack.
+        if (!types.has('FOREST')) wanted.push('FOREST');
+        if (!types.has('HILLS') && !types.has('MOUNTAIN') && !types.has('PASS')) wanted.push('HILLS');
+        // Then general terrain-type diversity (at least 3 distinct types).
+        for (const b of BIOMES) {
+            if (types.size + wanted.length >= 3) break;
+            if (!types.has(b) && !wanted.includes(b)) wanted.push(b);
+        }
+        wanted.forEach((biome, i) => {
+            // Convert ~15% of the mass (min 2 tiles), spread across the mass
+            // by taking every k-th convertible tile in BFS order.
+            const n = Math.max(2, Math.round(comp.length * 0.15));
+            const step = Math.max(1, Math.floor(convertible.length / n));
+            for (let j = i % step, c = 0; j < convertible.length && c < n; j += step, c++) {
+                convertible[j].terrain = biome;
+            }
+        });
+    }
+}
+
 /**
  * Generate tile data for the full grid. Cities are placed explicitly: one start
  * city per faction plus a few neutral contested cities (fewer cities overall).
@@ -429,6 +528,9 @@ export function generateMap() {
                 cityLevel: 0,
                 fortification: 0,
                 fortMax: 0,
+                conquestCount: 0,    // how many times this city has been captured (unrest dampening)
+                peaceTurns: 0,       // consecutive turns at peace (stability bonus)
+                siegeTurns: 0,       // consecutive turns under siege (instability penalty)
                 wonder: null       // set by placeWonders for Natural Wonder tiles
             });
         }
@@ -436,18 +538,21 @@ export function generateMap() {
 
     // Shape the landmass into 2–4 irregular continents separated by water (cuts
     // off the square corners and carves wavy coastlines) BEFORE biomes/rivers/
-    // cities. Retry with a more generous cutoff if the first pass produced too
-    // little land (prevents cities from spawning in the ocean on unlucky seeds).
+    // cities. Retry with a more generous cutoff if the pass produced too little
+    // land — land should cover at least half the map (prevents both cities
+    // spawning in the ocean on unlucky seeds and an ocean-dominated map). The
+    // cutoff decays below zero on later attempts, widening coastlines beyond
+    // the nominal continent radius.
     applyContinentMask(tiles);
     let landCount = tiles.filter(t => t.terrain !== 'WATER').length;
     let maskAttempts = 0;
-    while (landCount < tiles.length * 0.30 && maskAttempts < 5) {
+    while (landCount < tiles.length * 0.52 && maskAttempts < 8) {
         // Reset all tiles to PLAINS before re-applying the mask, with a lower
         // cutoff each time (lower cutoff = more land).
         for (const t of tiles) {
             if (t.terrain === 'WATER') t.terrain = 'PLAINS';
         }
-        applyContinentMask(tiles, Math.max(0.02, 0.15 - (maskAttempts + 1) * 0.04));
+        applyContinentMask(tiles, Math.max(-0.12, 0.15 - (maskAttempts + 1) * 0.05));
         landCount = tiles.filter(t => t.terrain !== 'WATER').length;
         maskAttempts++;
     }
@@ -455,6 +560,14 @@ export function generateMap() {
     // Group land into contiguous biome regions (FOREST/HILLS/DESERT/MARSH/TUNDRA)
     // with plains gaps, plus a few impassable MOUNTAIN clusters.
     assignBiomes(tiles);
+
+    // Carve mountain passes through the ranges (Feature 9). Pass count scales
+    // with map size so larger maps get more crossings.
+    const mapScale2 = Math.max(GRID_WIDTH, GRID_HEIGHT);
+    const passCount = mapScale2 >= 48 ? PASS_COUNT_PER_CONTINENT.LARGE
+        : mapScale2 >= 36 ? PASS_COUNT_PER_CONTINENT.MEDIUM
+        : PASS_COUNT_PER_CONTINENT.SMALL;
+    generatePasses(tiles, passCount);
 
     // Carve large meandering rivers across the map (before city placement so
     // cities avoid rivers).
@@ -464,21 +577,25 @@ export function generateMap() {
     // stray islets disappear (and no capital can land on one). Runs after rivers
     // so river tiles are unaffected; city accessibility is re-validated below.
     pruneSmallLandmasses(tiles);
-    // Recompute land fraction — if pruning dropped us below the 30% floor, retry
+    // Recompute land fraction — if pruning dropped us below the 50% floor, retry
     // the whole mask (pruning can occasionally expose a too-sparse map).
     let landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
     let pruneAttempts = 0;
-    while (landCount2 < tiles.length * 0.30 && pruneAttempts < 5) {
+    while (landCount2 < tiles.length * 0.50 && pruneAttempts < 8) {
         for (const t of tiles) {
             if (t.terrain === 'WATER') t.terrain = 'PLAINS';
         }
-        applyContinentMask(tiles, Math.max(0.02, 0.15 - (pruneAttempts + 1) * 0.04));
+        applyContinentMask(tiles, Math.max(-0.12, 0.15 - (pruneAttempts + 1) * 0.05));
         assignBiomes(tiles);
         generateRivers(tiles);
         pruneSmallLandmasses(tiles);
         landCount2 = tiles.filter(t => t.terrain !== 'WATER').length;
         pruneAttempts++;
     }
+
+    // Diversity pass: no single-terrain landmasses (a plains-only island would
+    // have zero wood/iron income). Runs before city placement.
+    ensureLandmassDiversity(tiles);
 
     // Total city count: one per faction + a few neutral (scales with map size).
     const mapScale = Math.max(GRID_WIDTH, GRID_HEIGHT);
@@ -610,6 +727,25 @@ export function getOwnedCities(tiles, owner) {
 }
 
 /**
+ * Find the city tile that owns a given tile (within its influence radius).
+ * Returns the city tile object or null if the tile is not within any city's
+ * influence. Used to enforce one-building-type-per-city limits.
+ */
+export function findParentCity(tiles, tile) {
+    if (!tile) return null;
+    for (const c of tiles.values()) {
+        if (c.terrain !== 'CITY' || !c.owner) continue;
+        const r = cityRadius(c);
+        if (Math.max(Math.abs(c.x - tile.x), Math.abs(c.z - tile.z)) <= r) {
+            // Match by owner if possible
+            if (tile.owner && c.owner !== tile.owner) continue;
+            return c;
+        }
+    }
+    return null;
+}
+
+/**
  * Set of tile keys within each owned city's influence radius (Chebyshev, scales
  * with city level). Buildings may only be placed on these tiles.
  */
@@ -655,6 +791,10 @@ export function captureCityTerritory(tiles, cityTile, newOwner, structures = nul
     const oldOwner = cityTile.owner;
     cityTile.owner = newOwner;
     cityTile.loyalty = 3;
+    // Track how many times this city has changed hands — repeated conquests
+    // dampen unrest gains (see calculateUnrest) so a hotly-contested border
+    // city doesn't cycle forever at 100 unrest.
+    cityTile.conquestCount = (cityTile.conquestCount || 0) + 1;
     // A freshly captured city is fortified for its new owner.
     cityTile.fortMax = cityFortMax(cityTile);
     cityTile.fortification = cityTile.fortMax;
@@ -743,13 +883,12 @@ export function foundCity(tiles, tile, owner) {
     if (tile.terrain === 'WATER' || tile.terrain === 'MOUNTAIN' || tile.terrain === 'RIVER') {
         return [`Cannot found a city on ${tile.terrain.toLowerCase()} terrain.`];
     }
-    // Spacing rule: a new city may not be founded within the influence radius
-    // (+1) of any existing city (any owner), so cities don't overlap influence
+    // Spacing rule: a new city may not be founded within 4 Chebyshev blocks
+    // of any existing city (any owner), so cities don't overlap influence
     // bubbles and crowd each other out.
     for (const t of tiles.values()) {
         if (t.terrain !== 'CITY') continue;
-        const minDist = cityRadius(t) + 1;
-        if (Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z)) < minDist) {
+        if (Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z)) < 4) {
             return [`Too close to ${t.cityName || 'an existing city'} — found elsewhere.`];
         }
     }
@@ -774,6 +913,11 @@ export function besiegeCity(unit, cityTile) {
     if (cityTile.owner === unit.owner) return msgs; // don't besiege own/ally city
     const power = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].besiegePower) || (unit.type === 'SIEGE' ? 2 : 1);
     cityTile.fortification = Math.max(0, cityTile.fortification - power);
+    // Siege pressure: taking fort damage wears the city's recovery down — it
+    // cannot regrow fortification until the pressure decays (see
+    // regenFortification). This also keeps a freshly breached city at 0
+    // through the following turn so it can actually be captured.
+    cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
     msgs.push(`City at [${cityTile.x}, ${cityTile.z}] besieged (fortification ${cityTile.fortification}/${cityTile.fortMax})`);
     if (cityTile.fortification === 0) msgs.push(`City at [${cityTile.x}, ${cityTile.z}] is BREACHED — it can now be captured!`);
     return msgs;
@@ -781,7 +925,10 @@ export function besiegeCity(unit, cityTile) {
 
 /** Regenerate fortification on every city whose fortification is below max and
  *  that is not currently pinned at 0 by an adjacent enemy siege unit. Called
- *  once per turn so a city you stop besieging recovers. */
+ *  once per turn so a city you stop besieging recovers. A city with
+ *  `siegePressure` (recent fort damage) does not regen — the pressure decays
+ *  by 1 per unattacked turn instead, so a breached city stays at 0 through
+ *  the following turn and sustained bombardment wears recovery down. */
 export function regenFortification(tiles, units) {
     const siegeAdjacent = new Set(); // city keys pinned at 0 by an enemy besieger
     if (units) {
@@ -803,6 +950,11 @@ export function regenFortification(tiles, units) {
         if (t.fortification >= t.fortMax) continue;
         // A city being actively pushed to 0 stays down while besieged; otherwise regrow.
         if (t.fortification === 0 && siegeAdjacent.has(`${t.x},${t.z}`)) continue;
+        // Siege pressure: a city that has taken fort damage recently does not
+        // recover — pressure decays by 1 per unattacked turn, then regen
+        // resumes. A freshly breached city thus stays at 0 through the next
+        // turn (a capture window), fixing the re-breach/regen infinite loop.
+        if ((t.siegePressure || 0) > 0) { t.siegePressure--; continue; }
         t.fortification = Math.min(t.fortMax, t.fortification + 1);
     }
 }

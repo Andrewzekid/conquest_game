@@ -1,8 +1,12 @@
 /** Turn manager: phase FSM (player -> each AI faction -> player) */
-import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth } from './economy.js';
-import { PLAYER_FACTION, UNIT_TYPE } from './config.js';
+import { collectResources, processUpkeep, processCityGrowth, processNeutralCityGrowth,
+         processUnrest, applyFactionUnrest, getTradeRouteIncome, processTradeRouteRaids } from './economy.js';
+import { PLAYER_FACTION, UNIT_TYPE, VICTORY_THREAT_GRIPERANCE_PER_TURN, BORDER_BUILDUP_GRIPERANCE_PER_TURN } from './config.js';
 import { regenFortification } from './map.js';
-import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel } from './diplomacy.js';
+import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
+         processWarWeariness } from './diplomacy.js';
+import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS } from './tech.js';
+import { applyKingTechBonuses } from './lords.js';
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -17,10 +21,46 @@ function processMedicHeal(units) {
             if (u.owner !== medic.owner) continue;
             if (u.id === medic.id) continue;
             if (u.type === 'MEDIC') continue;
+            // BERSERKERS fight beyond the aid of medics (noMedic flag).
+            if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].noMedic) continue;
             if (Math.abs(u.x - medic.x) > 1 || Math.abs(u.z - medic.z) > 1) continue;
-            if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
+            // Dead units (hp <= 0) are beyond healing — medics can't resurrect.
+            if (u.hp > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + heal);
         }
     }
+}
+
+/** Simple power ranking for victory threat grievance. Returns the leading
+ *  faction and its score relative to the second-place faction. */
+function calculateSimpleRankings(gameState, tiles) {
+    const factions = {};
+    let totalTiles = 0;
+    for (const t of tiles.values()) {
+        totalTiles++;
+        if (t.owner) {
+            if (!factions[t.owner]) factions[t.owner] = { cities: 0, tiles: 0, score: 0 };
+            factions[t.owner].tiles++;
+            if (t.terrain === 'CITY') factions[t.owner].cities++;
+        }
+    }
+    // Also count units
+    for (const u of (gameState.units || new Map()).values()) {
+        if (factions[u.owner]) factions[u.owner].score += 2;
+    }
+    for (const [f, data] of Object.entries(factions)) {
+        data.score += data.cities * 20 + data.tiles;
+    }
+    let leader = null, leaderScore = 0, secondScore = 0;
+    for (const [f, data] of Object.entries(factions)) {
+        if (data.score > leaderScore) {
+            secondScore = leaderScore;
+            leaderScore = data.score;
+            leader = f;
+        } else if (data.score > secondScore) {
+            secondScore = data.score;
+        }
+    }
+    return leader ? { leader, leaderScore, secondScore, factions } : null;
 }
 
 export function createTurnManager(gameState, factions, onPhaseChange, runAI, renderAll, spectateMode = false) {
@@ -44,10 +84,110 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             // their cities automatically over time.
             const fname = (gameState.factionColors && gameState.factionColors[f] && gameState.factionColors[f].name) || f;
             processCityGrowth(gameState.tiles, f, gameState.resources[f], (m) => logger ? logger(`${fname}: ${m}`) : null);
+            // City unrest & loyalty: recompute each city's unrest, resolve
+            // rebellions, then apply a faction-wide yield penalty. Cities
+            // captured this turn (tile.lastConqueredTurn) get a recent-conquest
+            // spike that decays over the following turns.
+            if (!gameState.eliminated || !gameState.eliminated.has(f)) {
+                const { messages: unrestMsgs, rebellions } = processUnrest(
+                    gameState.tiles, f, gameState.units, gameState.lords, gameState.turn, gameState.buildings, gameState.resources[f]);
+                if (logger) unrestMsgs.forEach(m => logger(`${fname}: ${m}`));
+                if (rebellions && rebellions.length) {
+                    // A rebelled city may flip to a new owner; ownership change
+                    // is handled inside processUnrest. Re-check elimination is
+                    // done by the host game's victory check on the next render.
+                }
+                const penaltyMsgs = applyFactionUnrest(gameState.tiles, f, gameState.resources[f]);
+                if (logger) penaltyMsgs.forEach(m => logger(`${fname}: ${m}`));
+            }
         }
 
         // Neutral (unowned) cities also grow and expand influence over time.
         processNeutralCityGrowth(gameState.tiles, (m) => logger ? logger(m) : null);
+
+        // Trade routes: pay out income per faction, process raids (an enemy
+        // military unit on a route's path steals gold and disrupts it), then
+        // tick disruption timers. Run once per round after resources collected.
+        if (Array.isArray(gameState.tradeRoutes) && gameState.tradeRoutes.length) {
+            for (const f of factions) {
+                const inc = getTradeRouteIncome(gameState.tiles, f, gameState.tradeRoutes);
+                if (inc > 0 && gameState.resources[f]) {
+                    gameState.resources[f].gold = (gameState.resources[f].gold || 0) + inc;
+                }
+            }
+            for (const f of factions) {
+                const { raided, messages: rmsgs } = processTradeRouteRaids(gameState.tradeRoutes, gameState.units, f);
+                if (logger) rmsgs.forEach(m => logger(m));
+                for (const r of raided) {
+                    const stolen = r.stolen;
+                    if (gameState.resources[f]) gameState.resources[f].gold = (gameState.resources[f].gold || 0) + stolen;
+                    const victim = r.route.from.owner;
+                    if (victim !== f && gameState.resources[victim]) {
+                        // stolen gold is income that won't be paid; subtract from victim.
+                        gameState.resources[victim].gold = Math.max(0, (gameState.resources[victim].gold || 0) - stolen);
+                    }
+                }
+            }
+            // Disruption decay: disrupted routes recover after their timer ends.
+            for (const route of gameState.tradeRoutes) {
+                if (route.disrupted && route.disruptedTurnsLeft > 0) {
+                    route.disruptedTurnsLeft -= 1;
+                    if (route.disruptedTurnsLeft <= 0) route.disrupted = false;
+                }
+            }
+        }
+
+        // Tech tree: accumulate research for the player each turn.
+        if (gameState.techState) {
+            const researchPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION, gameState.buildings);
+            if (researchPts > 0) {
+                const completed = addResearch(gameState.techState, researchPts);
+                if (completed && completed.length > 0) {
+                    for (const lord of gameState.lords || []) {
+                        if (lord.owner === PLAYER_FACTION && lord.isKing) applyKingTechBonuses(lord, gameState.techState);
+                    }
+                    for (const techId of completed) {
+                        if (logger) logger(`Research complete: ${techId}!`);
+                    }
+                }
+            }
+        }
+
+        // AI factions research from the shared tech tree.
+        if (gameState.aiTechStates) {
+            for (const ai of aiFactions) {
+                if (gameState.eliminated && gameState.eliminated.has(ai)) continue;
+                const aiTs = gameState.aiTechStates[ai];
+                if (!aiTs) continue;
+                if (!aiTs.current) {
+                    const def = (gameState.factionDefs && gameState.factionDefs[ai]) || null;
+                    const personality = (def && def.aiPersonality) || 'BALANCED';
+                    autoSelectResearch(aiTs, personality);
+                }
+                const researchPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
+                // AI research bonus: AI factions get +2 flat research per turn
+                // on top of their university-based research. This ensures AI
+                // tech progresses even when they have few universities, matching
+                // the player's tendency to heavily invest in science.
+                const aiResearchBonus = 2;
+                const totalResearch = researchPts + aiResearchBonus;
+                if (totalResearch > 0) {
+                    const completed = addResearch(aiTs, totalResearch);
+                    if (completed && completed.length) {
+                        for (const lord of gameState.lords || []) {
+                            if (lord.owner === ai && lord.isKing) applyKingTechBonuses(lord, aiTs);
+                        }
+                        if (logger) {
+                            const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;
+                            for (const techId of completed) {
+                                const tech = TECHS[techId];
+                                logger(`${fname} researched ${tech ? tech.name : techId}!`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Diplomacy bookkeeping: tick peace/alliance/war counters (which drift
         // relationship scores), then pay out trade-pact bonuses.
@@ -65,6 +205,27 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             }
             const tradeMsgs = processTradePacts(gameState.diplomacy, gameState.resources, harborFactions);
             if (logger) tradeMsgs.forEach(m => logger(m));
+            // War weariness: accumulate while at war, decay at peace. Drives
+            // peace-demand acceptance (weary factions concede more readily).
+            processWarWeariness(gameState.diplomacy, factions);
+            // Tribute payouts from accepted peace demands: the `from` faction
+            // pays `to` perTurn gold each turn until turnsLeft hits 0.
+            const rels = gameState.diplomacy.relations || {};
+            for (const rel of Object.values(rels)) {
+                if (!rel.tribute || rel.tribute.turnsLeft <= 0) continue;
+                const fromRes = gameState.resources[rel.tribute.from];
+                const toRes = gameState.resources[rel.tribute.to];
+                if (fromRes && toRes) {
+                    const paid = Math.min(rel.tribute.perTurn, fromRes.gold || 0);
+                    fromRes.gold = Math.max(0, (fromRes.gold || 0) - paid);
+                    toRes.gold = (toRes.gold || 0) + paid;
+                }
+                rel.tribute.turnsLeft -= 1;
+                if (rel.tribute.turnsLeft <= 0) {
+                    if (logger) logger(`Tribute from ${rel.tribute.from} to ${rel.tribute.to} has ended.`);
+                    rel.tribute = null;
+                }
+            }
         }
         // Reputation drift: a faction at peace with everyone slowly rebuilds
         // trust (+1/turn, capped 100). War stops the recovery; treaty breaks and
@@ -98,6 +259,59 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                 const existing = getRelation(gameState.diplomacy, t.owner, u.owner).grievances || 0;
                 const amount = grievanceLevel(existing) === 'hostile' || grievanceLevel(existing) === 'furious' ? 4 : 2;
                 addGrievance(gameState.diplomacy, t.owner, u.owner, amount, 'troops in territory');
+            }
+        }
+
+        // Victory threat: factions that are leading in victory progress generate
+        // grievances from all other living factions. This models the Civ6
+        // "backlash against the leader" mechanic — the world resents whoever
+        // is closest to winning.
+        if (gameState.diplomacy && VICTORY_THREAT_GRIPERANCE_PER_TURN > 0) {
+            const rankings = calculateSimpleRankings(gameState, gameState.tiles);
+            if (rankings) {
+                const { leader, leaderScore, secondScore } = rankings;
+                if (leader && leaderScore > secondScore * 1.3) {
+                    // Leader is significantly ahead — other factions get grievances
+                    for (const f of Object.keys(rankings.factions || {})) {
+                        if (f === leader) continue;
+                        if (gameState.eliminated && gameState.eliminated.has(f)) continue;
+                        const rel = getRelation(gameState.diplomacy, f, leader);
+                        if (rel.state === 'war') continue;
+                        addGrievance(gameState.diplomacy, f, leader, VICTORY_THREAT_GRIPERANCE_PER_TURN, 'victory threat');
+                    }
+                }
+            }
+        }
+
+        // Border buildup: if a faction stacks military units adjacent to another
+        // faction's cities in peacetime, this generates grievances. More intense
+        // than the existing "troops in territory" check — targets specific
+        // border concentrations.
+        if (gameState.diplomacy && BORDER_BUILDUP_GRIPERANCE_PER_TURN > 0) {
+            const unitCounts = new Map(); // key: "owner:cityKey" -> count
+            for (const u of gameState.units.values()) {
+                if (gameState.eliminated && gameState.eliminated.has(u.owner)) continue;
+                if (!UNIT_TYPE[u.type] || UNIT_TYPE[u.type].isNaval) continue; // only land units
+                // Check if within 3 tiles of any enemy/neutral city
+                for (const t of gameState.tiles.values()) {
+                    if (t.terrain !== 'CITY' || !t.owner || t.owner === u.owner) continue;
+                    const d = Math.abs(u.x - t.x) + Math.abs(u.z - t.z);
+                    if (d <= 3) {
+                        const key = `${u.owner}:${t.x},${t.z}`;
+                        unitCounts.set(key, (unitCounts.get(key) || 0) + 1);
+                    }
+                }
+            }
+            for (const [key, count] of unitCounts) {
+                if (count < 3) continue; // only meaningful buildups (3+ units)
+                const [owner, cityKey] = key.split(':');
+                const [cx, cz] = cityKey.split(',').map(Number);
+                const cityTile = gameState.tiles.get(`${cx},${cz}`);
+                if (!cityTile || !cityTile.owner) continue;
+                const rel = getRelation(gameState.diplomacy, cityTile.owner, owner);
+                if (rel.state === 'war') continue;
+                const amount = Math.min(6, BORDER_BUILDUP_GRIPERANCE_PER_TURN + Math.floor((count - 3) / 2));
+                addGrievance(gameState.diplomacy, cityTile.owner, owner, amount, 'border buildup');
             }
         }
 
@@ -158,15 +372,37 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         }
         // Reset lord per-turn flags (lords/kings can move and attack once per
         // turn, like units) and slowly regenerate their HP between battles.
-        // Kings resting inside one of their own cities recover faster.
+        // Kings recover ONLY inside one of their own cities (+5/turn) — no
+        // field recovery, so a campaigning king must come home to heal. No
+        // lord recovers inside a breached or besieged city (walls down or an
+        // enemy unit at the gates): no safe rest while under assault.
         if (gameState.lords) {
             for (const lord of gameState.lords) {
                 lord.hasMovedThisTurn = false;
                 lord.hasAttackedThisTurn = false;
-                if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp < lord.maxHp) {
+                // A dead lord (hp <= 0) does not regenerate — regen is for the
+                // living; the dead are swept by Game._sweepDeadCombatants.
+                if (typeof lord.maxHp === 'number' && typeof lord.hp === 'number' && lord.hp > 0 && lord.hp < lord.maxHp) {
                     const tile = gameState.tiles && gameState.tiles.get(`${lord.x},${lord.z}`);
                     const inOwnCity = tile && tile.terrain === 'CITY' && tile.owner === lord.owner;
-                    const heal = (lord.isKing && inOwnCity) ? 5 : 2;
+                    // Breached (fort 0) or besieged (enemy unit orthogonally
+                    // adjacent) city: no healing — kings can't camp unbreakably
+                    // inside a city under assault. However, a king's OWN city
+                    // always counts as safe for recovery even if the walls are
+                    // down (the city was captured and is under friendly control).
+                    let cityUnderAssault = false;
+                    if (tile && tile.terrain === 'CITY') {
+                        if (tile.owner !== lord.owner || !lord.isKing) {
+                            cityUnderAssault = (tile.fortification || 0) <= 0;
+                        }
+                        if (!cityUnderAssault && gameState.units) {
+                            for (const u of gameState.units.values()) {
+                                if (u.owner === lord.owner) continue;
+                                if (Math.abs(u.x - tile.x) + Math.abs(u.z - tile.z) === 1) { cityUnderAssault = true; break; }
+                            }
+                        }
+                    }
+                    const heal = cityUnderAssault ? 0 : (lord.isKing ? (inOwnCity ? 5 : 0) : 2);
                     lord.hp = Math.min(lord.maxHp, lord.hp + heal);
                 }
             }
@@ -212,7 +448,13 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Clear selection
         gameState.selectedUnit = null;
+        gameState.selectedLord = null;
         gameState.moveTargets.clear();
+        gameState.attackTargets = [];
+        gameState.chargeTargets = [];
+        gameState.bridgeTargets = [];
+        gameState.siegeTowerTarget = null;
+        gameState.chariotChargeTargets = [];
 
         if (renderAll) renderAll();
         if (typeof onAutosave === 'function') onAutosave();

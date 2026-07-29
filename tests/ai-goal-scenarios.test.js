@@ -1,0 +1,650 @@
+/**
+ * Phase 4 scenario tests — AI goals/army behavior fixes:
+ *
+ *  1. Breached-city detachment: a breached, empty enemy city a few tiles from
+ *     an army group gets ONE unit detached to claim it (captured within a few
+ *     turns); no detachment when the AI can't afford the capture cost.
+ *  2. Attack-king gating: a guarded or full-health enemy king with no local
+ *     power disadvantage no longer creates/persists the attack-king goal, so
+ *     conquest keeps priority; a genuinely vulnerable king still does.
+ *  3. King retreat mobility weighting: the king retreats earlier from mobile
+ *     threats (cavalry) than from slow melee at the same distance.
+ *  4. Naval conquest vs expand-islands: when an empty foreign landmass exists
+ *     and conquest targets are naval-only, expand-islands outscores conquest;
+ *     without an empty landmass, naval conquest remains.
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// three.js is not installed in the test environment — stub the renderer module
+// so game.js can be imported (same pattern as city-siege-scenarios.test.js).
+vi.mock('../src/renderer.js', () => ({ GameRenderer: class {} }));
+
+import { Game } from '../src/game.js';
+import { computeAIActions } from '../src/ai.js';
+import { createAIState, selectGoals } from '../src/ai_goals.js';
+import { createTechState } from '../src/tech.js';
+import { FACTION_DEFS } from '../src/faction.js';
+import { setGridDimensions, DIPLOMACY_STATES } from '../src/config.js';
+import { makeTile, makeUnit, makeTileMap } from './helpers.js';
+
+// sound.js looks up window.AudioContext when playing SFX; a bare global makes
+// every SFX a no-op under node.
+if (typeof globalThis.window === 'undefined') globalThis.window = {};
+
+beforeEach(() => { setGridDimensions(40, 40); });
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function warDiplo(owner, enemy) {
+    const rel = {
+        state: DIPLOMACY_STATES.WAR, turnsAllied: 0, turnsAtWar: 3,
+        relationship: -50, warsDeclared: 1, peaceTreaties: 0,
+        tradesMade: 0, brokenTreaties: 0, grievances: 0,
+        grievanceLog: [], expiresOn: null, formalWar: true,
+        lastWarDeclaredTurn: 1, grudges: {}, trust: 0.1,
+    };
+    return {
+        relations: { [`${owner}:${enemy}`]: { ...rel }, [`${enemy}:${owner}`]: { ...rel } },
+        pendingOffers: [], diplomaticEvents: [],
+    };
+}
+
+function runAI(input) {
+    return computeAIActions(
+        input.units, input.tiles, input.resources, input.owner,
+        input.buildings, input.influence, input.factionDef,
+        input.diploState, input.lords, input.tempBonuses,
+        input.structures, input.buildingState, input.aiState,
+        input.aiTechStates, input.victoryState, input.currentTurn,
+    );
+}
+
+/** A rectangular plains grid (x-outer insertion order) with extra tiles
+ *  overlaid on top. */
+function plainsGrid(x0, x1, z0, z1, extra = []) {
+    const arr = [];
+    for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) arr.push([x, z, 'PLAINS', null]);
+    const tiles = makeTileMap(arr);
+    for (const [x, z, terrain, owner, ov] of extra) {
+        tiles.set(`${x},${z}`, makeTile(x, z, terrain, owner, ov || {}));
+    }
+    return tiles;
+}
+
+function baseAIInput(tiles, units, overrides = {}) {
+    return {
+        tiles, units,
+        resources: overrides.resources || { gold: 200, food: 100, wood: 50, iron: 30, production: 50 },
+        owner: 'ai1',
+        buildings: new Map(),
+        influence: null,
+        factionDef: FACTION_DEFS.crimson,
+        diploState: warDiplo('ai1', 'enemy'),
+        lords: overrides.lords || [],
+        tempBonuses: {}, structures: new Map(), buildingState: new Map(),
+        aiState: overrides.aiState || createAIState(),
+        aiTechStates: { ai1: createTechState() },
+        victoryState: { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+        currentTurn: overrides.currentTurn || 5,
+    };
+}
+
+const manhattan = (ax, az, bx, bz) => Math.abs(ax - bx) + Math.abs(az - bz);
+
+// ===========================================================================
+// 1. Breached-city detachment
+// ===========================================================================
+describe('breached-city detachment', () => {
+    // AI army group at (5..6, 5..6); the shared strategic target is the
+    // fortified enemy city at (2,7); a breached, empty enemy city sits at
+    // (9,5), 3-4 tiles from the group.
+    function breachSetup(overrides = {}) {
+        const tiles = plainsGrid(0, 14, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [2, 7, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [9, 5, 'CITY', 'enemy', { cityName: 'Breached', cityLevel: 1, fortification: 0, fortMax: 3, breachedTurn: 1 }],
+        ]);
+        const units = new Map();
+        for (const [i, [x, z]] of [[5, 5], [6, 5], [6, 6]].entries()) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        return baseAIInput(tiles, units, overrides);
+    }
+
+    it('detaches a unit that reaches and captures the breached city within a few turns', () => {
+        const input = breachSetup();
+        const allActions = [];
+        let movedCloserTurn1 = false;
+        for (let t = 0; t < 6; t++) {
+            const actions = runAI(input);
+            allActions.push(actions);
+            for (const a of actions) {
+                if (a.type !== 'move') continue;
+                const u = [...input.units.values()].find(x => x.id === a.unitId);
+                // Turn 1: some unit moves closer to the breached city (the
+                // detachment), even though the group's strategic target is
+                // (2,7) in the opposite direction.
+                if (t === 0 && manhattan(a.tx, a.tz, 9, 5) < manhattan(u.x, u.z, 9, 5)) {
+                    movedCloserTurn1 = true;
+                }
+                u.x = a.tx; u.z = a.tz;
+            }
+            for (const u of input.units.values()) {
+                u.hasMovedThisTurn = false;
+                u.hasAttackedThisTurn = false;
+            }
+            input.currentTurn++;
+        }
+        expect(movedCloserTurn1).toBe(true);
+
+        // Within 6 turns the breached city is captured (capture action emitted).
+        const captured = allActions.some(actions =>
+            actions.some(a => a.type === 'capture' && a.tileKey === '9,5'));
+        expect(captured).toBe(true);
+    });
+
+    it('does NOT detach when the AI lacks the capture cost (gold < 20)', () => {
+        const input = breachSetup({
+            // Low everything: gold below CAPTURE_COST and no surplus stock the
+            // market block could sell to raise it.
+            resources: { gold: 10, food: 10, wood: 10, iron: 0, production: 20 },
+        });
+        const allActions = [];
+        for (let t = 0; t < 6; t++) {
+            const actions = runAI(input);
+            allActions.push(actions);
+            for (const a of actions) {
+                if (a.type !== 'move') continue;
+                const u = [...input.units.values()].find(x => x.id === a.unitId);
+                u.x = a.tx; u.z = a.tz;
+            }
+            for (const u of input.units.values()) {
+                u.hasMovedThisTurn = false;
+                u.hasAttackedThisTurn = false;
+            }
+            // No unit was sent to the breached city: nobody ends the turn
+            // within capture range of it.
+            for (const u of input.units.values()) {
+                const cheb = Math.max(Math.abs(u.x - 9), Math.abs(u.z - 5));
+                expect(cheb).toBeGreaterThan(2);
+            }
+            input.currentTurn++;
+        }
+        const captured = allActions.some(actions =>
+            actions.some(a => a.type === 'capture' && a.tileKey === '9,5'));
+        expect(captured).toBe(false);
+    });
+});
+
+// ===========================================================================
+// 2. Attack-king vulnerability gating
+// ===========================================================================
+function goalsBaseInput(overrides = {}) {
+    return {
+        aiState: createAIState(),
+        turn: 1,
+        factionDef: { id: 'crimson', aiPersonality: 'AGGRESSIVE' },
+        enemies: ['azure'],
+        enemyCities: [],
+        ownCities: [{ x: 0, z: 0 }],
+        homeAnchor: { x: 0, z: 0 },
+        activeObjectives: { defensive: false },
+        threatenedOwnCity: null,
+        myCityCount: 3,
+        settlerTarget: 8,
+        bestFoundSpotKey: null, // suppress settle so attack-king can be top
+        enemyKings: [],
+        ...overrides,
+    };
+}
+
+describe('attack-king vulnerability gating', () => {
+    it('is NOT created for a full-health unguarded king with no local power disadvantage', () => {
+        const goals = selectGoals(goalsBaseInput({
+            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 20, maxHp: 20, guarded: false, vulnerable: false }],
+        }));
+        expect(goals.some(g => g.kind === 'attack-king')).toBe(false);
+    });
+
+    it('is dropped inside the stability lock when the king turtles up (goalValid re-check)', () => {
+        const aiState = createAIState();
+        let input = goalsBaseInput({
+            aiState, turn: 1,
+            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 20, maxHp: 20, guarded: false, vulnerable: true }],
+        });
+        const g1 = selectGoals(input);
+        expect(g1[0].kind).toBe('attack-king'); // top goal while vulnerable
+        // King gets bodyguards / heals up within the lock window.
+        input = goalsBaseInput({
+            aiState, turn: 2,
+            enemyKings: [{ id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 20, maxHp: 20, guarded: true, vulnerable: false }],
+        });
+        const g2 = selectGoals(input);
+        expect(g2.some(g => g.kind === 'attack-king')).toBe(false);
+    });
+
+    it('still works for a genuinely vulnerable king (unguarded + low HP) — regression', () => {
+        const aiState = createAIState();
+        const king = { id: 'k1', owner: 'azure', isKing: true, x: 2, z: 0, hp: 5, maxHp: 20, guarded: false, vulnerable: true };
+        let input = goalsBaseInput({ aiState, turn: 1, enemyKings: [king] });
+        const g1 = selectGoals(input);
+        expect(g1[0].kind).toBe('attack-king');
+        // Persists inside the lock window while the king stays vulnerable.
+        input = goalsBaseInput({ aiState, turn: 2, enemyKings: [king] });
+        const g2 = selectGoals(input);
+        expect(g2[0].kind).toBe('attack-king');
+    });
+
+    // Full-pipeline: conquest group with a seeded attack-king top goal.
+    function kingHuntSetup(kingHp, kingMaxHp) {
+        const tiles = plainsGrid(0, 16, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        for (const [x, z] of [[6, 5], [6, 6], [7, 5]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        const enemyKing = {
+            id: 'ek1', owner: 'enemy', isKing: true, x: 12, z: 5,
+            name: 'Enemy King', xp: 0, level: 1,
+            stats: { command: 2, combat: 2, governance: 1 },
+            abilities: [], army: [], hp: kingHp, maxHp: kingMaxHp,
+            hasMovedThisTurn: false, hasAttackedThisTurn: false,
+        };
+        const aiState = createAIState();
+        aiState.goals = [{
+            kind: 'attack-king', priority: 1, horizon: 'immediate',
+            targetTileKey: '12,5', targetFaction: 'enemy',
+            meta: { kingId: 'ek1' }, plan: null, stabilityTurns: 3, born: 1,
+        }];
+        aiState.planLockUntil = 999;
+        aiState.lastPlanTurn = 1;
+        return baseAIInput(tiles, units, { aiState, lords: [enemyKing] });
+    }
+
+    it('conquest group beelines to a vulnerable enemy king (attack-king top goal)', () => {
+        const input = kingHuntSetup(5, 20); // wounded + unguarded => vulnerable
+        const actions = runAI(input);
+        expect(input.aiState.goals[0].kind).toBe('attack-king'); // goal kept
+        const startPos = new Map([...input.units.values()].map(u => [u.id, [u.x, u.z]]));
+        const moves = actions.filter(a => a.type === 'move');
+        expect(moves.length).toBeGreaterThan(0);
+        // At least one unit steps toward the king at (12,5).
+        const toward = moves.some(a => {
+            const [sx, sz] = startPos.get(a.unitId);
+            return manhattan(a.tx, a.tz, 12, 5) < manhattan(sx, sz, 12, 5);
+        });
+        expect(toward).toBe(true);
+    });
+
+    it('non-vulnerable enemy king: attack-king is replanned away, no beeline', () => {
+        const input = kingHuntSetup(20, 20); // full HP, unguarded, no one nearby
+        const actions = runAI(input);
+        // The stale seeded goal fails the vulnerability re-check and is dropped.
+        expect(input.aiState.goals.some(g => g.kind === 'attack-king')).toBe(false);
+        const startPos = new Map([...input.units.values()].map(u => [u.id, [u.x, u.z]]));
+        const moves = actions.filter(a => a.type === 'move');
+        // No unit moves toward the king's position.
+        const toward = moves.some(a => {
+            const [sx, sz] = startPos.get(a.unitId);
+            return manhattan(a.tx, a.tz, 12, 5) < manhattan(sx, sz, 12, 5);
+        });
+        expect(toward).toBe(false);
+    });
+});
+
+// ===========================================================================
+// 3. King retreat mobility weighting (_aiMoveKing harness)
+// ===========================================================================
+function makeGame(state) {
+    const g = Object.create(Game.prototype);
+    g.gameState = state;
+    g.tiles = state.tiles;
+    g.factionColors = state.factionColors;
+    g.factionDefs = state.factionDefs || {};
+    g.spectateMode = false;
+    g.hooks = {};
+    const noop = () => {};
+    g.renderer = new Proxy({}, { get: () => noop });
+    g.ui = new Proxy({}, { get: () => noop });
+    g.logs = [];
+    g.log = (m) => g.logs.push(m);
+    g.checkVictory = () => {};
+    g.updateFog = () => {};
+    return g;
+}
+
+function kingRetreatSetup(foeType) {
+    const tiles = plainsGrid(0, 20, 0, 20, [
+        [10, 7, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 5, fortMax: 5 }],
+    ]);
+    const units = new Map();
+    // A friendly guard so the king's side isn't empty (keeps the raw
+    // power-ratio check from firing in both cases).
+    const guard = makeUnit('INFANTRY', 'ai1', 10, 9, { factionId: 'crimson' });
+    units.set(guard.id, guard);
+    // The threat: distance 3 (Chebyshev) from the king at (10,10).
+    const foe = makeUnit(foeType, 'enemy', 13, 10, { factionId: 'azure' });
+    units.set(foe.id, foe);
+    const king = {
+        id: 'king-ai1', owner: 'ai1', isKing: true, x: 10, z: 10,
+        name: 'King', xp: 0, level: 1,
+        stats: { command: 2, combat: 2, governance: 1 },
+        abilities: [], army: [],
+        hp: 31, maxHp: 50, // 62% — between the two mobility-weighted thresholds
+        hasMovedThisTurn: false, hasAttackedThisTurn: false,
+    };
+    const state = {
+        turn: 5,
+        tiles, units,
+        lords: [king],
+        buildings: new Map(), buildingState: new Map(), structures: new Map(),
+        aiState: null,
+        factionColors: { ai1: { tile: 0xb33333, unit: 0xff5544, name: 'Crimson' } },
+        factionDefs: {},
+    };
+    return { state, king };
+}
+
+describe('king retreat mobility weighting', () => {
+    const atWarFn = (o) => o === 'enemy';
+
+    it('slow melee (moveRange 2) at distance 3 does NOT trigger a retreat', () => {
+        const { state, king } = kingRetreatSetup('INFANTRY'); // reach 2+1 = 3
+        const g = makeGame(state);
+        g._aiMoveKing(king, 'ai1', atWarFn, { gold: 100 });
+        expect(king.x).toBe(10);
+        expect(king.z).toBe(10); // held position
+    });
+
+    it('cavalry (moveRange 3) at the same distance DOES trigger a retreat', () => {
+        const { state, king } = kingRetreatSetup('CAVALRY'); // reach 3+1 = 4
+        const g = makeGame(state);
+        const chebBefore = Math.max(Math.abs(king.x - 10), Math.abs(king.z - 7));
+        g._aiMoveKing(king, 'ai1', atWarFn, { gold: 100 });
+        const chebAfter = Math.max(Math.abs(king.x - 10), Math.abs(king.z - 7));
+        expect(king.x !== 10 || king.z !== 10).toBe(true); // moved
+        expect(chebAfter).toBeLessThan(chebBefore); // toward home city
+    });
+});
+
+// ===========================================================================
+// 4. Naval conquest vs expand-islands
+// ===========================================================================
+describe('expand-islands vs naval-only conquest', () => {
+    // Own city on the left landmass; target city on the right landmass across
+    // a full water band => every conquest target is naval-only.
+    function twoLandmassTiles(targetOwner, targetOv = {}) {
+        const arr = [];
+        for (let z = 0; z <= 12; z++) arr.push([5, z, 'WATER', null]); // water band
+        const tiles = makeTileMap(arr);
+        tiles.set('2,2', makeTile(2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }));
+        tiles.set('2,3', makeTile(2, 3, 'PLAINS', 'ai1'));
+        tiles.set('3,2', makeTile(3, 2, 'PLAINS', 'ai1'));
+        tiles.set('10,2', makeTile(10, 2, 'CITY', targetOwner, { cityName: 'Overseas', cityLevel: 1, fortification: 0, fortMax: 3, ...targetOv }));
+        tiles.set('10,3', makeTile(10, 3, 'PLAINS', null));
+        tiles.set('8,8', makeTile(8, 8, 'PLAINS', null));
+        return tiles;
+    }
+
+    function navalInput(tiles, enemyCities, overrides = {}) {
+        return goalsBaseInput({
+            turn: 40, // mid game
+            enemies: [],
+            enemyCities,
+            ownCities: [{ x: 2, z: 2 }],
+            homeAnchor: { x: 2, z: 2 },
+            tiles, myUnits: [],
+            foreignShoreKey: '8,8',
+            ...overrides,
+        });
+    }
+
+    it('empty foreign landmass + naval-only targets => expand-islands outscores conquest', () => {
+        const tiles = twoLandmassTiles(null); // neutral city across the water
+        const goals = selectGoals(navalInput(tiles, [{ x: 10, z: 2, owner: null, neutral: true }], {
+            needsNavalExpansion: true, foreignMassWithoutCity: true,
+        }));
+        expect(goals.some(g => g.kind === 'conquest')).toBe(true);
+        expect(goals[0].kind).toBe('expand-islands');
+    });
+
+    it('no empty foreign landmass => naval conquest remains the top goal', () => {
+        const tiles = twoLandmassTiles(null);
+        const goals = selectGoals(navalInput(tiles, [{ x: 10, z: 2, owner: null, neutral: true }], {
+            needsNavalExpansion: false, foreignMassWithoutCity: false,
+        }));
+        expect(goals[0].kind).toBe('conquest');
+        expect(goals[0].meta.requiresNaval).toBe(true);
+    });
+});
+
+// ===========================================================================
+// 5. Army-group coverage & persisted summary (Part 1)
+// ===========================================================================
+describe('army-group coverage and summary', () => {
+    function groupSetup() {
+        const tiles = plainsGrid(0, 14, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [2, 7, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 3, fortMax: 3 }],
+        ]);
+        const units = new Map();
+        const defs = [['INFANTRY', 5, 5], ['INFANTRY', 6, 5], ['CAVALRY', 6, 6]];
+        for (const [type, x, z] of defs) {
+            const u = makeUnit(type, 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Non-military units must never be grouped.
+        const worker = makeUnit('WORKER', 'ai1', 3, 3, { factionId: 'crimson' });
+        units.set(worker.id, worker);
+        const settler = makeUnit('SETTLER', 'ai1', 4, 3, { factionId: 'crimson' });
+        units.set(settler.id, settler);
+        return baseAIInput(tiles, units, { resources: { gold: 0, food: 100, wood: 50, iron: 30, production: 50 } });
+    }
+
+    it('persists a summary covering ALL military units with composition + leader + power', () => {
+        const input = groupSetup();
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(Array.isArray(summary)).toBe(true);
+        expect(summary.length).toBeGreaterThan(0);
+        // All 3 military units grouped; worker/settler excluded.
+        expect(summary.reduce((s, g) => s + g.size, 0)).toBe(3);
+        for (const g of summary) {
+            const compTotal = Object.values(g.composition).reduce((s, n) => s + n, 0);
+            expect(compTotal).toBe(g.size);
+            expect(typeof g.stance).toBe('string');
+            expect(g.power).toBeGreaterThan(0);
+            expect(g).toHaveProperty('lord');
+            expect(g).toHaveProperty('objective');
+        }
+        // Composition uses raw unit types with correct counts.
+        const merged = {};
+        for (const g of summary) for (const [t, n] of Object.entries(g.composition)) {
+            merged[t] = (merged[t] || 0) + n;
+        }
+        expect(merged).toEqual({ INFANTRY: 2, CAVALRY: 1 });
+    });
+
+    it('units that already acted are still group members (coverage regression)', () => {
+        // Breach detachment acts on a unit during 5d; before this change acted
+        // units were excluded from the pool and invisible to the panel.
+        const input = groupSetup();
+        const u = [...input.units.values()].find(x => x.type === 'INFANTRY');
+        u.hasMovedThisTurn = true; // simulate having acted earlier this turn
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(summary.reduce((s, g) => s + g.size, 0)).toBe(3);
+    });
+
+    it('breach-detachment groups are persisted (summary built after 5d)', () => {
+        const tiles = plainsGrid(0, 14, 0, 10, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [2, 7, 'CITY', 'enemy', { cityName: 'Target', cityLevel: 2, fortification: 3, fortMax: 3 }],
+            [9, 5, 'CITY', 'enemy', { cityName: 'Breached', cityLevel: 1, fortification: 0, fortMax: 3, breachedTurn: 1 }],
+        ]);
+        const units = new Map();
+        for (const [x, z] of [[5, 5], [6, 5], [6, 6]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        const input = baseAIInput(tiles, units, {});
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        expect(summary.some(g => g.id && g.id.startsWith('detach:'))).toBe(true);
+    });
+});
+
+
+// ===========================================================================
+// 6. Develop-army goal execution
+// ===========================================================================
+describe('develop-army execution', () => {
+    // Locked develop-army goal: at war, enemy field army at parity, no weak
+    // city (the enemy's only city is heavily fortified).
+    function developArmyInput(overrides = {}) {
+        const tiles = plainsGrid(0, 20, 0, 20, [
+            [5, 5, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 5, fortification: 3, fortMax: 3 }],
+            [18, 18, 'CITY', 'enemy', { cityName: 'Fort', cityLevel: 3, fortification: 5, fortMax: 5 }],
+        ]);
+        const units = new Map();
+        for (const [x, z] of [[6, 5], [7, 5], [6, 6]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: overrides.factionId || 'crimson' });
+            units.set(u.id, u);
+        }
+        // Enemy field army at parity (4 vs 3 infantry).
+        for (const [x, z] of [[15, 15], [16, 15], [15, 16], [16, 16]]) {
+            const u = makeUnit('INFANTRY', 'enemy', x, z, { factionId: 'azure' });
+            units.set(u.id, u);
+        }
+        const aiState = createAIState();
+        aiState.goals = [{
+            kind: 'develop-army', priority: 1, horizon: 'medium',
+            targetTileKey: null, targetFaction: null, meta: {}, plan: null,
+            stabilityTurns: 3, born: 0,
+        }];
+        aiState.planLockUntil = 100; // keep the seeded goal all turn
+        const input = baseAIInput(tiles, units, {
+            aiState,
+            resources: { gold: 800, food: 400, wood: 300, iron: 200, production: 500 },
+            ...overrides.ai,
+        });
+        input.buildings = overrides.buildings || new Map([['5,5', ['BARRACKS', 'SIEGE_WORKSHOP']]]);
+        if (overrides.factionDef) input.factionDef = overrides.factionDef;
+        if (overrides.aiTechStates) input.aiTechStates = overrides.aiTechStates;
+        return input;
+    }
+
+    it('trains siege and leans composition into siege, not infantry spam', () => {
+        const input = developArmyInput();
+        const actions = runAI(input);
+        const trains = actions.filter(a => a.type === 'train').map(a => a.unitType);
+        expect(trains).toContain('SIEGE');
+        // The develop-army goal force-enables the siege objective for training
+        // (same mechanism as conquest), so siege is the top composition target.
+        const comp = input.aiState.targetComposition;
+        expect(comp.siege).toBeGreaterThan(0.3);
+        expect(comp.siege).toBeGreaterThan(comp.melee);
+    });
+
+    it('builds military infrastructure ahead of economy buildings', () => {
+        // Golden Horde: no roster siege — a develop-army goal counts like
+        // wantsConquest, so the Siege Workshop is built FIRST (before
+        // Barracks/MARKET/UNIVERSITY), not after the economy buildings.
+        const ts = createTechState();
+        ts.researched.add('SIEGE_CRAFT');
+        const input = developArmyInput({
+            factionId: 'golden',
+            factionDef: FACTION_DEFS.golden,
+            buildings: new Map(),
+            aiTechStates: { ai1: ts },
+        });
+        const actions = runAI(input);
+        const builds = actions.filter(a => a.type === 'build').map(a => a.buildingType);
+        expect(builds.length).toBeGreaterThan(0);
+        expect(builds[0]).toBe('SIEGE_WORKSHOP');
+    });
+});
+
+
+// ===========================================================================
+// 7. Decisive-battle goal execution
+// ===========================================================================
+describe('decisive-battle execution', () => {
+    // Locked decisive-battle goal with TWO enemy army clusters. Two own
+    // army groups (the strongest of four) are both nearer to cluster 1, so
+    // without cluster claiming BOTH would pick cluster 1 — the claiming
+    // mechanism must send the second group to cluster 2 instead.
+    function decisiveBattleInput() {
+        // Plains with a water barrier at x=3-4 that separates the home city
+        // (2,2) from the rest so the theater system doesn't treat enemy units
+        // on the same landmass as a home invasion.
+        const tiles = plainsGrid(0, 20, 0, 20, [
+            [2, 2, 'CITY', 'ai1', { cityName: 'Home', cityLevel: 5, fortification: 3, fortMax: 3 }],
+            ...Array.from({ length: 21 }, (_, z) => [4, z, 'WATER', null]),
+        ]);
+        const units = new Map();
+        // Group A (processed first): 2 cataphracts near (6,10).
+        for (const [x, z] of [[5, 10], [6, 10]]) {
+            const u = makeUnit('CATAPHRACT', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Group B: 2 cataphracts near (14,10) — also nearer to cluster 1
+        // (dist 7) than to cluster 2 (dist 8).
+        for (const [x, z] of [[13, 10], [14, 10]]) {
+            const u = makeUnit('CATAPHRACT', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Two weaker filler groups so conquestCount = ceil(4/2) = 2 and only
+        // A + B are conquest groups.
+        for (const [x, z] of [[5, 18], [15, 18]]) {
+            const u = makeUnit('INFANTRY', 'ai1', x, z, { factionId: 'crimson' });
+            units.set(u.id, u);
+        }
+        // Enemy cluster 1: 2 infantry at (8,10)-(8,11) -> centroid (8,11).
+        // Enemy cluster 2: 2 infantry at (19,12)-(19,13) -> centroid (19,13)
+        // (far enough from the filler groups that they aren't "in trouble"
+        // and don't pull a conquest group away via reinforcement).
+        for (const [x, z] of [[8, 10], [8, 11], [19, 12], [19, 13]]) {
+            const u = makeUnit('INFANTRY', 'enemy', x, z, { factionId: 'azure' });
+            units.set(u.id, u);
+        }
+        const aiState = createAIState();
+        aiState.goals = [{
+            kind: 'decisive-battle', priority: 1, horizon: 'short',
+            targetTileKey: '8,11', targetFaction: null,
+            meta: { clusters: [{ x: 8, z: 11, size: 2 }, { x: 19, z: 13, size: 2 }] },
+            plan: null, stabilityTurns: 3, born: 0,
+        }];
+        aiState.planLockUntil = 100; // keep the seeded goal all turn
+        const input = baseAIInput(tiles, units, { aiState });
+        return input;
+    }
+
+    it('distributes two conquest groups across two enemy army clusters', () => {
+        const input = decisiveBattleInput();
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        const hunting = summary.filter(g => (g.composition.CATAPHRACT || 0) > 0);
+        expect(hunting.length).toBe(2);
+        const objectives = hunting.map(g => g.objective).sort();
+        expect(objectives).toEqual(['19,13', '8,11']);
+    });
+
+    it('falls back to city targeting when no clusters remain', () => {
+        const input = decisiveBattleInput();
+        input.aiState.goals[0].meta.clusters = [];
+        // Give the enemy a reachable city so the fallback has a target.
+        input.tiles.set('18,18', makeTile(18, 18, 'CITY', 'enemy',
+            { cityName: 'Camp', cityLevel: 1, fortification: 0, fortMax: 3 }));
+        runAI(input);
+        const summary = input.aiState.armyGroups;
+        const hunting = summary.filter(g => (g.composition.CATAPHRACT || 0) > 0);
+        expect(hunting.length).toBe(2);
+        // No clusters: both groups target the enemy city instead of an army.
+        for (const g of hunting) expect(g.objective).toBe('18,18');
+    });
+});

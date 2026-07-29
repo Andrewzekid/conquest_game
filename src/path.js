@@ -53,16 +53,18 @@ export function nextStepToward(tiles, units, unit, goal, maxRange = 200, owner =
             const k = key(nx, nz);
             if (visited.has(k)) continue;
             if (!tiles.has(k)) continue;
-            // Terrain passability — except the goal tile itself (we stop
-            // adjacent to an unreachable goal). Naval units sail on water and
-            // rivers; land units need solid ground (rivers need a bridge).
+            // Terrain passability — applies to ALL tiles INCLUDING the goal.
+            // Without this, a land unit with a goal set on a water tile would
+            // "find" the goal and step onto water (the lords-walk-on-water bug).
+            // The unit-block check below still exempts the goal so we can path
+            // adjacent to a unit-occupied goal and stop there.
+            // Naval units sail on water and rivers; land units need solid ground
+            // (rivers need a bridge).
             const t = tiles.get(k);
-            if (k !== goalKey) {
-                if (isNaval(unit)) {
-                    if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') { visited.add(k); continue; }
-                } else {
-                    if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) { visited.add(k); continue; }
-                }
+            if (isNaval(unit)) {
+                if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') { visited.add(k); continue; }
+            } else {
+                if (t.terrain === 'WATER' || (t.terrain === 'RIVER' && !t.bridge)) { visited.add(k); continue; }
             }
             // Don't path through occupied tiles (except the goal tile itself).
             if (blocked.has(k) && k !== goalKey) { visited.add(k); continue; }
@@ -73,11 +75,19 @@ export function nextStepToward(tiles, units, unit, goal, maxRange = 200, owner =
     }
 
     if (!found) {
-        // If the exact goal is blocked/unreachable, aim for the nearest visited
-        // tile adjacent to the goal.
+        // If the exact goal is blocked/unreachable, aim for the nearest
+        // REACHABLE visited tile closest to the goal. Water/unbridged-river
+        // tiles are added to visited during expansion (to avoid revisiting)
+        // but must never be returned as a step — land units cannot walk on
+        // water. This prevents the king (and all lords) water-walking bug.
+        const naval = isNaval(unit);
         let best = null, bestDist = Infinity;
         for (const k of visited) {
             const [x, z] = k.split(',').map(Number);
+            if (!naval) {
+                const tk = tiles.get(k);
+                if (tk && (tk.terrain === 'WATER' || (tk.terrain === 'RIVER' && !tk.bridge))) continue;
+            }
             const d = Math.abs(x - goal.x) + Math.abs(z - goal.z);
             if (d < bestDist && !(x === unit.x && z === unit.z)) { bestDist = d; best = { x, z }; }
         }

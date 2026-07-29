@@ -1,6 +1,10 @@
 /** Unit factory & validation helpers (pure logic) */
 import { UNIT_TYPE, UNIT_COST, CAPTURE_COST, UNIT_XP_PER_KILL, UNIT_XP_PER_LEVEL } from './config.js';
-import { getUnitStatsFor, getPassiveCombat } from './faction.js';
+import { getUnitStatsFor, getPassiveCombat, getFactionDef, getOpenTerrainMoveBonus } from './faction.js';
+
+// "Open" terrain: no forest/mountain/hills cover — flat ground where cavalry
+// and mobile formations ride farther. Used by the Polish open-terrain move bonus.
+const OPEN_TERRAINS = new Set(['PLAINS', 'DESERT', 'TUNDRA']);
 
 let _uid = 0;
 function nextId() { return ++_uid; }
@@ -36,13 +40,27 @@ export function createUnit(type, owner, x, z, opts = {}) {
         hasMovedThisTurn: false,
         hasAttackedThisTurn: false,
         lordId: null,  // lord leading this unit, if any
-        goal: null     // auto-navigation destination {x,z}, or null
+        goal: null,    // auto-navigation destination {x,z}, or null
+        // Faction def id (serializable string) so pure combat code (battle.js)
+        // can read faction passives without a factionDefs map being threaded
+        // through every resolveCombat call site. Backfilled on save load.
+        factionId: def ? def.id : null
     };
 }
 
 /** Award XP to a unit; level up raises HP/ATK/DEF. Returns log messages. */
 export function awardUnitXP(unit, amount = UNIT_XP_PER_KILL) {
     if (!unit) return [];
+    // Sanitize combat fields first: a unit missing hp/maxHp/level/xp (old
+    // saves) turns NaN on the first arithmetic below — and a NaN-hp unit is
+    // unkillable (NaN <= 0 is false).
+    if (typeof unit.xp !== 'number' || !Number.isFinite(unit.xp)) unit.xp = 0;
+    if (typeof unit.level !== 'number' || !Number.isFinite(unit.level)) unit.level = 1;
+    if (typeof unit.maxHp !== 'number' || !Number.isFinite(unit.maxHp)) {
+        const base = UNIT_TYPE[unit.type];
+        unit.maxHp = (base ? base.hp : 10) + (unit.level - 1) * 3;
+    }
+    if (typeof unit.hp !== 'number' || !Number.isFinite(unit.hp)) unit.hp = unit.maxHp;
     unit.xp += amount;
     const messages = [];
     while (unit.xp >= UNIT_XP_PER_LEVEL * unit.level) {
@@ -72,11 +90,11 @@ export function getUnitStats(unit) {
 export function canAfford(type, resources, costOverride = null) {
     const cost = costOverride || UNIT_COST[type];
     if (!cost) return false;
-    return (resources.gold >= (cost.gold || 0)) &&
-           (resources.food >= (cost.food || 0)) &&
-           (resources.wood >= (cost.wood || 0)) &&
-           (resources.iron >= (cost.iron || 0)) &&
-           (resources.production >= (cost.production || 0));
+    return ((resources.gold || 0) >= (cost.gold || 0)) &&
+           ((resources.food || 0) >= (cost.food || 0)) &&
+           ((resources.wood || 0) >= (cost.wood || 0)) &&
+           ((resources.iron || 0) >= (cost.iron || 0)) &&
+           ((resources.production || 0) >= (cost.production || 0));
 }
 
 /** Deduct cost and return remaining resources. */
@@ -118,9 +136,13 @@ export function isEnemyAt(units, x, z, owner) {
 }
 
 /**
- * Get the move range for a unit (from its type).
+ * Get the move range for a unit. Prefers the faction-modded `unit.moveRange`
+ * (baked in at creation — includes faction move bonuses like Golden cavalry +1,
+ * Storm naval +1, Polish cavalry +1) so those bonuses actually take effect;
+ * falls back to the base UNIT_TYPE move range.
  */
 export function getMoveRange(unit) {
+    if (unit && unit.moveRange != null) return unit.moveRange;
     return UNIT_TYPE[unit.type]?.moveRange || 1;
 }
 
@@ -129,7 +151,12 @@ export function getMoveRange(unit) {
  * Returns Set of tile keys.
  */
 export function getReachableTiles(unit, tiles) {
-    const range = getMoveRange(unit);
+    let range = getMoveRange(unit);
+    // Polish Winged Hussars passive: all units gain +1 move on open terrain.
+    const here = tiles && tiles.get(`${unit.x},${unit.z}`);
+    if (here && OPEN_TERRAINS.has(here.terrain)) {
+        range += getOpenTerrainMoveBonus(getFactionDef(unit.factionId));
+    }
     const def = UNIT_TYPE[unit.type];
     const naval = !!(def && def.naval);
     const result = new Set();
@@ -171,4 +198,173 @@ export function getAttackTargets(unit, units) {
         if (dist <= range) targets.push(other);
     }
     return targets;
+}
+
+// === SPECIAL UNIT ABILITY HELPERS ===
+
+/**
+ * Count adjacent friendly MUSKETEER units for volley fire bonus.
+ * MUSKETEER gets +1 attack per adjacent friendly MUSKETEER.
+ */
+export function countAdjacentMusketters(unit, units) {
+    if (!unit || unit.type !== 'MUSKETEER') return 0;
+    let count = 0;
+    for (const other of units.values()) {
+        if (other.owner !== unit.owner) continue;
+        if (other.type !== 'MUSKETEER') continue;
+        if (other.id === unit.id) continue;
+        const dist = Math.abs(other.x - unit.x) + Math.abs(other.z - unit.z);
+        if (dist === 1) count++;
+    }
+    return count;
+}
+
+/**
+ * Check if a MUSKETEER has fired this turn (for slow reload on ARQUEBUSIER).
+ */
+export function hasFiredThisTurn(unit) {
+    return unit && unit.hasAttackedThisTurn;
+}
+
+/**
+ * Count adjacent friendly infantry units for LINE_INFANTRY formation bonus.
+ * LINE_INFANTRY gets +2 defense when 2+ friendly infantry are adjacent.
+ */
+export function countAdjacentInfantry(unit, units) {
+    if (!unit || unit.type !== 'LINE_INFANTRY') return 0;
+    const infantryTypes = new Set(['INFANTRY', 'LINE_INFANTRY', 'RIFLEMAN', 'MUSKETEER']);
+    let count = 0;
+    for (const other of units.values()) {
+        if (other.owner !== unit.owner) continue;
+        if (!infantryTypes.has(other.type)) continue;
+        if (other.id === unit.id) continue;
+        const dist = Math.abs(other.x - unit.x) + Math.abs(other.z - unit.z);
+        if (dist === 1) count++;
+    }
+    return count;
+}
+
+/**
+ * Check if a unit can attack twice this turn (FIELD_GUN rapid fire).
+ */
+export function canRapidFire(unit) {
+    return unit && unit.type === 'FIELD_GUN' && !unit.hasAttackedThisTurn;
+}
+
+/**
+ * Check if a unit must reload after firing (RAILGUN devastating).
+ */
+export function mustReload(unit) {
+    if (!unit || unit.type !== 'RAILGUN') return false;
+    return unit.reloadTurns > 0;
+}
+
+/**
+ * Check if a unit can move and fire same turn (ARMORED_TRAIN mobile).
+ */
+export function canMoveAndFire(unit) {
+    return unit && unit.type === 'ARMORED_TRAIN';
+}
+
+/**
+ * Check if a unit ignores defense (RIFLEMAN accurate).
+ */
+export function ignoresDefense(unit) {
+    return unit && unit.type === 'RIFLEMAN';
+}
+
+/**
+ * Get bonus damage vs lords (SHARPSHOOTER sniper).
+ */
+export function getSniperBonus(unit, target) {
+    if (!unit || unit.type !== 'SHARPSHOOTER') return 0;
+    if (!target) return 0;
+    // Bonus vs lords or high-value targets
+    if (target.lordId || target.type === 'SETTLER' || target.type === 'ENGINEER') {
+        return 3;
+    }
+    return 0;
+}
+
+/**
+ * Get demolition bonus vs cities/buildings (DEMOLITION_SQUAD).
+ */
+export function getDemolishBonus(unit) {
+    if (!unit || unit.type !== 'DEMOLITION_SQUAD') return 0;
+    return 5;
+}
+
+/**
+ * Check if unit destroys fortifications in 2 hits (SIEGE_CANNON fortBuster).
+ */
+export function isFortBuster(unit) {
+    return unit && unit.type === 'SIEGE_CANNON';
+}
+
+/**
+ * Get flagship bonus for adjacent naval units (MAN_OF_WAR).
+ */
+export function getFlagshipBonus(unit) {
+    if (!unit || unit.type !== 'MAN_OF_WAR') return 0;
+    return 1;
+}
+
+/**
+ * Check if unit is immune to wind penalties (GALLEASS oared, STEAM_TRANSPORT steamPowered).
+ */
+export function isWindImmune(unit) {
+    if (!unit) return false;
+    return unit.type === 'GALLEASS' || unit.type === 'STEAM_TRANSPORT';
+}
+
+/**
+ * Check if unit can enter shallow waters/rivers (GUNBOAT shallowDraft).
+ */
+export function canEnterShallowWaters(unit) {
+    return unit && unit.type === 'GUNBOAT';
+}
+
+/**
+ * Check if unit is stealthy when submerged (SUBMARINE).
+ */
+export function isStealthy(unit) {
+    return unit && unit.type === 'SUBMARINE' && unit.submerged;
+}
+
+/**
+ * Get torpedo bonus vs ships (TORPEDO_BOAT).
+ */
+export function getTorpedoBonus(unit, target) {
+    if (!unit || unit.type !== 'TORPEDO_BOAT') return 0;
+    if (!target || !UNIT_TYPE[target.type]?.naval) return 0;
+    return 8;
+}
+
+/**
+ * Check if unit takes reduced ranged damage (IRONCLAD armored).
+ */
+export function hasArmored(unit) {
+    return unit && unit.type === 'IRONCLAD';
+}
+
+/**
+ * Check if unit takes 1 less damage from all sources (IRONCLAD_FRIGATE heavyArmor).
+ */
+export function hasHeavyArmor(unit) {
+    return unit && unit.type === 'IRONCLAD_FRIGATE';
+}
+
+/**
+ * Check if unit has no firing direction penalty (MONITOR turret).
+ */
+export function hasTurret(unit) {
+    return unit && unit.type === 'MONITOR';
+}
+
+/**
+ * Get trade bonus for MERCHANTMAN.
+ */
+export function getTradeBonus(unit) {
+    if (!unit || unit.type !== 'MERCHANTMAN') return 0;
+    return 10;
 }

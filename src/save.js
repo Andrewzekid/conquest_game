@@ -1,8 +1,12 @@
 /** Save/load to localStorage. GameState uses Map/Set; JSON needs plain objects.
  *  Phase F: enhanced persistence with verification for growth, burn, workshop,
  *  wonders, diplomacy relationship scores, and all new state fields. */
+import { serializeAIState, deserializeAIState } from './ai_goals.js';
+import { serializeTechState, deserializeTechState } from './tech.js';
+
 const SAVE_KEY = 'conquest_save';
-const SAVE_VERSION = 3;
+// Bumped 5 -> 6 for per-faction AI tech states (shared tech tree).
+const SAVE_VERSION = 6;
 
 export function saveGame(gameState) {
     try {
@@ -13,7 +17,7 @@ export function saveGame(gameState) {
             factionAssignments: { ...gameState.factionAssignments },
             tiles: [...gameState.tiles.values()],
             units: [...gameState.units.values()],
-            buildings: [...gameState.buildings.entries()],
+            buildings: [...(gameState.buildings || new Map()).entries()],
             // Military structure level/hp state (Area 6). Absent on v2 saves,
             // which are rejected by the version check below anyway.
             buildingState: [...(gameState.buildingState || new Map()).entries()],
@@ -34,7 +38,28 @@ export function saveGame(gameState) {
             eliminated: [...(gameState.eliminated || [])],
             reputation: { ...(gameState.reputation || {}) },
             gameOver: gameState.gameOver,
-            winner: gameState.winner
+            winner: gameState.winner,
+            // Tech tree state (4X feature).
+            techState: gameState.techState ? {
+                researched: gameState.techState.researched ? [...gameState.techState.researched] : [],
+                current: gameState.techState.current || null,
+                progress: gameState.techState.progress || 0
+            } : null,
+            // Victory tracking state.
+            victoryState: gameState.victoryState ? {
+                projects: { ...(gameState.victoryState.projects || {}) },
+                tradeRoutes: { ...(gameState.victoryState.tradeRoutes || {}) },
+                scoreSnapshots: { ...(gameState.victoryState.scoreSnapshots || {}) }
+            } : null,
+            // AI goal-sequence state (per-faction goals + scarcity streak).
+            aiState: serializeAIState(gameState.aiState),
+            // Per-faction AI tech states (shared tech tree, per-faction research progress).
+            aiTechStates: gameState.aiTechStates ? Object.fromEntries(
+                Object.entries(gameState.aiTechStates).map(([f, ts]) => [f, serializeTechState(ts)])
+            ) : null,
+            // Trade routes (Feature 3): array of route objects + id counter.
+            tradeRoutes: gameState.tradeRoutes || [],
+            tradeRouteNextId: gameState.tradeRouteNextId || 1
         };
         localStorage.setItem(SAVE_KEY, JSON.stringify(data));
         return true;
@@ -110,10 +135,10 @@ export function loadGame() {
             lords: data.lords,
             resources: data.resources,
             diplomacy,
-            explored: new Set(data.explored),
+            explored: new Set(data.explored || []),
             visible: new Set(),            // recomputed on load
             scryRevealed: new Set(data.scryRevealed || []),
-            trainedThisTurn: new Set(data.trainedThisTurn),
+            trainedThisTurn: new Set(data.trainedThisTurn || []),
             production: new Map(data.production || []),
             construction: new Map(data.construction || []),
             structures: new Map(data.structures || []),
@@ -125,7 +150,25 @@ export function loadGame() {
             eliminated: new Set(data.eliminated || []),
             reputation: data.reputation || null,
             gameOver: data.gameOver || false,
-            winner: data.winner || null
+            winner: data.winner || null,
+            // Tech tree state (4X feature). Convert completed array back to Set.
+            techState: data.techState ? {
+                researched: new Set(data.techState.researched || []),
+                current: data.techState.current || null,
+                progress: data.techState.progress || 0
+            } : null,
+            // Victory tracking state.
+            victoryState: data.victoryState || { projects: {}, tradeRoutes: {}, scoreSnapshots: {} },
+            // AI goal-sequence state (per-faction). Absent on old saves -> null,
+            // backfilled by Game.loadFromState.
+            aiState: deserializeAIState(data.aiState),
+            // Per-faction AI tech states. Absent on old saves -> null.
+            aiTechStates: data.aiTechStates ? Object.fromEntries(
+                Object.entries(data.aiTechStates).map(([f, ts]) => [f, deserializeTechState(ts)])
+            ) : null,
+            // Trade routes (Feature 3). Absent on old saves -> empty array.
+            tradeRoutes: Array.isArray(data.tradeRoutes) ? data.tradeRoutes : [],
+            tradeRouteNextId: data.tradeRouteNextId || 1
         };
 
         // Sanity-check the restored state. If critical fields are missing,

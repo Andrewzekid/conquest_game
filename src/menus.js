@@ -70,12 +70,8 @@ export function showStartMenu(onStart) {
         spectateCheck.onchange = () => {
             _spectateMode = spectateCheck.checked;
             sfx.click();
-            // Disable faction selection in spectate mode
-            const factionWrap = el('start-factions');
-            if (factionWrap) {
-                factionWrap.style.opacity = _spectateMode ? '0.5' : '1';
-                factionWrap.style.pointerEvents = _spectateMode ? 'none' : 'auto';
-            }
+            // Faction selection stays ENABLED in spectate: the picked faction
+            // becomes slot 0 (the followed/home faction) — see below.
         };
     }
 
@@ -97,10 +93,12 @@ export function showStartMenu(onStart) {
         // left the last slot with no faction → it fell back to 'crimson',
         // giving Crimson (and the selected faction) two kings.
         const aiCount = _spectateMode ? _playerCount : _playerCount - 1;
-        // In spectate mode, the selected faction is irrelevant; use a stable
-        // list of factions so every slot gets a distinct def.
+        // In spectate mode the selected faction leads the list, so it always
+        // lands in slot 0 and is guaranteed to be in the game (previously the
+        // selection was discarded and slots were filled in FACTION_IDS order —
+        // the picked faction often wasn't playing at all).
         const others = _spectateMode
-            ? FACTION_IDS.slice()
+            ? [_selectedFaction, ...FACTION_IDS.filter(id => id !== _selectedFaction)]
             : FACTION_IDS.filter(id => id !== _selectedFaction);
         const aiFactionIds = others.slice(0, aiCount);
         // Configure the global FACTIONS array before the game initializes.
