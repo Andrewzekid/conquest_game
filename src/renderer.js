@@ -782,6 +782,25 @@ export class GameRenderer {
         g.add(string);
     }
 
+    /** Add a horse body to group g. Returns the horse group so the caller can
+     *  reposition it. Mirrors the inline horse build in CAVALRY/CATAPHRACT. */
+    _addHorse(g, P, opts = {}) {
+        const bodyMat = opts.armored ? P.armor : P.body;
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.46), bodyMat);
+        body.position.y = 0.3; g.add(body);
+        const neck = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), bodyMat);
+        neck.position.set(0, 0.4, 0.24); g.add(neck);
+        const head = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.14), P.skin);
+        head.position.set(0, 0.5, 0.3); g.add(head);
+        for (const [sx, sz] of [[-0.08, 0.16], [0.08, 0.16], [-0.08, -0.16], [0.08, -0.16]]) {
+            const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.05), P.dark);
+            leg.position.set(sx, 0.12, sz); g.add(leg);
+        }
+        const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.04), P.dark);
+        tail.position.set(0, 0.26, -0.24); g.add(tail);
+        return g;
+    }
+
     makeShipModel(type, color) {
         const P = this._unitPalette(color);
         const g = new THREE.Group();
@@ -841,90 +860,217 @@ export class GameRenderer {
         return g;
     }
 
-    makeLordModel(lord, fc) {
+    makeLordModel(lord, fc, factionId) {
         const g = new THREE.Group();
         const isKing = lord.isKing;
-        const s = isKing ? 1.3 : 1.0;
+        const s = isKing ? 1.25 : 1.0;
         const cls = LORD_CLASSES[lord.class] || {};
         const bonus = cls.bonus || {};
 
-        const intensity = isKing ? 0.7 : 0.45;
-        let color, emissiveColor;
-        if (bonus.attack && bonus.defense) {
-            color = 0xffd700; emissiveColor = 0xffd700;
-        } else if (bonus.attack) {
-            color = 0xff5544; emissiveColor = 0xff3322;
-        } else if (bonus.defense) {
-            color = 0x4488ff; emissiveColor = 0x3366cc;
+        // Faction body color carries faction identity; emissive glow makes lords
+        // readable against any terrain (the old class-only colors made every
+        // Warlord look identical regardless of faction).
+        const bodyColor = fc ? fc.unit : 0xffd700;
+        const P = this._unitPalette(bodyColor);
+        // King trim: gold accent material for crowns/capes
+        const goldMat = new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: isKing ? 0.5 : 0.25 });
+        const emissive = new THREE.Color(bodyColor);
+        const emInt = isKing ? 0.35 : 0.22;
+
+        // Class-based weapon accessory (held in addition to faction weapon)
+        const addClassWeapon = (tall) => {
+            if (lord.class === 'WARLORD') {
+                // Greatsword across back
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.4, 0.1), P.metal);
+                blade.position.set(0, 0.5 * tall, -0.1); blade.rotation.x = 0.2; g.add(blade);
+            } else if (lord.class === 'GUARDIAN') {
+                // Tower shield on left arm
+                const shield = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.28, 0.03), P.metal);
+                shield.position.set(-0.2, 0.34 * tall, 0.06); g.add(shield);
+            } else if (lord.class === 'CONQUEROR') {
+                // Banner pole
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.55, 5), P.wood);
+                pole.position.set(0.18, 0.55 * tall, -0.08); g.add(pole);
+                const banner = new THREE.Mesh(new THREE.PlaneGeometry(0.14, 0.18),
+                    new THREE.MeshPhongMaterial({ color: bodyColor, side: THREE.DoubleSide }));
+                banner.position.set(0.18, 0.7 * tall, -0.08); g.add(banner);
+            } else if (lord.class === 'GRAND_COMMANDER') {
+                // Command staff
+                const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.6, 6), P.wood);
+                staff.position.set(0.18, 0.5 * tall, 0.04); g.add(staff);
+                const orb = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), goldMat);
+                orb.position.set(0.18, 0.82 * tall, 0.04); g.add(orb);
+            }
+        };
+
+        // King cape: a draped box behind the torso
+        const addCape = (tall) => {
+            const cape = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.34 * tall, 0.04),
+                new THREE.MeshPhongMaterial({ color: isKing ? 0x8a1a1a : bodyColor, side: THREE.DoubleSide }));
+            cape.position.set(0, 0.36 * tall, -0.1); g.add(cape);
+        };
+
+        // Build the lord body + faction-specific decoration
+        const fid = factionId || '';
+        const tall = 1;
+        if (['golden', 'polish', 'roman', 'byzantine', 'spanish'].includes(fid)) {
+            // ---- Mounted lord (horse) ----
+            this._addHorse(g, P, { armored: fid === 'roman' || fid === 'byzantine' });
+            const rider = new THREE.Group();
+            const rt = this._addHumanoid(rider, P, { armor: true, helmet: true, tall: true });
+            rider.position.set(0, 0.46, -0.05); g.add(rider);
+            addClassWeapon(rt);
+            addCape(rt);
+            // Faction-specific rider weapon
+            if (fid === 'golden' || fid === 'polish') {
+                // Lance
+                const lance = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.8, 6), P.wood);
+                lance.rotation.z = 0.3; lance.position.set(0.18, 0.7, 0.1); g.add(lance);
+            } else if (fid === 'roman') {
+                // Gladius (short sword)
+                const gladius = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.2, 0.04), P.metal);
+                gladius.position.set(0.16, 0.55, 0.04); g.add(gladius);
+            } else if (fid === 'spanish') {
+                // Rapier
+                const rapier = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.28, 0.03), P.metal);
+                rapier.position.set(0.16, 0.5, 0.04); g.add(rapier);
+            } else if (fid === 'byzantine') {
+                // Scepter
+                const scepter = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.4, 6), P.metal);
+                scepter.position.set(0.16, 0.6, 0.04); g.add(scepter);
+                const orbTop = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), goldMat);
+                orbTop.position.set(0.16, 0.82, 0.04); g.add(orbTop);
+            }
+            // Polish winged hussar wings
+            if (fid === 'polish') {
+                for (const sx of [-0.12, 0.12]) {
+                    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.3, 0.18),
+                        new THREE.MeshPhongMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide }));
+                    wing.position.set(sx, 0.6, -0.12); wing.rotation.x = 0.3; g.add(wing);
+                }
+            }
         } else {
-            color = 0xaa66dd; emissiveColor = 0x8844cc;
+            // ---- Foot lord (humanoid) ----
+            const t = this._addHumanoid(g, P, { armor: true, helmet: true, tall: true });
+            addClassWeapon(t);
+            addCape(t);
+            // Faction-specific weapon/decoration
+            if (fid === 'crimson') {
+                // Greatsword (two-handed)
+                const sword = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.32, 0.1), P.metal);
+                sword.position.set(0.14, 0.4 * t, 0.06); g.add(sword);
+                // Flame plume on helm
+                const flame = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 6),
+                    new THREE.MeshPhongMaterial({ color: 0xff5522, emissive: 0xff3322, emissiveIntensity: 0.6 }));
+                flame.position.set(0, 0.62 * t, 0); g.add(flame);
+            } else if (fid === 'verdant') {
+                // Bow
+                this._addBow(g, P, 0.16, 0.4 * t, 1.1);
+                // Leafy shoulder accents
+                for (const sx of [-0.13, 0.13]) {
+                    const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6),
+                        new THREE.MeshPhongMaterial({ color: 0x4a9a3a, emissive: 0x2a6a2a, emissiveIntensity: 0.2 }));
+                    leaf.position.set(sx, 0.42 * t, 0); g.add(leaf);
+                }
+            } else if (fid === 'violet') {
+                // Magic staff
+                const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.55, 6), P.wood);
+                staff.position.set(0.16, 0.45 * t, 0.04); g.add(staff);
+                const orb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10),
+                    new THREE.MeshPhongMaterial({ color: 0xcc66ff, emissive: 0x9933cc, emissiveIntensity: 0.6 }));
+                orb.position.set(0.16, 0.74 * t, 0.04); g.add(orb);
+            } else if (fid === 'azure') {
+                // Spear + shield
+                const spear = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.7, 6), P.wood);
+                spear.position.set(0.12, 0.5 * t, 0.04); g.add(spear);
+                const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 6), P.metal);
+                tip.position.set(0.12, 0.88 * t, 0.04); g.add(tip);
+                this._addShield(g, P, -1);
+            } else if (fid === 'obsidian') {
+                // Dark blade + skull pauldron
+                const darkBlade = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.3, 0.06),
+                    new THREE.MeshPhongMaterial({ color: 0x2a2a3a, emissive: 0x880000, emissiveIntensity: 0.4 }));
+                darkBlade.position.set(0.16, 0.4 * t, 0.04); g.add(darkBlade);
+                const skull = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6),
+                    new THREE.MeshPhongMaterial({ color: 0xeeeeee, emissive: 0x660000, emissiveIntensity: 0.3 }));
+                skull.position.set(-0.16, 0.46 * t, 0); g.add(skull);
+            } else if (fid === 'iron') {
+                // Warhammer + gear cog pauldron
+                const hammer = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.34, 6), P.metal);
+                hammer.position.set(0.16, 0.4 * t, 0.04); g.add(hammer);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.08), P.metal);
+                head.position.set(0.16, 0.6 * t, 0.04); g.add(head);
+                const cog = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 6, 12), P.metal);
+                cog.position.set(-0.16, 0.46 * t, 0); g.add(cog);
+            } else if (fid === 'shadow') {
+                // Hooded cloak + daggers
+                const hood = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8, 0, Math.PI * 2, 0, Math.PI / 1.6),
+                    new THREE.MeshPhongMaterial({ color: 0x2a1a3a }));
+                hood.position.y = 0.54 * t; g.add(hood);
+                const cloak = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.4 * t, 0.05),
+                    new THREE.MeshPhongMaterial({ color: 0x2a1a3a }));
+                cloak.position.set(0, 0.32 * t, -0.08); g.add(cloak);
+                for (const dx of [-0.04, 0.08]) {
+                    const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.03), P.metal);
+                    dagger.position.set(0.12 + dx, 0.34 * t, 0.1); g.add(dagger);
+                }
+            } else if (fid === 'storm') {
+                // Trident + lightning glow
+                const trident = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.65, 6), P.metal);
+                trident.position.set(0.16, 0.48 * t, 0.04); g.add(trident);
+                for (const dz of [-0.05, 0, 0.05]) {
+                    const prong = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.12, 5), P.metal);
+                    prong.position.set(0.16, 0.82 * t, 0.04 + dz); g.add(prong);
+                }
+                // Lightning aura spark
+                const spark = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6),
+                    new THREE.MeshPhongMaterial({ color: 0x88ddff, emissive: 0x44aaff, emissiveIntensity: 0.7 }));
+                spark.position.set(0, 0.62 * t, 0); g.add(spark);
+            } else if (fid === 'frost') {
+                // Ice axe + fur cloak
+                const axe = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.36, 6), P.wood);
+                axe.position.set(0.16, 0.4 * t, 0.04); g.add(axe);
+                const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.03),
+                    new THREE.MeshPhongMaterial({ color: 0xaaddff, emissive: 0x6699cc, emissiveIntensity: 0.3 }));
+                axeHead.position.set(0.22, 0.58 * t, 0.04); g.add(axeHead);
+                const fur = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.32 * t, 0.05),
+                    new THREE.MeshPhongMaterial({ color: 0xeef4ff }));
+                fur.position.set(0, 0.34 * t, -0.08); g.add(fur);
+            } else if (fid === 'viking') {
+                // Axe + horned helmet
+                const axe = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.34, 6), P.wood);
+                axe.position.set(0.16, 0.4 * t, 0.04); g.add(axe);
+                const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.03), P.metal);
+                axeHead.position.set(0.22, 0.56 * t, 0.04); g.add(axeHead);
+                for (const sx of [-0.05, 0.05]) {
+                    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.12, 6), P.white);
+                    horn.position.set(sx, 0.58 * t, 0); horn.rotation.z = sx > 0 ? 0.5 : -0.5; g.add(horn);
+                }
+            }
         }
 
-        switch (lord.class) {
-            case 'WARLORD': {
-                const base = new THREE.Mesh(
-                    new THREE.CylinderGeometry(0.22 * s, 0.28 * s, 0.12, 8),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
-                base.position.y = 0.06; g.add(base);
-                const blade = new THREE.Mesh(
-                    new THREE.ConeGeometry(0.14 * s, 0.45 * s, 6),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
-                blade.position.y = 0.34; g.add(blade);
-                const spike = new THREE.Mesh(
-                    new THREE.ConeGeometry(0.04 * s, 0.15 * s, 6),
-                    new THREE.MeshPhongMaterial({ color: 0xffffff, emissive: 0xff8844, emissiveIntensity: 0.5 }));
-                spike.position.y = 0.6; g.add(spike);
-                break;
+        // Apply emissive glow to all child meshes so lords read against terrain
+        g.traverse(o => {
+            if (o.isMesh && o.material && o.material.emissive) {
+                o.material.emissive = emissive;
+                o.material.emissiveIntensity = emInt;
             }
-            case 'GUARDIAN': {
-                const body = new THREE.Mesh(
-                    new THREE.DodecahedronGeometry(0.28 * s),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
-                body.position.y = 0.28; g.add(body);
-                const ring = new THREE.Mesh(
-                    new THREE.TorusGeometry(0.36 * s, 0.04 * s, 8, 16),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity * 0.6 }));
-                ring.rotation.x = Math.PI / 2;
-                ring.position.y = 0.12; g.add(ring);
-                break;
-            }
-            case 'CONQUEROR': {
-                const tower = new THREE.Mesh(
-                    new THREE.BoxGeometry(0.3 * s, 0.4 * s, 0.3 * s),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity }));
-                tower.position.y = 0.24; g.add(tower);
-                const top = new THREE.Mesh(
-                    new THREE.BoxGeometry(0.2 * s, 0.12 * s, 0.2 * s),
-                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: intensity * 0.5 }));
-                top.position.y = 0.5; g.add(top);
-                const spire = new THREE.Mesh(
-                    new THREE.ConeGeometry(0.04 * s, 0.12 * s, 6),
-                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.4 }));
-                spire.position.y = 0.62; g.add(spire);
-                break;
-            }
-            case 'GRAND_COMMANDER':
-            default: {
-                const body = new THREE.Mesh(
-                    new THREE.IcosahedronGeometry(0.26 * s),
-                    new THREE.MeshPhongMaterial({ color, emissive: emissiveColor, emissiveIntensity: intensity + 0.2 }));
-                body.position.y = 0.26; g.add(body);
-                const ring = new THREE.Mesh(
-                    new THREE.TorusGeometry(0.34 * s, 0.03 * s, 8, 20),
-                    new THREE.MeshPhongMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.5 }));
-                ring.rotation.x = Math.PI / 3;
-                ring.position.y = 0.32; g.add(ring);
-                break;
-            }
-        }
+        });
 
+        // Class icon floating above (group scale handles king enlargement)
         if (cls.icon) {
-            const iconY = lord.class === 'CONQUEROR' ? 0.85 : 0.8;
-            g.add(this.makeIconSprite(cls.icon, 0.7 * s, iconY));
+            g.add(this.makeIconSprite(cls.icon, 0.55, 1.1));
         }
+        // King crown sprite + base glow ring
         if (isKing) {
-            g.add(this.makeIconSprite('crown', 0.5 * s, 1.05));
+            g.add(this.makeIconSprite('crown', 0.5, 1.35));
+            const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.34, 24),
+                new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.5, depthWrite: false }));
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.y = 0.02; g.add(ring);
         }
+        // Scale entire group (king = 1.25×)
+        g.scale.setScalar(s);
         return g;
     }
 
@@ -1958,15 +2104,16 @@ export class GameRenderer {
             this.unitGroup.add(mesh);
         }
 
-        // Rebuild lord markers — each lord class gets a distinct 3D model
-        // (WARLORD cone, GUARDIAN dodecahedron, CONQUEROR tower, GRAND_COMMANDER
-        // icosahedron). Kings are 1.3× larger with a crown and stronger glow.
+        // Rebuild lord markers — each lord is a humanoid figure with
+        // faction-specific weapons, mounts, and decorations. Kings get a crown
+        // sprite, gold base ring, cape, and 1.25× scale.
         this.lordGroup.clear();
         for (const lord of gameState.lords) {
             const isPlayer = lord.owner === PLAYER_FACTION;
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;
             const fc = this.fcolor(gameState, lord.owner);
-            const mesh = this.makeLordModel(lord, fc);
+            const factionId = (gameState.factionAssignments && gameState.factionAssignments[lord.owner]) || null;
+            const mesh = this.makeLordModel(lord, fc, factionId);
             const y = (this.tileHeights.get(`${lord.x},${lord.z}`) || 0) + 0.05;
             mesh.position.set(lord.x - GRID_SIZE / 2, y, lord.z - GRID_SIZE / 2);
             mesh.userData = { lordId: lord.id, x: lord.x, z: lord.z };
