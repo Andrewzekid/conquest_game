@@ -5468,12 +5468,23 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 if (isAtWar && !isAtWar(e.owner)) continue;
                 if (isNaval(e)) continue;
                 const ed = Math.max(Math.abs(e.x - u.x), Math.abs(e.z - u.z));
-                const reach = ((UNIT_TYPE[e.type] && UNIT_TYPE[e.type].moveRange) || 2) + 1;
-                if (ed <= reach + 2) { foeNear = true; break; }
+                const eMove = (UNIT_TYPE[e.type] && UNIT_TYPE[e.type].moveRange) || 2;
+                const eRange = (UNIT_TYPE[e.type] && UNIT_TYPE[e.type].attackRange) || 1;
+                // Threat: enemy can move adjacent and attack THIS turn or be adjacent now.
+                if (ed <= eMove + eRange) { foeNear = true; break; }
             }
+            // Track consecutive turns a siege unit wanted to move but was blocked by escort rule.
             if (foeNear) {
                 const esc = nearestEscort(u, units, owner);
-                if (esc && esc.dist > SIEGE_ESCORT_RADIUS) target = esc.unit;
+                const stalled = (u._siegeStallTurns || 0) >= 2;
+                if (esc && esc.dist > SIEGE_ESCORT_RADIUS && !stalled) {
+                    target = esc.unit;
+                    u._siegeStallTurns = (u._siegeStallTurns || 0) + 1;
+                } else {
+                    u._siegeStallTurns = 0;
+                }
+            } else {
+                u._siegeStallTurns = 0;
             }
         }
         const step = stepToward(u, target, tiles, owner, units, moved, isAtWar);

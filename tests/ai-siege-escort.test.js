@@ -242,3 +242,35 @@ describe('ranged besiege and hold-forever fix', () => {
         expect(relevant.length).toBe(1);
     });
 });
+
+describe('siege stall fix', () => {
+    it('a catapult stalled by a distant foe still advances after 2 idle turns', () => {
+        // Escort is outside the 3-tile radius and a mobile foe is close enough
+        // to threaten the catapult, but the stall counter has already ticked for
+        // two turns, so the engine must advance rather than wait forever.
+        const input = escortSetup([['CATAPULT', 7, 5], ['INFANTRY', 3, 5]], 14);
+        const foe = makeUnit('CAVALRY', 'enemy', 11, 5, { factionId: 'azure' });
+        input.units.set(foe.id, foe);
+        const cat = input.made[0];
+        // Simulate two prior turns of stalling by injecting a stall counter.
+        cat._siegeStallTurns = 2;
+        const actions = runAI(input);
+        const mv = movesFor(actions, cat);
+        expect(mv.length).toBe(1);
+        expect(mv[0].tx).toBeGreaterThan(cat.x);
+    });
+
+    it('a siege unit does not consider an enemy 5 tiles away as an immediate threat', () => {
+        // Escort is outside the 3-tile radius and the enemy is 5 tiles away.
+        // Under the old reach+2 rule this triggered the escort check; under the
+        // tighter eMove+eRange rule it does not, so the catapult keeps advancing.
+        const input = escortSetup([['CATAPULT', 7, 5], ['INFANTRY', 3, 5]], 14);
+        const foe = makeUnit('INFANTRY', 'enemy', 12, 5, { factionId: 'azure' });
+        input.units.set(foe.id, foe);
+        const cat = input.made[0];
+        const actions = runAI(input);
+        const mv = movesFor(actions, cat);
+        expect(mv.length).toBe(1);
+        expect(mv[0].tx).toBeGreaterThan(cat.x);
+    });
+});
