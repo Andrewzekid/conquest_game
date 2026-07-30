@@ -104,7 +104,7 @@ describe('new factions — unit mods', () => {
   it('roman INFANTRY gets +1 defense +2 HP, SIEGE gets 15% gold discount', () => {
     const r = getFactionDef('roman');
     const s = getUnitStatsFor('INFANTRY', r);
-    expect(s.defense).toBe(3); // base 2 + 1
+    expect(s.defense).toBe(5); // base 4 + 1
     expect(s.hp).toBe(12);     // base 10 + 2
     const cost = getUnitCostFor('SIEGE', r);
     expect(cost.gold).toBe(Math.floor(UNIT_COST.SIEGE.gold * 0.85));

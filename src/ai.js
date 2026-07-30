@@ -187,6 +187,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const enemies = atWarFactions(diploState, owner);
     const atWar = enemies.length > 0;
     const activeObjectives = detectActiveObjectives(units, tiles, owner, isAtWar);
+    if (aiState) aiState.activeObjectives = activeObjectives;
 
     const canBuildAt = (t) => !influence || influence.has(`${t.x},${t.z}`);
     // Find a tile to build a military building (BARRACKS/SIEGE_WORKSHOP/
@@ -2194,9 +2195,15 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
-            // …besiege an adjacent fortified enemy city (GALLEON can)…
+            // …besiege a fortified enemy coastal city from range (GALLEON/BATTLESHIP can).
+            // Naval siege units stay at their attack range from the city, not adjacent,
+            // to avoid being reached by enemy melee on the shore.
             if (UNIT_TYPE[unit.type].besiege && !unit.hasAttackedThisTurn) {
-                const ec = findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
+                const range = UNIT_TYPE[unit.type].attackRange || 1;
+                const found = range > 1
+                    ? findTargetCityWithin(unit, tiles, owner, isAtWar, range)
+                    : null;
+                const ec = found ? found.city : findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
                 if (ec && (ec.fortification || 0) > 0) {
                     actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
                     acted.add(unit.id);
@@ -2249,6 +2256,24 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 }
             }
             // …or sail toward an enemy city / an unsettled foreign landmass.
+            // Naval siege units (besiege: true) that are already within attack
+            // range of a fortified enemy city hold position — they shell from
+            // range and don't sail closer to enemy melee on the shore.
+            if (UNIT_TYPE[unit.type].besiege) {
+                const range = UNIT_TYPE[unit.type].attackRange || 1;
+                let inRange = false;
+                for (const t of tiles.values()) {
+                    if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+                    if (isAtWar && !isAtWar(t.owner)) continue;
+                    if ((t.fortification || 0) <= 0) continue;
+                    const d = Math.max(Math.abs(t.x - unit.x), Math.abs(t.z - unit.z));
+                    if (d <= range) { inRange = true; break; }
+                }
+                if (inRange) {
+                    acted.add(unit.id);
+                    continue; // hold position and shell from range
+                }
+            }
             if (!unit.hasMovedThisTurn) {
                 let dest = null;
                 if (atWar) dest = findNearestEnemyCity(unit, tiles, owner, isAtWar);
@@ -2618,8 +2643,22 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     }
                 }
             } else {
-                objective = nearestFriendlyCity(c, tiles, owner);
-                stance = 'hold';
+                // Defense objective: patrol groups go to the threatened city
+                // instead of idling at their nearest friendly city. This makes
+                // the AI actually respond to sieges.
+                if (topGoal && topGoal.kind === 'defense' && topGoal.targetTileKey) {
+                    const [dx, dz] = topGoal.targetTileKey.split(',').map(Number);
+                    if (!Number.isNaN(dx) && !Number.isNaN(dz)) {
+                        objective = { x: dx, z: dz };
+                        stance = computeStance(g, units, owner, atWar, isAtWar);
+                    } else {
+                        objective = nearestFriendlyCity(c, tiles, owner);
+                        stance = 'hold';
+                    }
+                } else {
+                    objective = nearestFriendlyCity(c, tiles, owner);
+                    stance = 'hold';
+                }
             }
         }
         groupObjectives.set(g, objective);
@@ -2791,9 +2830,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             if (t.terrain !== 'CITY' || t.owner === owner) continue;
             if ((t.fortification || 0) > 0) continue;
             if (t.owner && isAtWar && !isAtWar(t.owner)) continue;
-            // Same capture rules as findAdjacentCapturable: breach delay must
-            // have passed and no unit may still occupy the city tile.
-            if (t.breachedTurn && currentTurn != null && currentTurn < t.breachedTurn) continue;
+            // Same capture rules as findAdjacentCapturable: no unit may still
+            // occupy the city tile.
             const cityKey = `${t.x},${t.z}`;
             if (claimedCityKeys.has(cityKey)) continue; // already claimed this turn
             // A conquest group is already marching here — no detachment needed.
@@ -2820,7 +2858,58 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
             // Pass B: peel the closest member off a group with 2+ units.
             if (!donorUnit) {
-                for (const g of groups) {
+    // 5e. Per-group siege need: detect conquest groups targeting a fortified
+    //     city that have no siege units, and boost siege production to fill
+    //     the gap. This replaces the fixed global siege cap with a dynamic
+    //     per-group need — if 2 groups each need siege, train 2 siege units
+    //     even if the global cap was already met.
+    if (conquest.size > 0 && hasSiegeWorkshop || siegeOptions.length) {
+        let groupsNeedingSiege = 0;
+        for (const g of conquest) {
+            const obj = groupObjectives.get(g);
+            if (!obj) continue;
+            // Is the objective a fortified enemy city?
+            const objTile = tiles.get(`${obj.x},${obj.z}`);
+            if (!objTile || objTile.terrain !== 'CITY') continue;
+            if ((objTile.fortification || 0) <= 0) continue; // already breached
+            // Does the group have any siege units?
+            const hasSiegeInGroup = g.units.some(u => {
+                const ut = UNIT_TYPE[u.type];
+                return ut && ut.besiege;
+            });
+            if (!hasSiegeInGroup) groupsNeedingSiege++;
+        }
+        // For each group needing siege, try to train one more siege unit
+        // beyond the normal cap. Resources permitting.
+        for (let i = 0; i < groupsNeedingSiege; i++) {
+            if (!siegeOptions.length && engineerCount >= groupsNeedingSiege) break;
+            if (siegeOptions.length) {
+                let pick = bestSiegePick(siegeOptions, factionDef);
+                const sc = getUnitCostFor(pick, factionDef);
+                if (canAfford(pick, res, sc)) {
+                    const workshopCity = hasSiegeWorkshop && owned.find(t => t.terrain === 'CITY' &&
+                        (buildings.get(`${t.x},${t.z}`) || []).includes('SIEGE_WORKSHOP'));
+                    const spawnTile = workshopCity || findOwnedTile(myUnits, tiles, actions, owner);
+                    if (spawnTile) {
+                        actions.push({ type: 'train', unitType: pick, tileKey: `${spawnTile.x},${spawnTile.z}` });
+                        res = spendCost(pick, res, sc);
+                    }
+                }
+            } else if (!hasModernSiegeTech && engineerCount < groupsNeedingSiege + 1) {
+                // No trainable siege — train an engineer to build a siege tower.
+                const ec = getUnitCostFor('ENGINEER', factionDef);
+                if (canAfford('ENGINEER', res, ec)) {
+                    const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
+                    if (spawnTile) {
+                        actions.push({ type: 'train', unitType: 'ENGINEER', tileKey: `${spawnTile.x},${spawnTile.z}` });
+                        res = spendCost('ENGINEER', res, ec);
+                    }
+                }
+            }
+        }
+    }
+
+    for (const g of groups) {
                     if (g === kingGuardGroup || g.id.startsWith('detach:')) continue;
                     if (groupStances.get(g) === 'retreat') continue;
                     if (g.units.length < 2) continue;
@@ -3210,7 +3299,10 @@ function canFoundOn(tile, owner, tiles) {
         for (const t of tiles.values()) {
             if (t.terrain !== 'CITY') continue;
             const cheb = Math.max(Math.abs(t.x - tile.x), Math.abs(t.z - tile.z));
-            // Engine rule: can't found within 4 Chebyshev of any city.
+            // Engine rule: can't found within 6 Chebyshev of any friendly city
+            // (MIN_CITY_SPACING). Prevents tightly clustered settlements.
+            if (t.owner === owner && cheb < 6) return false;
+            // Can't found within 4 Chebyshev of any city (general spacing).
             if (cheb < 4) return false;
             // Extra safety: don't settle within 6 of enemy cities (inside influence).
             if (t.owner && t.owner !== owner && cheb < 6) return false;
@@ -3641,7 +3733,7 @@ export function factionComposition(def, roster, hasSiegeWorkshop = false) {
     // zeroed out so they never train the artillery they just unlocked.
     const has = (role) => {
         if (role === 'siege') {
-            if (roster.some(t => unitRole(t) === 'siege' && t !== 'SIEGE_TOWER')) return true;
+            if (roster.some(t => unitRole(t) === 'siege')) return true;
             return hasSiegeWorkshop;
         }
         return roster.some(t => unitRole(t) === role);
@@ -3985,44 +4077,62 @@ function getNeighbors(x, z, range, tiles) {
  *    the ruins of fallen empires.
  *  Non-city tiles are never captured by moving onto them.
  *  A city is NOT capturable while the breach delay is still running
- *  (currentTurn < breachedTurn) or while any unit still occupies the city
+ *  or while any unit still occupies the city
  *  tile — the defender must be killed first. */
 function findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units = null, currentTurn = null) {
     if (res.gold < CAPTURE_COST) return null;
-    let city = null;
+    // Check adjacent tiles first (standard capture).
+    const checkTile = (t) => {
+        if (!t || t.owner === owner) return null;
+        if (t.terrain !== 'CITY') return null;
+        // Occupied city: the defender must be cleared first.
+        if (units) {
+            for (const u of units.values()) {
+                if (u.x === t.x && u.z === t.z) return null;
+            }
+        }
+        // Neutral city (no owner) - always capturable.
+        if (!t.owner) {
+            if ((t.fortification || 0) <= 0) return t;
+            return null;
+        }
+        // Enemy city - respect peace/trade/alliance.
+        if (t.owner && t.owner !== owner) {
+            if (isAtWar && !isAtWar(t.owner)) return null;
+            // Only capture a city that has been breached (fortification 0).
+            if ((t.fortification || 0) <= 0) return t;
+        }
+        return null;
+    };
+    // Adjacent tiles (Chebyshev 1).
     for (let dx = -1; dx <= 1; dx++) {
         for (let dz = -1; dz <= 1; dz++) {
             if (dx === 0 && dz === 0) continue;
             const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
-            if (!t) continue;
-            if (t.owner === owner) continue;
-            if (t.terrain === 'CITY') {
-                // Breach delay: a freshly breached city can't be captured until
-                // the turn after the breach.
-                if (t.breachedTurn && currentTurn !== null && currentTurn < t.breachedTurn) continue;
-                // Occupied city: the defender must be cleared first.
-                if (units) {
-                    let occupied = false;
-                    for (const u of units.values()) {
-                        if (u.x === t.x && u.z === t.z) { occupied = true; break; }
-                    }
-                    if (occupied) continue;
-                }
-                // Neutral city (no owner) — always capturable.
-                if (!t.owner) {
-                    if ((t.fortification || 0) <= 0 && !city) city = t;
-                    continue;
-                }
-                // Enemy city — respect peace/trade/alliance.
-                if (t.owner && t.owner !== owner) {
-                    if (isAtWar && !isAtWar(t.owner)) continue;
-                    // Only capture a city that has been breached (fortification 0).
-                    if ((t.fortification || 0) <= 0 && !city) city = t;
-                }
+            const found = checkTile(t);
+            if (found) return found;
+        }
+    }
+    // Extended search: for units that can move, also check tiles within
+    // move range. This lets ranged siege units (SIEGE with attackRange 2)
+    // that breached a city from 2 tiles away capture it on the next turn
+    // by moving onto it. The capture action teleports the unit onto the
+    // city tile, so we just need to find the capturable city within range.
+    const moveRange = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].moveRange) || 1;
+    if (moveRange > 1) {
+        for (let dx = -moveRange; dx <= moveRange; dx++) {
+            for (let dz = -moveRange; dz <= moveRange; dz++) {
+                if (dx === 0 && dz === 0) continue;
+                if (Math.abs(dx) + Math.abs(dz) > moveRange) continue;
+                // Skip tiles already checked in the adjacent pass.
+                if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue;
+                const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
+                const found = checkTile(t);
+                if (found) return found;
             }
         }
     }
-    return city;
+    return null;
 }
 
 /** Find an adjacent enemy (at-war) or neutral city (any fortification level)

@@ -17,8 +17,8 @@ export const FACTION_DEFS = {
         },
         passive: { attackBonus: 1, desc: '+1 attack to all your units.' },
         king: { name: 'Warlord Kael', class: 'WARLORD',
-                active: { id: 'bloodlust', name: 'Bloodlust', cooldown: 4,
-                          desc: '+3 attack to all your units for the rest of this turn.' } }
+                active: { id: 'bloodlust', name: 'Bloodlust', cooldown: 5,
+                          desc: '+2 attack to all your units for the rest of this turn.' } }
     },
     verdant: {
         id: 'verdant', name: 'Verdant Realm', emoji: '🌿',
@@ -56,8 +56,8 @@ export const FACTION_DEFS = {
         },
         passive: { defenseBonus: 1, desc: '+1 defense to all your units.' },
         king: { name: 'Marshal Edmund', class: 'GUARDIAN',
-                active: { id: 'bulwark', name: 'Bulwark', cooldown: 4,
-                          desc: '+3 defense to all your units for the rest of this turn.' } }
+                active: { id: 'bulwark', name: 'Bulwark', cooldown: 5,
+                          desc: '+2 defense to all your units for the rest of this turn.' } }
     },
     obsidian: {
         id: 'obsidian', name: 'Obsidian Pact', emoji: '💀',
@@ -100,8 +100,8 @@ export const FACTION_DEFS = {
         },
         passive: { siegePowerBonus: 2, desc: '+2 siege power for all siege units. Siege units cost 25% less.' },
         king: { name: 'Engineer-General Torvald', class: 'CONQUEROR', mobilized: true,
-                active: { id: 'ironwill', name: 'Iron Will', cooldown: 5,
-                          desc: 'All your cities gain +3 fortification; siege units gain +4 attack this turn.' } }
+                active: { id: 'ironwill', name: 'Iron Will', cooldown: 6,
+                          desc: 'All your cities gain +3 fortification; siege units gain +3 attack this turn.' } }
     },
     shadow: {
         id: 'shadow', name: 'Shadow Court', emoji: '🌑',
@@ -128,8 +128,8 @@ export const FACTION_DEFS = {
         },
         passive: { navalAttackBonus: 2, navalMoveBonus: 1, desc: 'Naval units +2 attack, +1 move range.' },
         king: { name: 'Admiral Thora', class: 'WARLORD',
-                active: { id: 'tempest', name: 'Tempest', cooldown: 4,
-                          desc: 'Deal 3 damage to all enemy units within 2 tiles of any of your units.' } }
+                active: { id: 'tempest', name: 'Tempest', cooldown: 5,
+                          desc: 'Deal 2 damage to all enemy units within 2 tiles of any of your units.' } }
     },
     frost: {
         id: 'frost', name: 'Frost Clan', emoji: '❄️',
@@ -149,18 +149,18 @@ export const FACTION_DEFS = {
     // --- New European Factions (Phase G) ---
     roman: {
         id: 'roman', name: 'Roman Legion', emoji: '🏛️',
-        color: { tile: 0xb87333, unit: 0xdd9944, name: 'Roman Legion' },
+        color: { tile: 0x6a1b4a, unit: 0x993366, name: 'Roman Legion' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'PIKEMAN', 'SIEGE', 'LEGIONNAIRE'],
         unitMods: {
             INFANTRY: { defense: 1, hp: 2 },
-            LEGIONNAIRE: { defense: 1 },
+            LEGIONNAIRE: { defense: 1, costGoldMult: 0.75 },
             SIEGE: { costGoldMult: 0.85 }
         },
         passive: { attackBonus: 1, cityCaptureBonus: 1, desc: '+1 attack to all units. +1 damage when capturing cities.' },
         king: { name: 'Consul Marcus', class: 'WARLORD',
-                active: { id: 'discipline', name: 'Discipline', cooldown: 4,
-                          desc: '+3 attack and +2 defense to all units for the rest of this turn.' } }
+                active: { id: 'discipline', name: 'Discipline', cooldown: 5,
+                          desc: '+2 attack and +1 defense to all units for the rest of this turn.' } }
     },
     viking: {
         id: 'viking', name: 'Viking Raiders', emoji: '⚔️',
@@ -169,13 +169,13 @@ export const FACTION_DEFS = {
         roster: ['INFANTRY', 'CAVALRY', 'SCOUT', 'BERSERKER'],
         unitMods: {
             INFANTRY: { attack: 1 },
-            BERSERKER: { hp: 2 },
+            BERSERKER: { hp: 2, costGoldMult: 0.75 },
             SCOUT: { attack: 1 }
         },
         passive: { healOnKill: 3, raidingGoldBonus: 10, desc: 'Units heal 3 HP on kill. Raiding/pillaging gives +10 gold.' },
         king: { name: 'Jarl Ragnar', class: 'WARLORD',
-                active: { id: 'berserker_rage', name: 'Berserker Rage', cooldown: 4,
-                          desc: 'All BERSERKER and INFANTRY units gain +4 attack and lifesteal (heal 50% of damage dealt) this turn.' } }
+                active: { id: 'berserker_rage', name: 'Berserker Rage', cooldown: 5,
+                          desc: 'All BERSERKER and INFANTRY units gain +3 attack and lifesteal (heal 50% of damage dealt) this turn.' } }
     },
     byzantine: {
         id: 'byzantine', name: 'Byzantine Empire', emoji: '🦅',
@@ -184,7 +184,7 @@ export const FACTION_DEFS = {
         roster: ['INFANTRY', 'ARCHER', 'CAVALRY', 'VARANGIAN_GUARD'],
         unitMods: {
             CAVALRY: { defense: 2, hp: 2 },
-            VARANGIAN_GUARD: { defense: 1 },
+            VARANGIAN_GUARD: { defense: 1, costGoldMult: 0.75 },
             ARCHER: { attack: 1 }
         },
         passive: { diplomacyBonus: 10, fortifiedDefenseBonus: 2, desc: '+10 starting reputation with all factions. Fortified units gain +2 defense.' },
@@ -194,11 +194,11 @@ export const FACTION_DEFS = {
     },
     spanish: {
         id: 'spanish', name: 'Spanish Conquistadors', emoji: '🗡️',
-        color: { tile: 0xc9302c, unit: 0xff5544, name: 'Spanish Conquistadors' },
+        color: { tile: 0xd4581f, unit: 0xff7722, name: 'Spanish Conquistadors' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'CAVALRY', 'ARCHER', 'CONQUISTADOR'],
         unitMods: {
-            CONQUISTADOR: { attack: 1, hp: 2 },
+            CONQUISTADOR: { attack: 1, hp: 2, costGoldMult: 0.75 },
             CAVALRY: { attack: 1 },
             INFANTRY: { defense: 1 }
         },
@@ -209,11 +209,11 @@ export const FACTION_DEFS = {
     },
     polish: {
         id: 'polish', name: 'Polish Winged Hussars', emoji: '🐎',
-        color: { tile: 0xdc143c, unit: 0xff6b6b, name: 'Polish Winged Hussars' },
+        color: { tile: 0x909098, unit: 0xc8c8d0, name: 'Polish Winged Hussars' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'PIKEMAN', 'CAVALRY', 'WINGED_HUSSAR'],
         unitMods: {
-            WINGED_HUSSAR: { attack: 2, moveRange: 1 },
+            WINGED_HUSSAR: { attack: 2, moveRange: 1, costGoldMult: 0.75 },
             CAVALRY: { attack: 1, moveRange: 1 },
             PIKEMAN: { defense: 1 }
         },

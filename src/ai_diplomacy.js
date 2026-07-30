@@ -6,6 +6,7 @@
  *  inject goal-aware overrides into the base personality-driven chances.
  */
 import { DIPLOMACY_STATES, AI_PERSONALITIES } from './config.js';
+import { getWarWeariness } from './diplomacy.js';
 
 /** Adjust diplomacy chances based on the active goal sequence.
  *  Returns an object with overrides for warChance, acceptTrade, acceptPeace,
@@ -155,6 +156,7 @@ export function shouldDeclareWar(aiState, diploState, owner, targetFaction, powe
 export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, warTurns, armyLossFraction = 0, opts = {}) {
     const goals = aiState && aiState.goals;
     const topGoal = goals && goals.length ? goals[0] : null;
+    const warWeariness = getWarWeariness(diploState, owner);
 
     // Losing badly: accept peace when power ratio drops below 0.5 (we're
     // being overwhelmed) or army losses exceed 30%.
@@ -164,47 +166,38 @@ export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, w
     if (armyLossFraction >= 0.3) {
         return { accept: true, reason: 'heavy_army_losses' };
     }
-
-    // If the conquest goal targets this faction and we're winning, reject peace.
+    // War weariness: accumulated fatigue pushes toward peace even at parity.
+    if (warWeariness > 25) {
+        return { accept: true, reason: 'war_weary' };
+    }
+    // Long war at parity: accept peace.
+    if (warTurns >= 8) {
+        return { accept: true, reason: 'long_war' };
+    }
+    // Conquest goal: reject peace if actively winning before war drags on.
     if (topGoal && topGoal.kind === 'conquest' && topGoal.targetFaction === attackerFaction) {
-        if (warTurns < 10) {
+        if (warTurns < 8) {
             return { accept: false, reason: 'conquest_in_progress' };
         }
     }
-
-    // Defense goal: accept peace once the threat is neutralized (war > 5 turns
-    // with no active defense objective).
-    if (topGoal && topGoal.kind === 'defense') {
-        if (warTurns >= 5) {
-            return { accept: true, reason: 'defense_goal_war_weary' };
-        }
+    // Defense goal: accept peace after 5 turns (threat likely neutralized).
+    if (topGoal && topGoal.kind === 'defense' && warTurns >= 5) {
+        return { accept: true, reason: 'defense_goal_war_weary' };
     }
-
-    // Long war: accept peace after enough turns even with a conquest goal.
-    // Wars that drag on past 12 turns are costly for both sides.
-    if (warTurns >= 12) {
-        return { accept: true, reason: 'long_war' };
-    }
-
     // Medium war with no clear objective: accept peace.
-    if (warTurns >= 8 && (!topGoal || topGoal.kind !== 'conquest')) {
+    if (warTurns >= 6 && (!topGoal || topGoal.kind !== 'conquest')) {
         return { accept: true, reason: 'war_weary' };
     }
-
-    // Far away (no shared border): accept peace more readily — the war is
-    // costly to maintain across water or long distances.
-    if (opts.sharedBorder === false && warTurns >= 5) {
+    // Far away (no shared border): accept peace more readily.
+    if (opts.sharedBorder === false && warTurns >= 4) {
         return { accept: true, reason: 'distant_war' };
     }
-
-    // Spy goal: maintain tension to gather intel, but accept peace once enough
-    // time has elapsed to complete the intelligence cycle.
+    // Spy goal: maintain tension to gather intel, but accept peace after 8 turns.
     if (topGoal && topGoal.kind === 'spy' && topGoal.targetFaction === attackerFaction) {
         if (warTurns < 8) {
             return { accept: false, reason: 'spy_intel_in_progress' };
         }
         return { accept: true, reason: 'spy_intel_complete' };
     }
-
     return { accept: false, reason: 'continue_war' };
 }

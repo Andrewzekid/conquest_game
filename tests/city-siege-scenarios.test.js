@@ -138,16 +138,14 @@ describe('breach persistence', () => {
         g.handleBesiege(t1, city);
         g.handleBesiege(t2, city);
         expect(city.fortification).toBe(0);
-        expect(city.breachedTurn).toBe((state.turn || 0) + 1);
 
-        // The next turn's regen must NOT pop the city back to 1 — that was the
+        // The next turn's regen must NOT pop the city back to 1 - that was the
         // infinite loop (ranged siege re-breaches every turn but regen 0->1
         // blocked capture before anyone could move in).
         regenFortification(state.tiles, state.units);
         expect(city.fortification).toBe(0);
 
-        // Breach delay over: a unit moves in and captures automatically.
-        state.turn = city.breachedTurn;
+        // Breach delay removed: a unit moves in and captures immediately.
         const inf = makeUnit('INFANTRY', 'player', 10, 9);
         state.units.set(inf.id, inf);
         const goldBefore = state.resources.player.gold;
@@ -179,7 +177,11 @@ describe('breach persistence', () => {
         regenFortification(state.tiles, state.units);
         expect(city.fortification).toBe(3);
         expect(city.siegePressure).toBe(0);
-        // Pressure gone: normal +1 regen resumes.
+        // Pressure gone: dampened regen resumes. At 3/9 with high siege fatigue
+        // (6 from 3 besieges * power 2), recovery rate is very low (~0.34/turn).
+        // It takes several ticks to accumulate enough for +1.
+        regenFortification(state.tiles, state.units);
+        regenFortification(state.tiles, state.units);
         regenFortification(state.tiles, state.units);
         expect(city.fortification).toBe(4);
     });
@@ -243,11 +245,11 @@ describe('auto-capture on move-in', () => {
         expect(state.resources.ai1.gold).toBe(200);           // no gold spent
     });
 
-    it('AI executor refuses to capture during the breach-delay turn', () => {
+    it('AI executor captures breached city (breach delay removed)', () => {
         const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
         const city = state.tiles.get('5,5');
         city.fortification = 0;
-        city.breachedTurn = state.turn + 1; // breach delay still running
+        city.breachedTurn = state.turn + 1; // breach delay removed - should still capture
         state.units.clear();
         const aiInf = makeUnit('INFANTRY', 'ai1', 6, 5);
         state.units.set(aiInf.id, aiInf);
@@ -256,9 +258,9 @@ describe('auto-capture on move-in', () => {
         forceCaptureAction('5,5');
         g.runAITurn('ai1');
 
-        expect(city.owner).toBe('player');
-        expect([aiInf.x, aiInf.z]).toEqual([6, 5]);
-        expect(state.resources.ai1.gold).toBe(200);
+        // With breach delay removed, the city IS captured.
+        expect(city.owner).toBe('ai1');
+        expect(state.resources.ai1.gold).toBe(180); // 200 - 20 capture cost
     });
 
     it('AI planning emits no capture action for an occupied or breach-delayed city', () => {
@@ -285,14 +287,14 @@ describe('auto-capture on move-in', () => {
             state.units.set(aiInf.id, aiInf);
             expect(plan(state).some(a => a.type === 'capture')).toBe(false);
         }
-        // Breach delay running: empty city but breachedTurn in the future.
+        // Breach delay removed: empty breached city -> capture action IS planned.
         {
             const { state } = mkState({});
             const city = state.tiles.get('5,5');
             city.breachedTurn = state.turn + 1;
             const aiInf = makeUnit('INFANTRY', 'ai1', 6, 5);
             state.units.set(aiInf.id, aiInf);
-            expect(plan(state).some(a => a.type === 'capture')).toBe(false);
+            expect(plan(state).some(a => a.type === 'capture' && a.tileKey === '5,5')).toBe(true);
         }
         // Empty city, delay passed → capture action IS planned.
         {

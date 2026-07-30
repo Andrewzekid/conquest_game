@@ -56,9 +56,9 @@ export const TERRAIN = {
 };
 
 export const UNIT_TYPE = {
-    INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
+    INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
-    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 5, defense: 0, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 8, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
+    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 1, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 12, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
@@ -461,8 +461,21 @@ export const TYPE_ADVANTAGE = {
     DESTROYER:   { strongAgainst: ['SUBMARINE', 'SUBMARINE_II', 'TORPEDO_BOAT'], multiplier: 1.7 },
     BATTLESHIP:  { strongAgainst: ['IRONCLAD_FRIGATE', 'MONITOR', 'DESTROYER'], multiplier: 1.5 },
     AIRCRAFT_CARRIER: { strongAgainst: ['BATTLESHIP', 'IRONCLAD'], multiplier: 1.4 },
-    SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 1.8 }
+    SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 1.8 },
+    // Artillery has a slight advantage vs ships (shore bombardment).
+    ARTILLERY:   { strongAgainst: ['CAVALRY', 'GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'], multiplier: 1.2 },
+    CANNON:      { strongAgainst: ['MUSKETEER', 'GALLEY', 'TRANSPORT', 'FRIGATE'], multiplier: 1.2 }
 };
+
+// --- Land vs Naval combat penalties ---
+// Land units (infantry, cavalry) can attack adjacent ships (e.g. when a ship
+// is adjacent to shore), but they fight at a severe disadvantage. Artillery
+// has a slight bonus vs ships (shore bombardment). This prevents land units
+// from trivially sinking warships while making coastal artillery useful.
+export const LAND_VS_NAVAL_PENALTY = 0.35;
+export const LAND_NAVAL_TYPES = new Set(['INFANTRY', 'CAVALRY', 'PIKEMAN', 'CATAPHRACT', 'CHARIOT',
+    'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'HALBERDIER', 'PIKE_MASTER',
+    'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER']);
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
 
@@ -796,11 +809,11 @@ export const FACTION_COLORS = {
     ai7:    { tile: 0x4a4a5a, unit: 0x8888aa, name: 'Iron' },
     ai8:    { tile: 0x2a1a3a, unit: 0x6a4a8a, name: 'Shadow' },
     ai9:    { tile: 0x1a4a6a, unit: 0x44aadd, name: 'Storm' },
-    ai10:   { tile: 0xb87333, unit: 0xdd9944, name: 'Roman Legion' },
+    ai10:   { tile: 0x6a1b4a, unit: 0x993366, name: 'Roman Legion' },
     ai11:   { tile: 0x4a6a8a, unit: 0x88bbdd, name: 'Viking Raiders' },
     ai12:   { tile: 0x7b2d8b, unit: 0xaa55cc, name: 'Byzantine Empire' },
-    ai13:   { tile: 0xc9302c, unit: 0xff5544, name: 'Spanish Conquistadors' },
-    ai14:   { tile: 0xdc143c, unit: 0xff6b6b, name: 'Polish Winged Hussars' }
+    ai13:   { tile: 0xd4581f, unit: 0xff7722, name: 'Spanish Conquistadors' },
+    ai14:   { tile: 0x909098, unit: 0xc8c8d0, name: 'Polish Winged Hussars' }
 };
 
 // Per-faction city names - each faction has thematic naming
@@ -974,7 +987,7 @@ export const DIPLOMACY_STATES = {
 // city adds a grievance to that neighbor.
 export const NEUTRAL_CITY_GRUDGE_RADIUS = 8;
 // How much a single grievance decays per turn.
-export const GRIEVANCE_DECAY_PER_TURN = 1;
+export const GRIEVANCE_DECAY_PER_TURN = 2;
 // Tension above this threshold makes AI consider war.
 export const GRIEVANCE_WAR_THRESHOLD = 40;
 // Tension above this makes AI reject most treaties.
@@ -1003,7 +1016,7 @@ export const AI_SETTLER_CAP_BASE = 2;
 export const AI_SETTLERS_PER_TURN = 1;
 // Hard cap on the total number of live + queued settlers the AI will ever keep
 // (prevents a faction from spamming settlers and sprawling endlessly).
-export const AI_SETTLER_HARD_CAP = 6;
+export const AI_SETTLER_HARD_CAP = 4;
 // Frontier bonus values (distance from nearest owned city).
 export const AI_FRONTIER_BONUS_CLOSE = 120;   // within 3 tiles
 export const AI_FRONTIER_BONUS_MID = 60;      // within 6 tiles
@@ -1158,11 +1171,11 @@ export const STABILITY_FACTORS = {
 // War weariness accumulates while at war and decays at peace; a weary faction
 // is more willing to accept harsh peace terms.
 export const WAR_WEARINESS_RATES = {
-    PER_TURN: 2,              // base war weariness per turn at war
-    PER_UNIT_LOST: 10,        // per unit destroyed
-    PER_CITY_LOST: 5,         // per city lost
+    PER_TURN: 3,              // base war weariness per turn at war
+    PER_UNIT_LOST: 12,        // per unit destroyed
+    PER_CITY_LOST: 8,         // per city lost
     PER_BATTLE: 1,            // per battle participated in
-    DECAY_AT_PEACE: -5        // per turn at peace (recovering)
+    DECAY_AT_PEACE: -8        // per turn at peace (recovering)
 };
 
 export const PEACE_DEMAND_LIMITS = {

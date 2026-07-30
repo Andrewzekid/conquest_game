@@ -719,10 +719,14 @@ export function selectGoals(input) {
         }
     }
 
-    // Defense: an own city is threatened.
+    // Defense: an own city is threatened. Score scales with how close the
+    // threat is — a city actually being besieged (siege unit adjacent) gets a
+    // much higher score so defense wins over conquest even for aggressive
+    // factions.
     if (activeObjectives.defensive && threatenedOwnCity) {
+        const defScore = (BASE_SCORE.defense + 30) * weights.defense;
         push('defense',
-            BASE_SCORE.defense * weights.defense,
+            defScore,
             `${threatenedOwnCity.x},${threatenedOwnCity.z}`,
             null, 'immediate', {});
     }

@@ -2821,7 +2821,7 @@ export class GameRenderer {
             const isExp = !!(explored && explored.has(key));
             const isVis = !!(visible && visible.has(key));
             if (!isExp && !isVis) continue;
-            const breached = tile.terrain === 'CITY' && (tile.fortification || 0) === 0 && tile.owner !== PLAYER_FACTION;
+            const breached = tile.terrain === 'CITY' && (tile.fortification || 0) === 0 && tile.fortMax > 0;
             if (breached) {
                 keep.material.emissive = new THREE.Color(BREACH_COLOR);
                 keep.material.emissiveIntensity = 0.9;

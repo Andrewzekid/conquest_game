@@ -923,6 +923,7 @@ export function besiegeCity(unit, cityTile) {
     // regenFortification). This also keeps a freshly breached city at 0
     // through the following turn so it can actually be captured.
     cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
+    cityTile.siegeFatigue = (cityTile.siegeFatigue || 0) + power;
     msgs.push(`City at [${cityTile.x}, ${cityTile.z}] besieged (fortification ${cityTile.fortification}/${cityTile.fortMax})`);
     if (cityTile.fortification === 0) msgs.push(`City at [${cityTile.x}, ${cityTile.z}] is BREACHED — it can now be captured!`);
     return msgs;
@@ -960,6 +961,16 @@ export function regenFortification(tiles, units) {
         // resumes. A freshly breached city thus stays at 0 through the next
         // turn (a capture window), fixing the re-breach/regen infinite loop.
         if ((t.siegePressure || 0) > 0) { t.siegePressure--; continue; }
-        t.fortification = Math.min(t.fortMax, t.fortification + 1);
+        const damageSeverity = 1 - (t.fortification / t.fortMax);
+        const fatigue = t.siegeFatigue || 0;
+        const damageFactor = 1.0 - damageSeverity * 0.75;
+        const fatigueFactor = Math.max(0.1, 1.0 / (1.0 + fatigue * 0.08));
+        const recoveryRate = damageFactor * fatigueFactor;
+        t.fortRepairAccum = (t.fortRepairAccum || 0) + recoveryRate;
+        if (t.fortRepairAccum >= 1.0) {
+            t.fortRepairAccum -= 1.0;
+            t.fortification = Math.min(t.fortMax, t.fortification + 1);
+        }
+        if (fatigue > 0) t.siegeFatigue = fatigue - 1;
     }
 }

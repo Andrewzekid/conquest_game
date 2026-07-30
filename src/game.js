@@ -1301,7 +1301,7 @@ export class Game {
         defenderTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (defenderTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
         this.log(`${atkDef.name} chips the walls of city [${defenderTile.x}, ${defenderTile.z}] — fortification ${defenderTile.fortification}/${defenderTile.fortMax}.`);
         if (defenderTile.fortification <= 0) {
-            if (!defenderTile.breachedTurn) defenderTile.breachedTurn = (this.gameState.turn || 0) + 1;
+            // Breach delay removed - city is capturable immediately.
             this.log(`City at [${defenderTile.x}, ${defenderTile.z}] is BREACHED — it can now be captured!`);
         }
     }
@@ -2186,11 +2186,6 @@ export class Game {
     /** Player SIEGE/ARTILLERY besieges an adjacent enemy city (an action, no move). */
     handleBesiege(unit, cityTile) {
         const msgs = besiegeCity(unit, cityTile);
-        // Breach delay: record the turn the city was breached so it can't be
-        // captured immediately on the same turn.
-        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
-            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
-        }
         msgs.forEach(m => this.log(m));
         if (msgs.length) sfx.besiege();
         unit.hasAttackedThisTurn = true; // besieging uses the unit's action
@@ -2218,9 +2213,6 @@ export class Game {
         // Bombardment wears the city's recovery down (siege pressure), so a
         // breached city stays at 0 through the next turn.
         cityTile.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (cityTile.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
-        if (cityTile.fortification <= 0 && !cityTile.breachedTurn) {
-            cityTile.breachedTurn = (this.gameState.turn || 0) + 1;
-        }
         unit.hasAttackedThisTurn = true;
         sfx.attack();
         this.log(`🏹 ${UNIT_TYPE[unit.type].name} bombards city [${cityTile.x}, ${cityTile.z}] �?fortification ${cityTile.fortification}/${cityTile.fortMax}.`);
@@ -2747,14 +2739,21 @@ export class Game {
             if (prod.turnsLeft <= 0) {
                 const tile = this.tiles.get(cityKey);
                 if (tile) {
-                    const unit = createUnit(prod.unitType, PLAYER_FACTION, tile.x, tile.z,
-                        { veteran: prod.veteran, factionDef: def });
-                    this.gameState.units.set(unit.id, unit);
-                    const lordHere = this.gameState.lords.find(l =>
-                        l.owner === PLAYER_FACTION && l.x === tile.x && l.z === tile.z && canCommand(l));
-                    if (lordHere) { assignArmy(lordHere, unit.id); unit.lordId = lordHere.id; }
-                    this.log(`${UNIT_TYPE[prod.unitType].name} completed at [${tile.x}, ${tile.z}]!`);
-                    sfx.levelUp();
+                    const spawn = NAVAL_UNITS.includes(prod.unitType)
+                        ? this._findNavalSpawnTile(tile, PLAYER_FACTION) : { x: tile.x, z: tile.z };
+                    if (!spawn) {
+                        this.log(`${UNIT_TYPE[prod.unitType].name} production at [${tile.x}, ${tile.z}] failed: no water tile available! Resources refunded.`);
+                        this.gameState.resources[PLAYER_FACTION].gold = (this.gameState.resources[PLAYER_FACTION].gold || 0) + Math.floor((getUnitCostFor(prod.unitType, def).gold || 0) * 0.5);
+                    } else {
+                        const unit = createUnit(prod.unitType, PLAYER_FACTION, spawn.x, spawn.z,
+                            { veteran: prod.veteran, factionDef: def });
+                        this.gameState.units.set(unit.id, unit);
+                        const lordHere = this.gameState.lords.find(l =>
+                            l.owner === PLAYER_FACTION && l.x === tile.x && l.z === tile.z && canCommand(l));
+                        if (lordHere) { assignArmy(lordHere, unit.id); unit.lordId = lordHere.id; }
+                        this.log(`${UNIT_TYPE[prod.unitType].name} completed at [${tile.x}, ${tile.z}]!`);
+                        sfx.levelUp();
+                    }
                 }
                 this.gameState.production.delete(cityKey);
             } else {
@@ -2907,6 +2906,65 @@ export class Game {
         return best;
     }
 
+    /** Find a water tile to spawn a naval unit on, searching outward from the
+     *  harbor building (if one exists in the city's influence) or from the
+     *  city tile itself. Returns {x, z} of an unoccupied water/river tile, or
+     *  null if no water tile is available (production should be blocked). */
+    _findNavalSpawnTile(cityTile, faction) {
+        // Collect candidate origin points: harbor building tiles first, then
+        // the city tile itself.
+        const origins = [];
+        const radius = cityRadius(cityTile);
+        for (let dx = -radius; dx <= radius; dx++) {
+            for (let dz = -radius; dz <= radius; dz++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) > radius) continue;
+                const k = `${cityTile.x + dx},${cityTile.z + dz}`;
+                const list = this.gameState.buildings.get(k) || [];
+                if (list.includes('HARBOR')) {
+                    const [hx, hz] = k.split(',').map(Number);
+                    origins.push({ x: hx, z: hz });
+                }
+            }
+        }
+        origins.push({ x: cityTile.x, z: cityTile.z });
+
+        // Search outward from each origin for the nearest unoccupied water tile.
+        const occupied = new Set();
+        for (const u of this.gameState.units.values()) {
+            occupied.add(`${u.x},${u.z}`);
+        }
+        for (const origin of origins) {
+            for (let r = 1; r <= 3; r++) {
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dz = -r; dz <= r; dz++) {
+                        if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+                        const nx = origin.x + dx, nz = origin.z + dz;
+                        const k = `${nx},${nz}`;
+                        const t = this.tiles.get(k);
+                        if (!t) continue;
+                        if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') continue;
+                        if (occupied.has(k)) continue;
+                        return { x: nx, z: nz };
+                    }
+                }
+            }
+        }
+        // Fallback: any water tile near the origins, even if occupied
+        // (the unit will stack on the water tile).
+        for (const origin of origins) {
+            for (let dx = -3; dx <= 3; dx++) {
+                for (let dz = -3; dz <= 3; dz++) {
+                    const nx = origin.x + dx, nz = origin.z + dz;
+                    const t = this.tiles.get(`${nx},${nz}`);
+                    if (t && (t.terrain === 'WATER' || t.terrain === 'RIVER')) return { x: nx, z: nz };
+                }
+            }
+        }
+        // No water tile found anywhere - return null so the caller blocks
+        // production. Ships must never spawn on land.
+        return null;
+    }
+
     handleTrain(unitType, tile) {
         const cityKey = `${tile.x},${tile.z}`;
         if (this.gameState.trainedThisTurn.has(cityKey)) {
@@ -2991,6 +3049,17 @@ export class Game {
             return;
         }
 
+        // For naval units, verify a water spawn tile exists before spending
+        // resources. Ships must never spawn on land.
+        let navalSpawn = null;
+        if (NAVAL_UNITS.includes(unitType)) {
+            navalSpawn = this._findNavalSpawnTile(tile, 'player');
+            if (!navalSpawn) {
+                this.log('No water tile available near the harbor to launch a ship!');
+                return;
+            }
+        }
+
         this.gameState.resources.player = spendCost(unitType, this.gameState.resources.player, cost);
         this.gameState.trainedThisTurn.add(cityKey);
 
@@ -3003,7 +3072,8 @@ export class Game {
             sfx.click();
             this.log(`Started ${UNIT_TYPE[unitType].name} production at [${tile.x}, ${tile.z}] �?ready in ${buildTurns} turns.`);
         } else {
-            const unit = createUnit(unitType, 'player', tile.x, tile.z, { veteran, factionDef: def });
+            const spawn = navalSpawn || { x: tile.x, z: tile.z };
+            const unit = createUnit(unitType, 'player', spawn.x, spawn.z, { veteran, factionDef: def });
             this.gameState.units.set(unit.id, unit);
             const lordHere = this.gameState.lords.find(l =>
                 l.owner === 'player' && l.x === tile.x && l.z === tile.z && canCommand(l));
@@ -3912,18 +3982,25 @@ export class Game {
         const relTarget = getRelation(gs.diplomacy, faction, target);
         if (relTarget.state === DIPLOMACY_STATES.WAR) return null;
 
-        // Find potential allies: factions that are NOT the target and are at peace
+        // Find potential allies: factions that are NOT the target. Include
+        // factions already at war with the target (enemy of my enemy is my friend).
         const candidates = FACTIONS.filter(f =>
             f !== faction && f !== target &&
-            !(gs.eliminated && gs.eliminated.has(f)) &&
-            getRelation(gs.diplomacy, f, target).state !== DIPLOMACY_STATES.WAR
+            !(gs.eliminated && gs.eliminated.has(f))
         );
 
-        // Score potential allies by relationship with us
+        // Score potential allies: lower the relationship bar so coalitions
+        // form even between lukewarm neighbors when facing a dominant threat.
         const allies = [];
         for (const a of candidates) {
             const rel = getRelation(gs.diplomacy, faction, a);
-            if (rel.state === DIPLOMACY_STATES.ALLIANCE || (rel.relationship || 0) >= 30) {
+            // Alliance or decent relationship -> coalition candidate.
+            if (rel.state === DIPLOMACY_STATES.ALLIANCE || (rel.relationship || 0) >= 10) {
+                allies.push(a);
+            }
+            // Factions already at war with the dominant threat are natural allies.
+            const relToTarget = getRelation(gs.diplomacy, a, target);
+            if (relToTarget.state === DIPLOMACY_STATES.WAR && !allies.includes(a)) {
                 allies.push(a);
             }
         }
@@ -4121,8 +4198,17 @@ export class Game {
 
             // --- WAR -> PEACE ---
             if (rel.state === DIPLOMACY_STATES.WAR) {
-                if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) peaceScore = 100;
-                else if (ratio < 1.0 && (rel.turnsAtWar || 0) > 4) peaceScore = 50;
+                const weariness = getWarWeariness(diplo, faction);
+                const turnsAtWar = rel.turnsAtWar || 0;
+                // Losing badly or war-weary -> seek peace.
+                if (ratio < 0.8 || turnsAtWar > 8) peaceScore = 100;
+                else if (ratio < 1.0 && turnsAtWar > 4) peaceScore = 50;
+                // War weariness: accumulated fatigue pushes toward peace even
+                // at parity. This prevents endless stalemate wars.
+                if (weariness > 20 && turnsAtWar > 3) peaceScore = Math.max(peaceScore, 60);
+                if (weariness > 35 && turnsAtWar > 2) peaceScore = Math.max(peaceScore, 80);
+                // Distant war: hard to maintain across the map.
+                if (!isNeighbor && turnsAtWar > 5) peaceScore = Math.max(peaceScore, 70);
             }
 
             // --- ALLIANCE scoring ---
@@ -4303,6 +4389,8 @@ export class Game {
         const atWar = (o) => canAttack(this.gameState.diplomacy, faction, o);
         const pool = this.gameState.resources[faction];
         const ownCities = [...this.tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === faction);
+        const enemyUnits = [...this.gameState.units.values()].filter(u => u.owner !== faction && atWar(u.owner));
+        const factionName = this.factionColors[faction] ? this.factionColors[faction].name : faction;
 
         const armyCentroid = (lord) => {
             const army = (lord.army || []).map(id => this.gameState.units.get(id)).filter(Boolean);
@@ -4386,6 +4474,23 @@ export class Game {
             } else {
                 target = pickTarget(lord);
             }
+            // 1b) Capture a breached/neutral city that is within reach.
+            //     Lords actively seek out and capture breached cities, not just
+            //     whatever pickTarget returns. This is checked BEFORE the normal
+            //     pickTarget so a lord adjacent to a breached city always grabs it.
+            {
+                let capTarget = null, capDist = Infinity;
+                for (const t of this.tiles.values()) {
+                    if (t.terrain !== 'CITY' || t.owner === faction) continue;
+                    if (!canCaptureTile(faction, t, pool, null, this.gameState.turn || 0) &&
+                        !this.siegeTowerAdjacentTo(t, faction)) continue;
+                    const enemyOnTile = enemyUnits.some(u => u.x === t.x && u.z === t.z);
+                    if (enemyOnTile) continue;
+                    const d = Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z));
+                    if (d <= 3 && d < capDist) { capDist = d; capTarget = t; }
+                }
+                if (capTarget) target = capTarget;
+            }
             if (!target) continue;
             for (let s = 0; s < 2; s++) {
                 if (lord.x === target.x && lord.z === target.z) break;
@@ -4395,9 +4500,21 @@ export class Game {
                 // Lords cannot walk on water or unbridged rivers.
                 if (destTile && (destTile.terrain === 'WATER' || (destTile.terrain === 'RIVER' && !destTile.bridge))) break;
                 // Lords may enter a capturable city (breached / siege-tower adjacent).
-                if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
                     !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) break;
                 lord.x = step.x; lord.z = step.z;
+                // Capture the city when the lord steps onto it. The movement
+                // check above already verified the city is capturable, so we
+                // capture unconditionally here.
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction) {
+                    pool.gold -= CAPTURE_COST;
+                    const prevOwner = destTile.owner;
+                    const wasNeutral = !prevOwner;
+                    captureCityTerritory(this.tiles, destTile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState).forEach(m => this.log(`${factionName}: ${m}`));
+                    this._awardCaptureGrievances(destTile, faction, prevOwner, wasNeutral);
+                    this.renderer.updateTileTerrain(destTile);
+                    this.checkVictory();
+                }
             }
             lord.hasMovedThisTurn = true;
         }
@@ -4518,7 +4635,9 @@ export class Game {
         }
         // Dynamic retreat threshold: base 0.55, scales up with danger.
         // Raised from 0.50 so the king doesn't wait until too late.
-        let retreatThreshold = 0.55;
+        // LATE GAME: king is more cautious - starts retreating earlier.
+        const lateGame = military.length >= 8 || (this.gameState.turn || 0) >= 40;
+        let retreatThreshold = lateGame ? 0.65 : 0.55;
         retreatThreshold += Math.min(0.15, foeCount * 0.05);         // +0.05 per foe (cap +0.15)
         if (hasArtilleryThreat) retreatThreshold += 0.10;             // artillery nearby = deadly
         if (hasRangedThreat) retreatThreshold += 0.10;                // ranged units chip away
@@ -4624,7 +4743,10 @@ export class Game {
         //     goal (i.e., conquest/defense are NOT higher priority) and an
         //     exposed enemy king is within reach, advance our king toward it.
         //     The king should NOT chase enemy kings when a conquest objective
-        //     exists — it should join the conquest group instead.
+        //     exists - it should join the conquest group instead.
+        //     LATE GAME: the king is much more conservative - it only hunts
+        //     enemy kings with a large local advantage (2x+) and never alone.
+        //     Early game the king can be aggressive (it's the strongest unit).
         const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
         const topGoalKind = aiSt && aiSt.goals && aiSt.goals[0] ? aiSt.goals[0].kind : null;
         if (hasEnemy && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
@@ -4633,7 +4755,10 @@ export class Game {
                 const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
                 const guarded = [...this.gameState.units.values()]
                     .some(u => u.owner === enemyKing.owner && u.x === enemyKing.x && u.z === enemyKing.z);
-                if (!guarded && d > 1 && d <= 10 && friendLocal > foeLocal * 0.8) {
+                // Late game: require larger advantage and closer proximity.
+                const advantageReq = lateGame ? 1.5 : 0.8;
+                const maxRange = lateGame ? 6 : 10;
+                if (!guarded && d > 1 && d <= maxRange && friendLocal > foeLocal * advantageReq) {
                     this._aiStepLord(lord, enemyKing.x, enemyKing.z, faction, pool, factionName);
                     return;
                 }
@@ -4727,13 +4852,14 @@ export class Game {
                 return;
             }
             // Block entry into enemy city that is not yet capturable.
-            if (destTile && destTile.terrain === 'CITY' && destTile.owner && destTile.owner !== faction &&
+            if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
                 !canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(destTile, faction)) {
                 // no step
             } else {
                 lord.x = step.x; lord.z = step.z;
-                if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction &&
-                    (canCaptureTile(faction, destTile, pool, null, this.gameState.turn || 0) || this.siegeTowerAdjacentTo(destTile, faction))) {
+                // Capture the city when the lord steps onto it. The movement
+                // check above already verified the city is capturable.
+                if (destTile && destTile.terrain === 'CITY' && destTile.owner !== faction) {
                     pool.gold -= CAPTURE_COST;
                     const prevOwner = destTile.owner;
                     const wasNeutral = !prevOwner;
@@ -4754,6 +4880,10 @@ export class Game {
             if (lord.owner !== faction || lord.hasAttackedThisTurn) continue;
             let best = null, bestScore = -Infinity;
             // Exposed enemy lords/kings are the highest-value targets.
+            // LATE GAME: kings avoid 1v1 lord/king duels - too risky when
+            // the faction has many units to do the fighting instead.
+            const lateGame = [...this.gameState.units.values()].filter(u =>
+                u.owner === faction && !['SETTLER', 'WORKER', 'SCOUT'].includes(u.type)).length >= 8;
             for (const other of this.gameState.lords) {
                 if (other === lord || other.owner === faction) continue;
                 if (!canAttack(this.gameState.diplomacy, faction, other.owner)) continue;
@@ -4761,6 +4891,8 @@ export class Game {
                 const guarded = [...this.gameState.units.values()]
                     .some(u => u.owner === other.owner && u.x === other.x && u.z === other.z);
                 if (guarded) continue;
+                // Late game king won't duel other kings/lords alone.
+                if (lord.isKing && lateGame) continue;
                 let score = 300 - (other.hp || 0);
                 if (other.isKing) score += 200;
                 if (score > bestScore) { bestScore = score; best = other; }
@@ -4930,7 +5062,9 @@ export class Game {
                         if (goldMult !== 1) cost = { ...cost, gold: Math.floor((cost.gold || 0) * goldMult) };
                         if (count < unitCap && canAfford(action.unitType, pool, cost)) {
                             this.gameState.resources[faction] = spendCost(action.unitType, pool, cost);
-                            const unit = createUnit(action.unitType, faction, tile.x, tile.z, { veteran, factionDef: def });
+                            const spawn = NAVAL_UNITS.includes(action.unitType)
+                                ? this._findNavalSpawnTile(tile, faction) : { x: tile.x, z: tile.z };
+                            const unit = createUnit(action.unitType, faction, spawn.x, spawn.z, { veteran, factionDef: def });
                             this.gameState.units.set(unit.id, unit);
                             const lordHere = this.gameState.lords.find(l =>
                                 l.owner === faction && l.x === tile.x && l.z === tile.z && canCommand(l));
@@ -5155,11 +5289,34 @@ export class Game {
                         const bsDist = Math.max(Math.abs(unit.x - tile.x), Math.abs(unit.z - tile.z));
                         if (bsDist > bsRange) break;
                         const msgs = besiegeCity(unit, tile);
-                        if (tile.fortification <= 0 && !tile.breachedTurn) {
-                            tile.breachedTurn = (this.gameState.turn || 0) + 1;
-                        }
                         msgs.forEach(m => this.log(`${factionName}: ${m}`));
                         if (msgs.length) sfx.besiege();
+                        // Breach delay removed: if the city is now breached and
+                        // the unit is adjacent (Chebyshev 1), capture it
+                        // immediately so the siege unit doesn't wander off.
+                        if (tile.fortification <= 0 && tile.owner !== faction && bsDist <= 1) {
+                            // Check no defender on the tile.
+                            let defender = false;
+                            for (const u of this.gameState.units.values()) {
+                                if (u.id !== unit.id && u.x === tile.x && u.z === tile.z) { defender = true; break; }
+                            }
+                            if (!defender && this.gameState.lords) {
+                                for (const l of this.gameState.lords) {
+                                    if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) { defender = true; break; }
+                                }
+                            }
+                            if (!defender) {
+                                pool.gold -= CAPTURE_COST;
+                                const prevOwner = tile.owner;
+                                const wasNeutral = !prevOwner;
+                                captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState)
+                                    .forEach(m => this.log(`${factionName}: ${m}`));
+                                this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);
+                                unit.x = tile.x; unit.z = tile.z; unit.hasMovedThisTurn = true;
+                                if (this.renderer) this.renderer.updateTileTerrain(tile);
+                                this.checkVictory();
+                            }
+                        }
                     }
                     break;
                 }
@@ -5527,6 +5684,63 @@ export class Game {
         this.renderer.renderAll(this.gameState);
     }
 
+    /** Auto-capture: at the start of each round, any breached city (fortification
+     *  0) that has an enemy unit or lord ON or ADJACENT to it AND no defending
+     *  unit/lord from the city's owner is automatically captured. This replaces
+     *  explicit capture actions and fixes the "units never move into breached
+     *  cities" bug. */
+    _autoCaptureCities() {
+        for (const tile of this.tiles.values()) {
+            if (tile.terrain !== 'CITY') continue;
+            if ((tile.fortification || 0) > 0) continue;
+            // Check for a defender (unit/lord belonging to the city's owner) on
+            // the tile OR adjacent. If the owner can still defend, no auto-capture.
+            const cityOwner = tile.owner;
+            let hasDefender = false;
+            for (const u of this.gameState.units.values()) {
+                if (u.owner !== cityOwner) continue;
+                const d = Math.max(Math.abs(u.x - tile.x), Math.abs(u.z - tile.z));
+                if (d <= 1) { hasDefender = true; break; }
+            }
+            if (!hasDefender && this.gameState.lords) {
+                for (const l of this.gameState.lords) {
+                    if (!l || l.hp <= 0 || l.owner !== cityOwner) continue;
+                    const d = Math.max(Math.abs(l.x - tile.x), Math.abs(l.z - tile.z));
+                    if (d <= 1) { hasDefender = true; break; }
+                }
+            }
+            if (hasDefender) continue;
+            // Find the nearest enemy unit/lord ON or adjacent to the city.
+            let occupantOwner = null;
+            let occupantDist = Infinity;
+            // Units on the tile (distance 0) get priority.
+            for (const u of this.gameState.units.values()) {
+                if (!u.owner || u.owner === cityOwner) continue;
+                const d = Math.max(Math.abs(u.x - tile.x), Math.abs(u.z - tile.z));
+                if (d <= 1 && d < occupantDist) { occupantDist = d; occupantOwner = u.owner; }
+            }
+            if (this.gameState.lords) {
+                for (const l of this.gameState.lords) {
+                    if (!l || l.hp <= 0 || !l.owner || l.owner === cityOwner) continue;
+                    const d = Math.max(Math.abs(l.x - tile.x), Math.abs(l.z - tile.z));
+                    if (d <= 1 && d < occupantDist) { occupantDist = d; occupantOwner = l.owner; }
+                }
+            }
+            if (!occupantOwner) continue;
+            // Auto-capture: the occupant takes the city.
+            const pool = this.gameState.resources[occupantOwner];
+            if (pool && typeof pool.gold === 'number' && Number.isFinite(pool.gold)) pool.gold -= CAPTURE_COST;
+            const prevOwner = tile.owner;
+            const wasNeutral = !prevOwner;
+            const occupantName = this.factionColors[occupantOwner] ? this.factionColors[occupantOwner].name : occupantOwner;
+            captureCityTerritory(this.tiles, tile, occupantOwner, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState)
+                .forEach(m => this.log(`${occupantName}: ${m}`));
+            this._awardCaptureGrievances(tile, occupantOwner, prevOwner, wasNeutral);
+            if (this.renderer) this.renderer.updateTileTerrain(tile);
+            this.checkVictory();
+        }
+    }
+
     /** End the player's turn (called from the End Turn button in ui.js, which also
      *  plays the end-turn SFX via the button click). */
     endPlayerTurn() {
@@ -5540,6 +5754,9 @@ export class Game {
         this._endingTurn = true;
         try {
             sfx.endTurn();
+            // Auto-capture: any breached city occupied by an enemy unit with no
+            // defender is captured immediately (before AI actions).
+            this._autoCaptureCities();
             // Rebuild the diplomacy cache once per round so the AI diplomacy
             // phase (power/distance scoring) is O(cities²) instead of O(tiles²).
             this._rebuildDiploCache();

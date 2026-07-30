@@ -278,16 +278,13 @@ describe('Phase 6: city defense', () => {
         expect(cityFortMax(null)).toBe(6);
     });
 
-    it('canCaptureTile respects breach delay', () => {
+    it('canCaptureTile allows capture of breached city (no breach delay)', () => {
         const tile = { terrain: 'CITY', owner: 'enemy', fortification: 0, breachedTurn: 5 };
         const resources = { gold: 100 };
-        // Turn 3: can't capture yet (breach delay)
-        expect(canCaptureTile('ai1', tile, resources, null, 3)).toBe(false);
-        // Turn 5: can capture (breach delay expired)
+        // Breach delay removed: can capture immediately once fortification is 0.
+        expect(canCaptureTile('ai1', tile, resources, null, 3)).toBe(true);
         expect(canCaptureTile('ai1', tile, resources, null, 5)).toBe(true);
-        // Turn 6: can capture
         expect(canCaptureTile('ai1', tile, resources, null, 6)).toBe(true);
-        // Without currentTurn param: always allowed (backwards compatible)
         expect(canCaptureTile('ai1', tile, resources)).toBe(true);
     });
 

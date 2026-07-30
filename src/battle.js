@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN, LAND_VS_NAVAL_PENALTY, LAND_NAVAL_TYPES } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -106,6 +106,10 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     for (const c of [attackerUnit, defenderUnit]) {
         if (typeof c.hp !== 'number' || !Number.isFinite(c.hp)) c.hp = 0;
         if (typeof c.maxHp !== 'number' || !Number.isFinite(c.maxHp)) c.maxHp = Math.max(1, c.hp);
+        // Sanitize attack/defense stats — NaN here produces NaN damage which
+        // makes the target unkillable (NaN <= 0 is always false).
+        if (typeof c.attack !== 'number' || !Number.isFinite(c.attack)) c.attack = 0;
+        if (typeof c.defense !== 'number' || !Number.isFinite(c.defense)) c.defense = 0;
     }
     const atkStats = combatStats(attackerUnit);
     const defStats = combatStats(defenderUnit);
@@ -126,6 +130,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             atkMultiplier *= adv.multiplier;
             messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
         }
+    }
+    // Land vs naval penalty: infantry/cavalry attacking ships fight at a
+    // severe disadvantage (they can't effectively engage warships).
+    if (LAND_NAVAL_TYPES.has(attackerUnit.type) && defStats.naval) {
+        atkMultiplier *= LAND_VS_NAVAL_PENALTY;
+        messages.push(`${combatName(attackerUnit)} struggles to fight ships (-${Math.round((1 - LAND_VS_NAVAL_PENALTY) * 100)}% dmg)`);
     }
 
     // Attacker bonuses: own commanding lord's stats + class bonus + adjacent auras.
@@ -348,6 +358,9 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     }
 
     let damageToDefender = Math.max(1, Math.floor(effectiveAttack - effectiveDefense * 0.3));
+    // NaN guard: if any upstream calculation produced NaN, the damage would
+    // be NaN, making the target unkillable (NaN <= 0 is always false).
+    if (!Number.isFinite(damageToDefender)) damageToDefender = 1;
     // Ranged distance falloff (RANGED_DISTANCE_FALLOFF): full damage adjacent,
     // 80% at 2 tiles, 25% from 3 tiles onwards.
     if (atkStats.ranged) {
@@ -486,8 +499,6 @@ export function canCaptureTile(unitOwner, tile, resources, diploState = null, cu
     if (tile.owner === unitOwner) return false;
     // A fortified city must be besieged (fortification reduced to 0) before capture.
     if (tile.terrain === 'CITY' && (tile.fortification || 0) > 0) return false;
-    // Breach delay: a freshly breached city can't be captured until the next turn.
-    if (tile.terrain === 'CITY' && tile.breachedTurn && currentTurn !== null && currentTurn < tile.breachedTurn) return false;
     return true;
 }
 

@@ -47,9 +47,11 @@ export function createLord(owner, x, z, name, classKey) {
  *  Kings are guaranteed at least 50 max HP regardless of level. */
 export function lordMaxHp(lord) {
     if (!lord) return 1;
-    const base = 18 + (lord.level - 1) * 3 + (lord.isKing ? 42 : 0);
+    const level = (typeof lord.level === 'number' && Number.isFinite(lord.level)) ? lord.level : 1;
+    const base = 18 + (level - 1) * 3 + (lord.isKing ? 42 : 0);
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.hp || 0) : 0;
-    return lord.isKing ? Math.max(55, base + kingBonus) : base;
+    const result = lord.isKing ? Math.max(55, base + kingBonus) : base;
+    return Number.isFinite(result) ? result : (lord.isKing ? 55 : 18);
 }
 
 /** A lord's own melee attack: combat stat + class bonus + king bonus. */
@@ -57,7 +59,8 @@ export function lordAttack(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.attack || 0) : 0;
-    return (lord.stats.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    const result = (lord.stats?.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    return Number.isFinite(result) ? result : 0;
 }
 
 /** A lord's own defense: command stat + class bonus + king bonus. */
@@ -65,17 +68,25 @@ export function lordDefense(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.defense || 0) : 0;
-    return (lord.stats.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    const result = (lord.stats?.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    return Number.isFinite(result) ? result : 0;
 }
 
 export function applyKingTechBonuses(lord, techState) {
     if (!lord || !lord.isKing) return null;
     const bonuses = getKingTechBonuses(techState);
-    lord.kingTechBonuses = bonuses;
+    lord.kingTechBonuses = {
+        hp: Number.isFinite(bonuses?.hp) ? bonuses.hp : 0,
+        attack: Number.isFinite(bonuses?.attack) ? bonuses.attack : 0,
+        defense: Number.isFinite(bonuses?.defense) ? bonuses.defense : 0
+    };
+    // Sanitize lord level before computing maxHp.
+    if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
     const previousHp = typeof lord.hp === 'number' && Number.isFinite(lord.hp) ? lord.hp : null;
     lord.maxHp = lordMaxHp(lord);
     lord.hp = previousHp === null ? lord.maxHp : Math.min(lord.maxHp, previousHp);
-    return bonuses;
+    if (!Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
+    return lord.kingTechBonuses;
 }
 
 /** Build a unit-like combatant for a lord so resolveCombat can fight it. The
@@ -83,6 +94,11 @@ export function applyKingTechBonuses(lord, techState) {
  *  so damage applied here is real. `type` is 'KING' or 'LORD' for messages. */
 export function lordCombatant(lord) {
     if (!lord) return null;
+    // Sanitize HP/maxHP before entering combat — NaN here makes the lord
+    // unkillable (NaN <= 0 is always false).
+    if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = 0;
+    if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
+    if (!Number.isFinite(lord.maxHp)) lord.maxHp = lord.isKing ? 55 : 18;
     return {
         id: lord.id,
         _isLord: true,
@@ -103,8 +119,10 @@ export function lordCombatant(lord) {
 /** Sync a lord combatant's hp back onto the lord object after combat. */
 export function syncLordHp(combatant) {
     if (!combatant || !combatant._lord) return;
-    combatant._lord.hp = combatant.hp;
-    combatant._lord.maxHp = combatant.maxHp;
+    const hp = typeof combatant.hp === 'number' && Number.isFinite(combatant.hp) ? combatant.hp : 0;
+    const maxHp = typeof combatant.maxHp === 'number' && Number.isFinite(combatant.maxHp) ? combatant.maxHp : (combatant._lord.maxHp || 1);
+    combatant._lord.hp = hp;
+    combatant._lord.maxHp = maxHp;
 }
 
 /** Award XP to a lord; level up if threshold reached. Returns log messages. */

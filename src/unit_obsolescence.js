@@ -38,6 +38,7 @@ export const OBSOLESCENCE = {
 
     // Siege line: CATAPULT → TREBUCHET → ARTILLERY → CANNON → SIEGE_CANNON/FIELD_GUN
     TREBUCHET:    { obsoletes: ['CATAPULT'],                       tech: 'SIEGE_CRAFT' },
+    MORTAR:       { obsoletes: ['CATAPULT', 'TREBUCHET'],          tech: 'EXPLOSIVES' },
     // ARTILLERY (GUNPOWDER) also retires SIEGE (a roster unit some factions
     // hold, e.g. Iron) and CATAPULT directly — otherwise a faction that
     // reaches GUNPOWDER without SIEGE_CRAFT keeps spamming CATAPULT/SIEGE
@@ -64,10 +65,10 @@ export const OBSOLESCENCE = {
     // Atomic-era naval: the dreadnought line obsoletes all the sail/ironclad
     // warships; TRANSPORT_SHIP obsoletes STEAM_TRANSPORT; the improved sub
     // retires the original. Carriers and battleships coexist (different roles).
-    DESTROYER:    { obsoletes: ['IRONCLAD_FRIGATE', 'MONITOR', 'IRONCLAD', 'FRIGATE_2', 'FROLIC', 'CORVETTE', 'FRIGATE', 'MAN_OF_WAR', 'GALLEON', 'GALLEASS', 'GALLEY'], tech: 'DREADNOUGHT' },
+    DESTROYER:    { obsoletes: ['IRONCLAD_FRIGATE', 'MONITOR', 'IRONCLAD', 'FRIGATE_2', 'FROLIC', 'CORVETTE', 'FRIGATE', 'MAN_OF_WAR', 'GALLEON', 'GALLEASS', 'GALLEY', 'GUNBOAT', 'PINNACE'], tech: 'DREADNOUGHT' },
     BATTLESHIP:   { obsoletes: ['IRONCLAD_FRIGATE', 'MONITOR', 'FROLIC', 'MAN_OF_WAR', 'GALLEON'], tech: 'DREADNOUGHT' },
-    TRANSPORT_SHIP: { obsoletes: ['STEAM_TRANSPORT', 'TRANSPORT'], tech: 'DREADNOUGHT' },
-    SUBMARINE_II: { obsoletes: ['SUBMARINE'],                      tech: 'NAVAL_AVIATION' },
+    TRANSPORT_SHIP: { obsoletes: ['STEAM_TRANSPORT', 'TRANSPORT', 'MERCHANTMAN'], tech: 'DREADNOUGHT' },
+    SUBMARINE_II: { obsoletes: ['SUBMARINE', 'TORPEDO_BOAT'],                      tech: 'NAVAL_AVIATION' },
 
     // Atomic-era land: mobilized units obsolete their foot-bound predecessors.
     // MOBILIZED_INFANTRY retires RIFLEMAN/SHARPSHOOTER/LINE_INFANTRY (the
@@ -92,7 +93,7 @@ export const OBSOLESCENCE = {
     // MERCENARY_KNIGHT/FRONTIERSMAN all retire once TANK is unlocked.
     // HEAVY_TANK is a slower, tankier alternative — it coexists with TANK
     // (both stay trainable) so a player can mix the two.
-    TANK:         { obsoletes: ['CATAPHRACT', 'CHARIOT', 'CAVALRY', 'WINGED_HUSSAR', 'DRAGOON', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'FRONTIERSMAN', 'ARMORED_TRAIN'], tech: 'ARMOR' },
+    TANK:         { obsoletes: ['CATAPHRACT', 'CHARIOT', 'CAVALRY', 'WINGED_HUSSAR', 'DRAGOON', 'CONQUISTADOR', 'MERCENARY_KNIGHT', 'FRONTIERSMAN', 'ARMORED_CAR', 'ARMORED_TRAIN'], tech: 'ARMOR' },
     // Anti-armor chain: BAYONET_RIFLE obsoletes the medieval/enlightenment
     // anti-cavalry line (the bayonet replaces the pike). ANTI_TANK_GUN and
     // RPG_TEAM are successive upgrades — RPG_TEAM (ROCKETRY) is the capstone,

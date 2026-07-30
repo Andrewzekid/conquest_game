@@ -208,12 +208,15 @@ describe('map', () => {
   });
 
   describe('regenFortification', () => {
-    it('regenerates +1 below max', () => {
+    it('regenerates toward max (dampened by damage severity)', () => {
       setGridDimensions(20, 20);
       const tiles = new Map();
-      tiles.set('10,10', { ...makeTile(10, 10, 'CITY', 'player'), fortification: 2, fortMax: 5 });
+      tiles.set('10,10', { ...makeTile(10, 10, 'CITY', 'player'), fortification: 4, fortMax: 5 });
       regenFortification(tiles);
-      expect(tiles.get('10,10').fortification).toBe(3);
+      // At 4/5, damage severity is low (0.2), so recovery is fast (~0.85/turn).
+      // After 2 ticks the accumulator reaches 1.0 and fortification increases.
+      regenFortification(tiles);
+      expect(tiles.get('10,10').fortification).toBe(5);
     });
 
     it('skips at max', () => {
@@ -234,8 +237,11 @@ describe('map', () => {
       regenFortification(tiles);
       expect(tiles.get('10,10').fortification).toBe(2);
       expect(tiles.get('10,10').siegePressure).toBe(0);
+      // Dampened regen resumes: at 2/5, recovery rate is ~0.55/turn,
+      // so it takes 2 ticks to accumulate enough for +1.
       regenFortification(tiles);
-      expect(tiles.get('10,10').fortification).toBe(3); // normal +1 regen resumes
+      regenFortification(tiles);
+      expect(tiles.get('10,10').fortification).toBe(3);
     });
 
     it('a freshly breached city stays at 0 through the next regen tick (capture window)', () => {

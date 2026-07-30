@@ -207,11 +207,11 @@ describe('diplomacy', () => {
   });
 
   describe('applyTensionDecay', () => {
-    it('reduces by 1 per turn', () => {
+    it('reduces by 2 per turn', () => {
       const state = createDiplomacyState(['a', 'b']);
       addGrievance(state, 'a', 'b', 10);
       applyTensionDecay(state);
-      expect(getTension(state, 'a', 'b')).toBe(9);
+      expect(getTension(state, 'a', 'b')).toBe(8);
     });
 
     it('floors at 0', () => {
