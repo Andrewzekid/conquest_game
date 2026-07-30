@@ -5474,11 +5474,17 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 if (ed <= eMove + eRange) { foeNear = true; break; }
             }
             // Track consecutive turns a siege unit wanted to move but was blocked by escort rule.
+            // Only reset the counter once the unit is no longer in a stall situation
+            // (escort within radius or no foe). After the threshold is reached, the
+            // unit keeps advancing until conditions improve — otherwise it would stall
+            // for 2 turns, advance once, then stall for 2 turns again (stutter cycle).
             if (foeNear) {
                 const esc = nearestEscort(u, units, owner);
-                const stalled = (u._siegeStallTurns || 0) >= 2;
-                if (esc && esc.dist > SIEGE_ESCORT_RADIUS && !stalled) {
-                    target = esc.unit;
+                const inStall = esc && esc.dist > SIEGE_ESCORT_RADIUS;
+                if (inStall) {
+                    if ((u._siegeStallTurns || 0) < 2) {
+                        target = esc.unit;
+                    }
                     u._siegeStallTurns = (u._siegeStallTurns || 0) + 1;
                 } else {
                     u._siegeStallTurns = 0;

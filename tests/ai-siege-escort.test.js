@@ -244,20 +244,44 @@ describe('ranged besiege and hold-forever fix', () => {
 });
 
 describe('siege stall fix', () => {
-    it('a catapult stalled by a distant foe still advances after 2 idle turns', () => {
+    it('a catapult naturally stalls twice then keeps advancing (no stutter cycle)', () => {
         // Escort is outside the 3-tile radius and a mobile foe is close enough
-        // to threaten the catapult, but the stall counter has already ticked for
-        // two turns, so the engine must advance rather than wait forever.
+        // to threaten the catapult. Run the AI for several consecutive turns and
+        // let the stall counter accumulate naturally: turns 1-2 must move back
+        // toward the escort, turn 3 must advance on the city, and turn 4 must
+        // keep advancing (the old code reset the counter after the fallback,
+        // causing a stall-advance-stall stutter cycle).
         const input = escortSetup([['CATAPULT', 7, 5], ['INFANTRY', 3, 5]], 14);
         const foe = makeUnit('CAVALRY', 'enemy', 11, 5, { factionId: 'azure' });
         input.units.set(foe.id, foe);
         const cat = input.made[0];
-        // Simulate two prior turns of stalling by injecting a stall counter.
-        cat._siegeStallTurns = 2;
-        const actions = runAI(input);
-        const mv = movesFor(actions, cat);
-        expect(mv.length).toBe(1);
-        expect(mv[0].tx).toBeGreaterThan(cat.x);
+
+        // Turn 1: stall situation, counter accumulates to 1.
+        const actions1 = runAI(input);
+        const mv1 = movesFor(actions1, cat);
+        expect(mv1.length).toBe(1);
+        expect(mv1[0].tx).toBeLessThan(cat.x); // toward escort
+        expect(cat._siegeStallTurns).toBe(1);
+
+        // Turn 2: still stalled, counter accumulates to 2.
+        const actions2 = runAI(input);
+        const mv2 = movesFor(actions2, cat);
+        expect(mv2.length).toBe(1);
+        expect(mv2[0].tx).toBeLessThan(cat.x); // toward escort
+        expect(cat._siegeStallTurns).toBe(2);
+
+        // Turn 3: threshold reached, advance on the objective.
+        const actions3 = runAI(input);
+        const mv3 = movesFor(actions3, cat);
+        expect(mv3.length).toBe(1);
+        expect(mv3[0].tx).toBeGreaterThan(cat.x); // toward city
+        expect(cat._siegeStallTurns).toBeGreaterThanOrEqual(2);
+
+        // Turn 4: must keep advancing (counter is not reset while stall persists).
+        const actions4 = runAI(input);
+        const mv4 = movesFor(actions4, cat);
+        expect(mv4.length).toBe(1);
+        expect(mv4[0].tx).toBeGreaterThan(cat.x); // toward city
     });
 
     it('a siege unit does not consider an enemy 5 tiles away as an immediate threat', () => {

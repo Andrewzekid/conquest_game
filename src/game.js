@@ -5065,10 +5065,21 @@ export class Game {
                         const goldMult = barracks ? barracks.goldMult : 1;
                         let cost = getUnitCostFor(action.unitType, def);
                         if (goldMult !== 1) cost = { ...cost, gold: Math.floor((cost.gold || 0) * goldMult) };
+                        // For naval units, verify a water spawn tile exists before
+                        // spending resources. Ships must never spawn on land or in an
+                        // enclosed pond that _findNavalSpawnTile rejects.
+                        let spawn = null;
+                        if (NAVAL_UNITS.includes(action.unitType)) {
+                            spawn = this._findNavalSpawnTile(tile, faction);
+                            if (!spawn) {
+                                this.log(`Ship production at [${tile.x}, ${tile.z}] failed: no water tile available!`);
+                                break;
+                            }
+                        } else {
+                            spawn = { x: tile.x, z: tile.z };
+                        }
                         if (count < unitCap && canAfford(action.unitType, pool, cost)) {
                             this.gameState.resources[faction] = spendCost(action.unitType, pool, cost);
-                            const spawn = NAVAL_UNITS.includes(action.unitType)
-                                ? this._findNavalSpawnTile(tile, faction) : { x: tile.x, z: tile.z };
                             const unit = createUnit(action.unitType, faction, spawn.x, spawn.z, { veteran, factionDef: def });
                             this.gameState.units.set(unit.id, unit);
                             const lordHere = this.gameState.lords.find(l =>
