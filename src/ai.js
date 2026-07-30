@@ -96,7 +96,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // Ferry flags are recomputed every turn (see theater ferry planning in
     // step 5a2). Boarded units keep theirs so a mid-sea transport doesn't
     // lose its destination; everyone else's is re-set below if still needed.
-    for (const u of myUnits) delete u._ferryTo;
+    // Preserve tags for units already in the ferry wait queue so the transport
+    // loop can age them out after five idle turns.
+    for (const u of myUnits) {
+        if (u._ferryTo && u._ferryTurns !== undefined) continue;
+        delete u._ferryTo;
+    }
     let res = { ...resources };
     buildings = buildings || new Map();
     influence = influence || null;
@@ -2114,6 +2119,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                         if (u.owner !== owner || !u._ferryTo || u.boarded) continue;
                         if (acted.has(u.id)) continue;
                         if (u.type === 'SETTLER' || u.type === 'WORKER' || isNaval(u)) continue;
+                        // Ferry timeout: stuck units abandon the ferry plan after
+                        // more than five idle turns and rejoin normal army logic.
+                        u._ferryTurns = (u._ferryTurns || 0) + 1;
+                        if (u._ferryTurns > 5) {
+                            delete u._ferryTo;
+                            delete u._ferryTurns;
+                            continue;
+                        }
                         const d = manhattan(unit.x, unit.z, u.x, u.z);
                         if (d < bestD) { bestD = d; bestU = u; }
                     }
@@ -2629,7 +2642,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     const portTile = tiles.get(`${plan.fromPort.x},${plan.fromPort.z}`);
                     objective = portTile || { x: plan.fromPort.x, z: plan.fromPort.z };
                     stance = 'hold';
-                    for (const u of g.units) u._ferryTo = plan.toPort;
+                    for (const u of g.units) {
+                        u._ferryTo = plan.toPort;
+                        u._ferryTurns = 0;
+                    }
                 } else {
                     // Attack the nearest enemy/neutral city IN THIS THEATER —
                     // no cross-map wandering, no idling on a quiet landmass.
@@ -4722,30 +4738,35 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal
         if (best) return best;
     }
 
-    // Priority 3: Nearest enemy-owned tile (any)
-    if (isAtWar) {
-        let best = null, bestDist = Infinity;
-        for (const t of tiles.values()) {
-            if (!t.owner || t.owner === owner) continue;
-            if (!isAtWar(t.owner)) continue;
-            const d = manhattan(c.x, c.z, t.x, t.z);
-            if (d < bestDist) { bestDist = d; best = t; }
-        }
-        if (best) return best;
-    }
-    
-    // Priority 4: Nearest unowned tile (expansion)
+    // Fallback D: no reachable city or cluster — at least move toward the nearest
+    // enemy unit, then unowned/neutral tile, then enemy-owned land tile.
     {
-        let best = null, bestDist = Infinity;
-        for (const t of tiles.values()) {
-            if (t.owner) continue;
-            if (t.terrain === 'WATER' || t.terrain === 'MOUNTAIN') continue;
-            const d = manhattan(c.x, c.z, t.x, t.z);
-            if (d < bestDist) { bestDist = d; best = t; }
+        let best = null, bestD = Infinity;
+        for (const u of units.values()) {
+            if (u.owner === owner || u.boarded || isNaval(u)) continue;
+            if (isAtWar && !isAtWar(u.owner)) continue;
+            const d = manhattan(c.x, c.z, u.x, u.z);
+            if (d < bestD) { bestD = d; best = { x: u.x, z: u.z }; }
+        }
+        if (!best) {
+            for (const t of tiles.values()) {
+                if (t.owner) continue;
+                if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
+                const d = manhattan(c.x, c.z, t.x, t.z);
+                if (d < bestD) { bestD = d; best = t; }
+            }
+        }
+        if (!best) {
+            for (const t of tiles.values()) {
+                if (!t.owner || t.owner === owner) continue;
+                if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
+                const d = manhattan(c.x, c.z, t.x, t.z);
+                if (d < bestD) { bestD = d; best = t; }
+            }
         }
         if (best) return best;
     }
-    
+
     // Fallback: nearest friendly city
     {
         let best = null, bestDist = Infinity;

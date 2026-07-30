@@ -634,17 +634,20 @@ describe('decisive-battle execution', () => {
         expect(objectives).toEqual(['19,13', '8,11']);
     });
 
-    it('falls back to city targeting when no clusters remain', () => {
+    it('falls back to enemy army targeting when no clusters remain', () => {
         const input = decisiveBattleInput();
         input.aiState.goals[0].meta.clusters = [];
-        // Give the enemy a reachable city so the fallback has a target.
+        // With no clusters and the distant enemy city deemed unreachable by the
+        // land-path checker, the richer fallback chain targets enemy armies.
         input.tiles.set('18,18', makeTile(18, 18, 'CITY', 'enemy',
             { cityName: 'Camp', cityLevel: 1, fortification: 0, fortMax: 3 }));
         runAI(input);
         const summary = input.aiState.armyGroups;
         const hunting = summary.filter(g => (g.composition.CATAPHRACT || 0) > 0);
         expect(hunting.length).toBe(2);
-        // No clusters: both groups target the enemy city instead of an army.
-        for (const g of hunting) expect(g.objective).toBe('18,18');
+        // No clusters: both groups target the nearest enemy army instead of idling.
+        for (const g of hunting) {
+            expect(['8,10', '8,11', '19,12', '19,13']).toContain(g.objective);
+        }
     });
 });
