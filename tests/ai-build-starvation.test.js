@@ -27,6 +27,8 @@ function starvationSetup(overrides = {}) {
         [5, 4, 'WATER', null],
         [4, 5, 'WATER', null],
         [6, 4, 'WATER', null],
+        [5, 3, 'WATER', null],
+        [4, 4, 'WATER', null],
     ]);
     const units = new Map();
     const army = overrides.army || ['INFANTRY', 'INFANTRY', 'TREBUCHET'];

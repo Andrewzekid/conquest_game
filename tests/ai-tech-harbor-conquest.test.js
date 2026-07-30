@@ -356,6 +356,9 @@ describe('Harbor production', () => {
             [5, 5, 'CITY', 'ai1', { cityName: 'AI Capital', cityLevel: 2, fortification: 3, fortMax: 3, isCapital: true }],
             [6, 5, 'PLAINS', 'ai1'],
             [4, 5, 'WATER', null],
+            [4, 4, 'WATER', null],
+            [4, 6, 'WATER', null],
+            [3, 5, 'WATER', null],
             [15, 15, 'CITY', 'enemy', { cityName: 'Enemy Hold', cityLevel: 1, fortification: 3, fortMax: 3 }],
         ]);
         const units = new Map();

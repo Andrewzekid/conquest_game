@@ -18,6 +18,7 @@ import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { sellAtMarket, getUnitCap, grossYields } from './economy.js';
 import { cityRadius, findParentCity } from './map.js';
+import { isWaterConnectedToOpenWater } from './map_util.js';
 import { getBuildingState, upgradeBuilding } from './building.js';
 import { canAttack } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
@@ -5648,11 +5649,15 @@ function computeLandmasses(tiles) {
     return { idOf, sizes };
 }
 
-/** True if a city tile touches water or river (can host a Harbor / launch ships). */
-function isCoastalCity(tile, tiles) {
+/** True if a city tile touches water or river that is connected to open
+ *  water or a large enough body (can host a Harbor / launch ships). */
+export function isCoastalCity(tile, tiles) {
     for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
         const nt = tiles.get(`${tile.x + dx},${tile.z + dz}`);
-        if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) return true;
+        if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER') &&
+            isWaterConnectedToOpenWater(tiles, `${nt.x},${nt.z}`, 4)) {
+            return true;
+        }
     }
     return false;
 }

@@ -24,6 +24,7 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
           WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory, cityFortMax } from './map.js';
+import { isWaterConnectedToOpenWater } from './map_util.js';
 import { createUnit, canAfford, spendCost, getReachableTiles, getAttackTargets, getMoveRange } from './unit.js';
 import { resolveCombat, canCaptureTile } from './battle.js';
 import { createTurnManager } from './turnmanager.js';
@@ -2943,6 +2944,7 @@ export class Game {
                         const t = this.tiles.get(k);
                         if (!t) continue;
                         if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') continue;
+                        if (!isWaterConnectedToOpenWater(this.tiles, k, 4)) continue;
                         if (occupied.has(k)) continue;
                         return { x: nx, z: nz };
                     }
@@ -2956,7 +2958,10 @@ export class Game {
                 for (let dz = -3; dz <= 3; dz++) {
                     const nx = origin.x + dx, nz = origin.z + dz;
                     const t = this.tiles.get(`${nx},${nz}`);
-                    if (t && (t.terrain === 'WATER' || t.terrain === 'RIVER')) return { x: nx, z: nz };
+                    if (t && (t.terrain === 'WATER' || t.terrain === 'RIVER') &&
+                        isWaterConnectedToOpenWater(this.tiles, `${nx},${nz}`, 4)) {
+                        return { x: nx, z: nz };
+                    }
                 }
             }
         }

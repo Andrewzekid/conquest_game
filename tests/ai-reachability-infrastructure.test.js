@@ -276,6 +276,9 @@ describe('A. Reachability-aware conquest targets', () => {
         const input = twoIslandSetup({ ts });
         // Add a coastal tile adjacent to the city for the harbor
         input.tiles.set('5,4', makeTile(5, 4, 'WATER', null));
+        input.tiles.set('5,3', makeTile(5, 3, 'WATER', null));
+        input.tiles.set('4,4', makeTile(4, 4, 'WATER', null));
+        input.tiles.set('6,4', makeTile(6, 4, 'WATER', null));
         const actions = runAI(input);
         expect(buildTypes(actions)).toContain('HARBOR');
     });
@@ -284,6 +287,9 @@ describe('A. Reachability-aware conquest targets', () => {
         const ts = makeFactionTs(['NAVAL_ENGINEERING']);
         const input = twoIslandSetup({ ts });
         input.tiles.set('5,4', makeTile(5, 4, 'WATER', null));
+        input.tiles.set('5,3', makeTile(5, 3, 'WATER', null));
+        input.tiles.set('4,4', makeTile(4, 4, 'WATER', null));
+        input.tiles.set('6,4', makeTile(6, 4, 'WATER', null));
         input.buildings.set('5,5', ['BARRACKS', 'HARBOR']);
         const actions = runAI(input);
         const trains = trainTypes(actions);
@@ -296,6 +302,9 @@ describe('A. Reachability-aware conquest targets', () => {
         input.buildings.set('5,5', ['BARRACKS', 'HARBOR']);
         // Add a water tile to make it coastal so harbor is valid
         input.tiles.set('5,4', makeTile(5, 4, 'WATER', null));
+        input.tiles.set('5,3', makeTile(5, 3, 'WATER', null));
+        input.tiles.set('4,4', makeTile(4, 4, 'WATER', null));
+        input.tiles.set('6,4', makeTile(6, 4, 'WATER', null));
         const actions = runAI(input);
         // The conquest goal should be 'land' reachability (same landmass),
         // so conquestAcrossWater is false and no conquest-driven transports.
@@ -338,6 +347,9 @@ describe('B. Infrastructure planning & embarkation', () => {
         const input = twoIslandSetup({ ts });
         // Place a transport adjacent to an infantry unit
         input.tiles.set('5,4', makeTile(5, 4, 'WATER', null));
+        input.tiles.set('5,3', makeTile(5, 3, 'WATER', null));
+        input.tiles.set('4,4', makeTile(4, 4, 'WATER', null));
+        input.tiles.set('6,4', makeTile(6, 4, 'WATER', null));
         input.buildings.set('5,5', ['BARRACKS', 'HARBOR']);
         const transport = makeUnit('TRANSPORT', 'ai1', 6, 5, { boarded: false, cargo: [] });
         input.units.set(transport.id, transport);
