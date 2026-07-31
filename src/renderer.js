@@ -2891,8 +2891,9 @@ export class GameRenderer {
                     o.material.emissiveIntensity = 0.18;
                 }
             });
-            if (UNIT_ICON_NAME[unit.type]) {
-                mesh.add(this.makeIconSprite(UNIT_ICON_NAME[unit.type], 0.45, naval ? 0.7 : 0.95));
+            const unitIconName = UNIT_ICON_NAME[unit.type] || (hasIcon(unit.type) ? unit.type : null);
+            if (unitIconName) {
+                mesh.add(this.makeIconSprite(unitIconName, 0.45, naval ? 0.7 : 0.95));
             }
             // Cargo pips on a Transport: one dot per carried unit.
             if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {
@@ -2980,7 +2981,7 @@ export class GameRenderer {
             let c = new THREE.Color(terr.color);
             if (t.owner) {
                 const fc = this.fcolor(gameState, t.owner);
-                c = c.lerp(new THREE.Color(fc.tile), 0.55);
+                c = c.lerp(new THREE.Color(fc.tile), 0.85);
             }
             if (!isVis) c = c.multiplyScalar(0.4);
             const hex = '#' + (c.getHexString ? c.getHexString() : c.toString(16).padStart(6, '0'));

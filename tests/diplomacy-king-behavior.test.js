@@ -44,11 +44,11 @@ describe('aiDecideTreaty parameter usage', () => {
 
     it('isNeighbor increases acceptance for NAP', () => {
         let farAccepts = 0, neighborAccepts = 0;
-        for (let i = 0; i < 200; i++) {
+        for (let i = 0; i < 5000; i++) {
             if (aiDecideTreaty('BALANCED', DIPLOMACY_STATES.NAP, 1.0, 10, 0, 0, false, 0)) farAccepts++;
             if (aiDecideTreaty('BALANCED', DIPLOMACY_STATES.NAP, 1.0, 10, 0, 0, true, 0)) neighborAccepts++;
         }
-        expect(neighborAccepts).toBeGreaterThanOrEqual(farAccepts);
+        expect(neighborAccepts).toBeGreaterThan(farAccepts);
     });
 
     it('sharedEnemies strongly boosts alliance acceptance', () => {

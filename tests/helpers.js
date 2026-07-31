@@ -160,6 +160,7 @@ export function makeGameState(overrides = {}) {
         tempBonuses: {},
         graveyard: [],
         eliminated: new Set(),
+        kingDead: {},
         reputation: {},
         gameOver: false,
         winner: null,

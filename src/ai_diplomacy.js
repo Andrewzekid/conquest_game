@@ -6,7 +6,7 @@
  *  inject goal-aware overrides into the base personality-driven chances.
  */
 import { DIPLOMACY_STATES, AI_PERSONALITIES } from './config.js';
-import { getWarWeariness } from './diplomacy.js';
+import { getWarWeariness, getRelation } from './diplomacy.js';
 
 /** Adjust diplomacy chances based on the active goal sequence.
  *  Returns an object with overrides for warChance, acceptTrade, acceptPeace,
@@ -200,4 +200,45 @@ export function shouldAcceptPeace(aiState, diploState, owner, attackerFaction, w
         return { accept: true, reason: 'spy_intel_complete' };
     }
     return { accept: false, reason: 'continue_war' };
+}
+
+/** Decide whether a strong AI should break an existing peace/NAP/ceasefire
+ *  to press a decisive military advantage.
+ *
+ *  Returns true when:
+ *   - the current state with target is PEACE, NAP, or CEASEFIRE,
+ *   - no active peace truce is in effect,
+ *   - our power ratio is >= 1.6,
+ *   - personality is AGGRESSIVE or BALANCED, OR we have a conquest goal
+ *     against the target.
+ *
+ *  @param {object} aiState - persistent AI state with goals
+ *  @param {object} diploState - current diplomacy state
+ *  @param {string} owner - this faction's id
+ *  @param {string} target - faction whose treaty we might break
+ *  @param {number} powerRatio - our power / their power
+ *  @param {number} currentTurn - current turn number
+ *  @returns {boolean}
+ */
+export function shouldBreakPeace(aiState, diploState, owner, target, powerRatio, currentTurn = 0) {
+    const rel = getRelation(diploState, owner, target);
+    if (![DIPLOMACY_STATES.PEACE, DIPLOMACY_STATES.NAP, DIPLOMACY_STATES.CEASEFIRE].includes(rel.state)) {
+        return false;
+    }
+    if (rel.peaceTruceUntil && currentTurn < rel.peaceTruceUntil) {
+        return false;
+    }
+    if (powerRatio < 1.6) {
+        return false;
+    }
+    const personality = (aiState && aiState.personality) || 'BALANCED';
+    if (personality === 'AGGRESSIVE' || personality === 'BALANCED') {
+        return true;
+    }
+    const goals = aiState && aiState.goals;
+    const topGoal = goals && goals.length ? goals[0] : null;
+    if (topGoal && topGoal.kind === 'conquest' && topGoal.targetFaction === target) {
+        return true;
+    }
+    return false;
 }

@@ -21,7 +21,16 @@ import { GRID_SIZE, MAP_SIZES, calculateMapDimensions, setGridDimensions, TERRAI
           MILITARY_BUILDING_LEVELS, ESPIONAGE_GRIPERANCE, CITY_RAZE_GRIPERANCE,
           WAR_OBJECTIVE_CAPITAL_BONUS, WAR_OBJECTIVE_KEY_BUILDING_BONUS,
           WAR_OBJECTIVE_VICTORY_LEADER_BONUS, WAR_OBJECTIVE_RESOURCE_CONTENDER_BONUS,
-          WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR } from './config.js';
+          WAR_OBJECTIVE_MIN_CITIES, AI_KING_MOBILITY_THREAT_FACTOR,
+          AI_KING_RETREAT_BASE, AI_KING_RETREAT_LATE_GAME, AI_KING_RETREAT_LATE_GAME_UNITS,
+          AI_KING_RETREAT_LATE_GAME_TURN, AI_KING_RETREAT_MAX, AI_KING_RETREAT_PER_FOE,
+          AI_KING_RETREAT_FOE_CAP, AI_KING_RETREAT_ARTILLERY, AI_KING_RETREAT_RANGED,
+          AI_KING_RETREAT_ENEMY_KING, AI_KING_RETREAT_ENEMY_LORD, AI_KING_RETREAT_LORD_CAP,
+          AI_KING_RETREAT_POWER_RATIO_SCALE, AI_KING_RETREAT_POWER_RATIO_CAP,
+          AI_KING_RETREAT_POWER_RATIO_TRIGGER, AI_KING_HUNT_ADVANTAGE_EARLY,
+          AI_KING_HUNT_ADVANTAGE_LATE, AI_KING_HUNT_RANGE_EARLY, AI_KING_HUNT_RANGE_LATE,
+          AI_LORD_RETREAT_BASE, AI_LORD_RETREAT_LOW, AI_LORD_RETREAT_ENEMY_RADIUS,
+          AI_LORD_RETREAT_POWER_TRIGGER } from './config.js';
 import { generateMap, buildTileMap, getOwnedCities, getInfluencedTiles, cityRadius,
          captureCityTerritory, besiegeCity, foundCity, isPassable, expandCityTerritory, cityFortMax } from './map.js';
 import { isWaterConnectedToOpenWater } from './map_util.js';
@@ -46,7 +55,7 @@ import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
 import { getFactionDef, getUnitCostFor, getFactionVision, FACTION_IDS,
          getDiplomacyBonus, getGoldPerConquest, getCavalryChargeBonus } from './faction.js';
 import { initAIState, createAIState, serializeAIState, deserializeAIState, chooseVictoryTarget, reevaluateVictoryTarget } from './ai_goals.js';
-import { shouldDeclareWar, shouldAcceptPeace, adjustDiplomacyByGoal } from './ai_diplomacy.js';
+import { shouldDeclareWar, shouldAcceptPeace, shouldBreakPeace, adjustDiplomacyByGoal } from './ai_diplomacy.js';
 import { addEvent as addEventEntry } from './eventlog.js';
 import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggression, difficultyOptions } from './difficulty.js';
 import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
@@ -297,6 +306,7 @@ export class Game {
             tempBonuses: {},       // faction -> {attack,defense} for this turn
             graveyard: [],         // fallen units (for Obsidian Raise Dead)
             eliminated: new Set(),
+            kingDead: {},          // faction -> true when the king has fallen
             // Per-faction reputation (0-100, starts 50). Breaking treaties or
             // declaring war on peaceful factions lowers it; long peace raises it.
             // AI uses it to decide whether to deal with you. Byzantine Empire's
@@ -424,6 +434,8 @@ export class Game {
         // Mirror the instance spectate flag onto gameState for pure render/UI
         // code (loaded games skip initState, where this is normally set).
         this.gameState.spectateMode = this.spectateMode;
+        // King-death map — absent on old saves.
+        if (!this.gameState.kingDead) this.gameState.kingDead = {};
         // Backfill unit.factionId for saves made before Phase G (battle.js reads
         // faction passives off it). Derive from the slot->def assignment.
         if (this.gameState.factionAssignments) {
@@ -1575,42 +1587,42 @@ export class Game {
         if (wasKing) this._onKingDeath(lord);
     }
 
-    /** A faction's king has died �?the faction is eliminated. Its units are
-     *  removed and its cities go neutral so they can be recaptured. */
+    /** A faction's king has died �?the faction is thrown into disarray but not
+     *  eliminated. Its cities remain owned but gain unrest, and its surviving
+     *  units suffer a morale debuff. The faction is only eliminated when it
+     *  loses all of its cities. */
     _onKingDeath(king) {
         const f = king.owner;
         const name = this.factionColors[f] ? this.factionColors[f].name : f;
         if (!this.gameState.eliminated) this.gameState.eliminated = new Set();
         if (this.gameState.eliminated.has(f)) return;
-        this.gameState.eliminated.add(f);
-        this.log(`${name}'s king has fallen - ${name} is eliminated!`);
+        if (!this.gameState.kingDead) this.gameState.kingDead = {};
+        if (this.gameState.kingDead[f]) return;
+        this.gameState.kingDead[f] = true;
+        this.log(`${name}'s king has fallen - ${name} is in disarray!`);
         // City razing: all living factions get grievances against the killer.
         // This models the international backlash against total conquest.
         if (CITY_RAZE_GRIPERANCE > 0) {
-            const killer = king.attacker || null;
-            if (killer && killer !== f) {
+            const killer = king.attacker || null;            if (killer && killer !== f) {
                 for (const of2 of FACTIONS) {
                     if (of2 === f || of2 === killer || (this.gameState.eliminated && this.gameState.eliminated.has(of2))) continue;
                     addGrievance(this.gameState.diplomacy, of2, killer, CITY_RAZE_GRIPERANCE, 'faction eliminated');
                 }
             }
-        } 
-        // Remove the faction's remaining units and lords.
-        for (const u of [...this.gameState.units.values()]) {
-            if (u.owner === f) this._onUnitDeath(u);
         }
-        this.gameState.lords = (this.gameState.lords || []).filter(l => l.owner !== f);
-        // Its cities become neutral (open for conquest).
+        // Cities remain owned but suffer a shock (+25 unrest).
         for (const t of this.tiles.values()) {
-            if (t.owner === f) { t.owner = null; t.loyalty = 0; }
-        }
-        // Its defensive structures collapse with the faction.
-        if (this.gameState.structures) {
-            for (const [skey, s] of [...this.gameState.structures]) {
-                if (s.owner === f) this.gameState.structures.delete(skey);
+            if (t.owner === f && t.terrain === 'CITY') {
+                t.unrest = Math.min(100, (t.unrest || 0) + 25);
             }
         }
-        sfx.defeat();
+        // Existing units lose morale: -2 attack/-2 defense for 15 turns.
+        for (const u of this.gameState.units.values()) {
+            if (u.owner === f) {
+                u.moraleDebuffTurns = 15;
+                u.moraleDebuffAmount = 2;
+            }
+        }
         this.checkVictory();
     }
 
@@ -2866,7 +2878,8 @@ export class Game {
             this.log('Cannot attack: not at war with that faction.'); return;
         }
         const def = MILITARY_BUILDING_DEFENSE[bType] || 0;
-        const dmg = Math.max(1, unit.attack - def);
+        const debuff = unit.moraleDebuffAmount || 0;
+        const dmg = Math.max(1, unit.attack - debuff - def);
         const destroyed = damageBuilding(`${targetTile.x},${targetTile.z}`, bType, dmg, this.gameState.buildingState);
         unit.hasAttackedThisTurn = true;
         if (destroyed) {
@@ -4057,6 +4070,26 @@ export class Game {
         const myPower = this._factionPower(faction);
         if (myPower <= 0) return;
         let declared = false;
+
+        // Strong AIs with a decisive advantage may break existing peace/NAP/
+        // ceasefire treaties to press their advantage.
+        const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
+        for (const other of FACTIONS) {
+            if (other === faction) continue;
+            const rel = getRelation(this.gameState.diplomacy, faction, other);
+            if (rel.state === DIPLOMACY_STATES.WAR) continue;
+            const theirPower = Math.max(1, this._factionPower(other));
+            const ratio = myPower / theirPower;
+            if (shouldBreakPeace(aiSt, this.gameState.diplomacy, faction, other, ratio, this.gameState.turn || 0)) {
+                const turn = this.gameState.turn || 0;
+                setRelation(this.gameState.diplomacy, faction, other, DIPLOMACY_STATES.WAR, turn);
+                const otherName = this.factionColors[other] ? this.factionColors[other].name : other;
+                this.log(`${factionName} breaks its treaty with ${otherName} to press its advantage!`);
+                declared = true;
+                break;
+            }
+        }
+        if (declared) return;
         const candidates = FACTIONS.filter(o => o !== faction &&
             getRelation(this.gameState.diplomacy, faction, o).state !== DIPLOMACY_STATES.WAR);
         // Score candidates based on strategic priorities
@@ -4126,6 +4159,9 @@ export class Game {
         for (const { other, score } of scored) {
             if (declared || score === -Infinity) continue;
             const rel = getRelation(this.gameState.diplomacy, faction, other);
+            // Respect peace/ceasefire truces: no re-declaring war until the
+            // truce timer expires.
+            if (rel.peaceTruceUntil && (this.gameState.turn || 0) < rel.peaceTruceUntil) continue;
             const theirPower = Math.max(1, this._factionPower(other));
             const ratio = myPower / theirPower;
             const distance = this._factionDistance(faction, other);
@@ -4289,7 +4325,8 @@ export class Game {
             // Fallback to simple logic if scoring didn't produce a type
             if (!type) {
                 if (rel.state === DIPLOMACY_STATES.WAR) {
-                    if (ratio < 0.8 || (rel.turnsAtWar || 0) > 8) type = DIPLOMACY_STATES.PEACE;
+                    const peaceTurnThreshold = this.spectateMode ? 6 : 8;
+                    if (ratio < 0.8 || (rel.turnsAtWar || 0) > peaceTurnThreshold) type = DIPLOMACY_STATES.PEACE;
                 } else if (rel.state === DIPLOMACY_STATES.NEUTRAL) {
                     if ((rel.relationship || 0) > 0 && Math.random() < 0.2) type = DIPLOMACY_STATES.NAP;
                 } else if (rel.state === DIPLOMACY_STATES.PEACE) {
@@ -4348,7 +4385,7 @@ export class Game {
             const theirGriev = rel.grievances || 0;
             const bt = rel.brokenTreaties || 0;
             const sharedEnemyCount = sharedEnemy ? 1 : 0;
-            const a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, sharedEnemyCount, isNeighbor, theirGriev);
+            let a = aiDecideTreaty(personality, type, ratio, rel.relationship || 0, bt, sharedEnemyCount, isNeighbor, theirGriev);
             let b = aiDecideTreaty(otherPers, type, theirPower / myPower, rel.relationship || 0, bt, sharedEnemyCount, isNeighbor, theirGriev);
             // Goal-driven peace: the recipient's active goals shape its answer
             // to a peace offer — war weariness, heavy losses, or a long/
@@ -4360,6 +4397,15 @@ export class Game {
                     rel.turnsAtWar || 0, 0, { powerRatio: theirPower / myPower, sharedBorder: distance <= 8 });
                 if (peace.accept) b = true;
                 else if (peace.reason === 'conquest_in_progress') b = false;
+                // In spectate mode, if the recipient accepts peace, the proposer
+                // also accepts unless it is clearly winning (power ratio >= 1.4)
+                // and the war is not yet stale (turnsAtWar < 10). This lets
+                // equal or stagnant wars end instead of freezing at -100.
+                if (this.spectateMode && b === true) {
+                    const clearlyWinning = ratio >= 1.4;
+                    const warNotStale = (rel.turnsAtWar || 0) < 10;
+                    if (!(clearlyWinning && warNotStale)) a = true;
+                }
             }
             if (a && b) {
                 const turn = this.gameState.turn || 0;
@@ -4432,6 +4478,15 @@ export class Game {
             return target;
         };
 
+        const nearestOwnCity = (lord) => {
+            let target = null, best = Infinity;
+            for (const c of ownCities) {
+                const d = Math.abs(c.x - lord.x) + Math.abs(c.z - lord.z);
+                if (d < best) { best = d; target = c; }
+            }
+            return target;
+        };
+
         const pickTarget = (lord) => {
             const cls = (lord.class && LORD_CLASSES[lord.class]) || {};
             const bonus = cls.bonus || {};
@@ -4469,12 +4524,41 @@ export class Game {
                 this._aiMoveKing(lord, faction, atWar, pool);
                 continue;
             }
+            // Wounded lords fall back when enemies are near. Base retreat at 40%
+            // HP if any at-war enemy is close; unconditional retreat below 25%.
+            // If local enemies clearly outpower friendly units, retreat earlier
+            // to avoid throwing a wounded lord into a losing fight.
+            const lordHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
+            const foeNear = enemyUnits.some(u =>
+                Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) <= AI_LORD_RETREAT_ENEMY_RADIUS);
+            let friendLocal = 0, foeLocal = 0;
+            for (const u of this.gameState.units.values()) {
+                if (u.owner === faction) continue;
+                if (!atWar(u.owner)) continue;
+                if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) > AI_LORD_RETREAT_ENEMY_RADIUS) continue;
+                foeLocal += (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0);
+            }
+            for (const u of this.gameState.units.values()) {
+                if (u.owner !== faction) continue;
+                if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) > AI_LORD_RETREAT_ENEMY_RADIUS) continue;
+                friendLocal += (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || 0);
+            }
+            const outmatched = foeNear && friendLocal > 0 && foeLocal >= friendLocal * AI_LORD_RETREAT_POWER_TRIGGER;
+            const retreatHp = outmatched ? Math.max(AI_LORD_RETREAT_LOW, AI_LORD_RETREAT_BASE) : AI_LORD_RETREAT_BASE;
+            if (lordHpFrac < AI_LORD_RETREAT_LOW || (lordHpFrac < retreatHp && foeNear)) {
+                const home = nearestOwnCity(lord);
+                if (home) {
+                    this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
+                    continue;
+                }
+            }
             // Don't let a lord charge ahead of its army. If separated from the
             // bulk of its troops, regroup first; only then push the objective.
             const centroid = armyCentroid(lord);
             const distToArmy = Math.abs(lord.x - centroid.x) + Math.abs(lord.z - centroid.z);
+            const separated = (lord.army || []).length > 0 && distToArmy > 2;
             let target;
-            if ((lord.army || []).length > 0 && distToArmy > 4) {
+            if (separated) {
                 target = centroid;
             } else {
                 target = pickTarget(lord);
@@ -4494,10 +4578,11 @@ export class Game {
                     const d = Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z));
                     if (d <= 3 && d < capDist) { capDist = d; capTarget = t; }
                 }
-                if (capTarget) target = capTarget;
+                if (capTarget && !separated) target = capTarget;
             }
             if (!target) continue;
-            for (let s = 0; s < 2; s++) {
+            const maxSteps = separated ? 1 : 2;
+            for (let s = 0; s < maxSteps; s++) {
                 if (lord.x === target.x && lord.z === target.z) break;
                 const step = nextStepToward(this.tiles, this.gameState.units, lord, target, 200, faction);
                 if (!step || (step.x === lord.x && step.z === lord.z)) break;
@@ -4589,6 +4674,20 @@ export class Game {
         const foeLocal = localPower(lord.x, lord.z, 3, false);
         const foeLocalMobile = localPower(lord.x, lord.z, 3, false, true);
 
+        // 0) Army leash: a king with a royal guard must stay with it. If the
+        //    king has run ahead of its army, regroup before doing anything else.
+        const royalGuard = (lord.army || []).map(id => this.gameState.units.get(id)).filter(Boolean);
+        if (royalGuard.length > 0) {
+            const sx = royalGuard.reduce((a, u) => a + u.x, 0);
+            const sz = royalGuard.reduce((a, u) => a + u.z, 0);
+            const guardCentroid = { x: Math.round(sx / royalGuard.length), z: Math.round(sz / royalGuard.length) };
+            const distToGuard = Math.abs(lord.x - guardCentroid.x) + Math.abs(lord.z - guardCentroid.z);
+            if (distToGuard > 3) {
+                this._aiStepLord(lord, guardCentroid.x, guardCentroid.z, faction, pool, factionName);
+                return;
+            }
+        }
+
         // 1) Capture a breached/unclaimed city that is within reach and empty.
         for (const t of this.tiles.values()) {
             if (t.terrain !== 'CITY' || t.owner === faction) continue;
@@ -4602,14 +4701,15 @@ export class Game {
         }
 
         // 2) Retreat when locally outmatched. The HP threshold scales with
-        //    danger level: more enemies, nearby artillery/siege, or superior
-        //    foe attack power all raise the bar so the king retreats earlier
-        //    when the situation is more dire.
+        //    danger level: more enemies, nearby artillery/siege, enemy kings,
+        //    or superior local foe power all raise the bar so the king retreats
+        //    earlier when the situation is more dire.
         const kingHpFrac = (lord.hp || 0) / (lord.maxHp || 1);
         // Count enemy military units within Chebyshev 4, weighted by mobility
         // (threatMobilityWeight): fast / long-reach foes that can strike the
         // king this turn raise the retreat threshold more than slow ones.
         let foeCount = 0;
+        let reachableFoeCount = 0;
         let foeAttackPower = 0;
         let hasArtilleryThreat = false;
         let hasRangedThreat = false;
@@ -4620,6 +4720,7 @@ export class Game {
             if (dist > 4) continue;
             const mw = threatMobilityWeight(eu, lord.x, lord.z);
             foeCount += mw;
+            if (mw >= 1.0) reachableFoeCount += mw;
             foeAttackPower += ((eu.attack ?? 0) + ((UNIT_TYPE[eu.type] && UNIT_TYPE[eu.type].attack) || 0)) * mw;
             // Artillery/siege within their attack range of the king = lethal threat.
             if (!hasArtilleryThreat && SIEGE_SET.has(eu.type)) {
@@ -4638,24 +4739,41 @@ export class Game {
             if (Math.max(Math.abs(fu.x - lord.x), Math.abs(fu.z - lord.z)) > 3) continue;
             friendAttackPower += (fu.attack ?? 0) + ((UNIT_TYPE[fu.type] && UNIT_TYPE[fu.type].attack) || 0);
         }
-        // Dynamic retreat threshold: base 0.55, scales up with danger.
-        // Raised from 0.50 so the king doesn't wait until too late.
-        // LATE GAME: king is more cautious - starts retreating earlier.
-        const lateGame = military.length >= 8 || (this.gameState.turn || 0) >= 40;
-        let retreatThreshold = lateGame ? 0.65 : 0.55;
-        retreatThreshold += Math.min(0.15, foeCount * 0.05);         // +0.05 per foe (cap +0.15)
-        if (hasArtilleryThreat) retreatThreshold += 0.10;             // artillery nearby = deadly
-        if (hasRangedThreat) retreatThreshold += 0.10;                // ranged units chip away
-        if (foeAttackPower > friendAttackPower) retreatThreshold += 0.05;  // foe outguns us
-        retreatThreshold = Math.min(0.75, retreatThreshold);          // cap at 75%
+        // Extra caution for nearby enemy kings and lords — avoid 1v1 duels with
+        // high-power units and do not overcommit against enemy royalty.
+        let enemyKingNearby = false;
+        let enemyLordCount = 0;
+        for (const el of enemyLords) {
+            const dist = Math.max(Math.abs(el.x - lord.x), Math.abs(el.z - lord.z));
+            if (dist > 4) continue;
+            enemyLordCount++;
+            if (el.isKing) enemyKingNearby = true;
+        }
+        // Dynamic retreat threshold: base 0.60, scales up with danger.
+        const lateGame = military.length >= AI_KING_RETREAT_LATE_GAME_UNITS ||
+            (this.gameState.turn || 0) >= AI_KING_RETREAT_LATE_GAME_TURN;
+        let retreatThreshold = lateGame ? AI_KING_RETREAT_LATE_GAME : AI_KING_RETREAT_BASE;
+        // Reachable foes (can strike this turn) raise the threshold; distant/slow ones barely do.
+        retreatThreshold += Math.min(AI_KING_RETREAT_FOE_CAP, reachableFoeCount * AI_KING_RETREAT_PER_FOE);
+        if (hasArtilleryThreat) retreatThreshold += AI_KING_RETREAT_ARTILLERY;
+        if (hasRangedThreat) retreatThreshold += AI_KING_RETREAT_RANGED;
+        if (enemyKingNearby) retreatThreshold += AI_KING_RETREAT_ENEMY_KING;
+        retreatThreshold += Math.min(AI_KING_RETREAT_LORD_CAP, enemyLordCount * AI_KING_RETREAT_ENEMY_LORD);
+        // Local power disadvantage raises the threshold; a 2:1 foe advantage can push it to the cap.
+        const localPowerRatio = friendLocal > 0 ? foeLocalMobile / friendLocal : (foeLocalMobile > 0 ? Infinity : 0);
+        if (localPowerRatio > 1.0) {
+            retreatThreshold += Math.min(AI_KING_RETREAT_POWER_RATIO_CAP,
+                (localPowerRatio - 1.0) * AI_KING_RETREAT_POWER_RATIO_SCALE);
+        }
+        retreatThreshold = Math.min(AI_KING_RETREAT_MAX, retreatThreshold); // cap
 
         if (kingHpFrac < retreatThreshold) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
-        // Also retreat when power-ratio is bad (subsumes the old 1.3x check).
-        // Mobility-weighted: foes that can actually strike this turn count more.
-        if (foeLocalMobile > 0 && foeLocalMobile > friendLocal * 1.3) {
+        // Also retreat when power-ratio is bad. Lower trigger than before so the
+        // king stops walking into outnumbered fights / 1v1s against strong foes.
+        if (foeLocalMobile > 0 && foeLocalMobile > friendLocal * AI_KING_RETREAT_POWER_RATIO_TRIGGER) {
             const home = nearestOwnCity();
             if (home) { this._aiStepLord(lord, home.x, home.z, faction, pool, factionName); return; }
         }
@@ -4704,7 +4822,9 @@ export class Game {
                 const d = Math.abs(ek.x - lord.x) + Math.abs(ek.z - lord.z);
                 if (d < bestD) { bestD = d; harasser = ek; }
             }
-            if (harasser && friendLocal > foeLocal * 0.8) {
+            // Require a clear local advantage; the king should not go hunting
+            // enemy kings alone or in a 1v1 situation.
+            if (harasser && friendLocal > foeLocal * AI_KING_HUNT_ADVANTAGE_EARLY) {
                 this._aiStepLord(lord, harasser.x, harasser.z, faction, pool, factionName);
                 return;
             }
@@ -4713,9 +4833,11 @@ export class Game {
         // 3b) Join a crucial siege. If our army is besieging an at-war enemy
         //     city (>=3 friendly military within Chebyshev 3) and the enemy king
         //     is present (within Chebyshev 2), and we clearly outnumber the
-        //     defenders locally, the king steps in to help crack the city �?a
+        //     defenders locally, the king steps in to help crack the city — a
         //     high-value objective at low risk. The retreat gate (step 2)
         //     already ensures we only advance when not locally outmatched.
+        //     Against an enemy king we demand a larger advantage to avoid
+        //     throwing the king into a risky duel.
         if (hasEnemy) {
             let target = null, bestD = Infinity;
             for (const c of this.tiles.values()) {
@@ -4733,8 +4855,8 @@ export class Game {
                 const enemyKing = enemyLords.find(l => l.isKing &&
                     Math.max(Math.abs(l.x - c.x), Math.abs(l.z - c.z)) <= 2);
                 if (!enemyKing) continue;
-                // low risk: we outnumber the defenders locally.
-                if (localPower(c.x, c.z, 3, true) <= localPower(c.x, c.z, 3, false) * 1.3) continue;
+                // low risk: we clearly outnumber the defenders locally (1.5x).
+                if (localPower(c.x, c.z, 3, true) <= localPower(c.x, c.z, 3, false) * 1.5) continue;
                 const d = Math.max(Math.abs(c.x - lord.x), Math.abs(c.z - lord.z));
                 if (d < bestD) { bestD = d; target = c; }
             }
@@ -4751,7 +4873,8 @@ export class Game {
         //     exists - it should join the conquest group instead.
         //     LATE GAME: the king is much more conservative - it only hunts
         //     enemy kings with a large local advantage (2x+) and never alone.
-        //     Early game the king can be aggressive (it's the strongest unit).
+        //     Early game the king can be aggressive, but still needs a clear
+        //     local edge to avoid 1v1 duels.
         const aiSt = this.gameState.aiState && this.gameState.aiState[faction];
         const topGoalKind = aiSt && aiSt.goals && aiSt.goals[0] ? aiSt.goals[0].kind : null;
         if (hasEnemy && aiSt && aiSt.goals && topGoalKind === 'attack-king') {
@@ -4760,9 +4883,9 @@ export class Game {
                 const d = Math.abs(enemyKing.x - lord.x) + Math.abs(enemyKing.z - lord.z);
                 const guarded = [...this.gameState.units.values()]
                     .some(u => u.owner === enemyKing.owner && u.x === enemyKing.x && u.z === enemyKing.z);
-                // Late game: require larger advantage and closer proximity.
-                const advantageReq = lateGame ? 1.5 : 0.8;
-                const maxRange = lateGame ? 6 : 10;
+                // Use tuned constants: larger advantage required, shorter range late.
+                const advantageReq = lateGame ? AI_KING_HUNT_ADVANTAGE_LATE : AI_KING_HUNT_ADVANTAGE_EARLY;
+                const maxRange = lateGame ? AI_KING_HUNT_RANGE_LATE : AI_KING_HUNT_RANGE_EARLY;
                 if (!guarded && d > 1 && d <= maxRange && friendLocal > foeLocal * advantageReq) {
                     this._aiStepLord(lord, enemyKing.x, enemyKing.z, faction, pool, factionName);
                     return;
@@ -4813,12 +4936,11 @@ export class Game {
         }
 
         // 5b) Early-game exploration: push the king outward to scout and claim
-        //     unowned territory. Mobilized kings (Iron Empire) keep scouting
-        //     even after the army grows — their mechanical nature lets them
-        //     range farther. Also explore when the army is still tiny (<5).
-        if (!hasEnemy && (military.length < 5 || lord.mobilized)) {
+        //     unowned territory. Only tiny armies explore; mobilized kings must
+        //     still keep their guard with them once a real army exists.
+        if (!hasEnemy && military.length < 5) {
             let explore = null, bestD = Infinity;
-            const maxDist = lord.mobilized ? 16 : 10;
+            const maxDist = 6;
             for (const t of this.tiles.values()) {
                 if (t.owner === faction) continue;
                 if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
@@ -5100,6 +5222,8 @@ export class Game {
                     break;
                 }
                 case 'recruitLord': {
+                    // A kingless faction cannot recruit new lords.
+                    if (this.gameState.kingDead && this.gameState.kingDead[faction]) break;
                     const nonKings = (this.gameState.lords || []).filter(l => l.owner === faction && !l.isKing);
                     const cities = getOwnedCities(this.tiles, faction);
                     if (!cities.length) break;
@@ -5191,7 +5315,8 @@ export class Game {
                         const bType = list.find(b => BUILDING_TYPE[b] && BUILDING_TYPE[b].military);
                         if (bType) {
                             const def = MILITARY_BUILDING_DEFENSE[bType] || 0;
-                            const dmg = Math.max(1, unit.attack - def);
+                            const debuff = unit.moraleDebuffAmount || 0;
+                            const dmg = Math.max(1, unit.attack - debuff - def);
                             const destroyed = damageBuilding(`${tile.x},${tile.z}`, bType, dmg, this.gameState.buildingState);
                             unit.hasAttackedThisTurn = true;
                             if (destroyed) {

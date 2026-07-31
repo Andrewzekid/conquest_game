@@ -69,6 +69,7 @@ describe('ai_goals.selectGoals', () => {
       factionDef: { id: 'storm', aiPersonality: 'BALANCED' },
       isIslandFaction: true,
       foreignMassWithoutCity: true,
+      foreignShoreKey: '5,5',
       enemies: [],
       enemyCities: [],
       bestFoundSpotKey: null, // home mass full -> settle may be absent

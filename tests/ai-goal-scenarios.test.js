@@ -420,6 +420,21 @@ describe('expand-islands vs naval-only conquest', () => {
         expect(goals[0].kind).toBe('conquest');
         expect(goals[0].meta.requiresNaval).toBe(true);
     });
+
+    it('no valid overseas settlement spot => suppress expand-islands and pick naval conquest', () => {
+        // The foreign landmass exists but every settleable tile is blocked by
+        // enemy cities (simulating a fully-claimed overseas continent). Without
+        // a foreignShoreKey, expand-islands must be dropped so the AI builds
+        // transports + siege for invasion instead of spamming idle settlers.
+        const tiles = twoLandmassTiles('enemy');
+        const goals = selectGoals(navalInput(tiles, [{ x: 10, z: 2, owner: 'enemy', neutral: false }], {
+            enemies: ['enemy'],
+            needsNavalExpansion: true, foreignMassWithoutCity: true, foreignShoreKey: null,
+        }));
+        expect(goals.some(g => g.kind === 'expand-islands')).toBe(false);
+        expect(goals[0].kind).toBe('conquest');
+        expect(goals[0].meta.requiresNaval).toBe(true);
+    });
 });
 
 // ===========================================================================

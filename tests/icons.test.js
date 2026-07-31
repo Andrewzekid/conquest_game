@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { hasIcon, svgIcon, svgDataURL } from '../src/icons.js';
+import { UNIT_TYPE, EXTRA_UNITS, NAVAL_UNITS } from '../src/config.js';
 
 describe('icons', () => {
   describe('hasIcon', () => {
@@ -51,6 +52,12 @@ describe('icons', () => {
     it('falls back to flag for unknown', () => {
       const url = svgDataURL('nonexistent');
       expect(url).toContain('data:image/svg+xml');
+    });
+
+    it('every unit type has an icon', () => {
+      const allUnits = new Set([...Object.keys(UNIT_TYPE), ...EXTRA_UNITS, ...NAVAL_UNITS]);
+      const missing = [...allUnits].filter(u => !hasIcon(u));
+      expect(missing).toEqual([]);
     });
 
     it('respects size parameter', () => {

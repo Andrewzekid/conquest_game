@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { LORD_SKILL_TREES } from '../src/config.js';
-import { createLord, awardXP, getAvailableSkills, investSkillPoint, getSkillEffects }
+import { createLord, awardXP, getAvailableSkills, investSkillPoint, getSkillEffects,
+  lordAttack, lordDefense }
   from '../src/lords.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,32 @@ describe('Lord Skill Trees — investSkillPoint', () => {
     const beforeCmd = lord.stats.command;
     investSkillPoint(lord, 'army_commander'); // commandBonus: 2
     expect(lord.stats.command).toBe(beforeCmd + 2);
+  });
+
+  it('applies base combat stat from Blade Master', () => {
+    const lord = createLord('player', 0, 0, 'Test', 'WARLORD');
+    lord.skillPoints = 1;
+    const beforeCombat = lord.stats.combat;
+    investSkillPoint(lord, 'blade_master'); // combat: 2
+    expect(lord.stats.combat).toBe(beforeCombat + 2);
+    expect(lordAttack(lord)).toBeGreaterThan(beforeCombat);
+  });
+
+  it('applies base command stat from Iron Skin', () => {
+    const lord = createLord('player', 0, 0, 'Test', 'GUARDIAN');
+    lord.skillPoints = 1;
+    const beforeCommand = lord.stats.command;
+    investSkillPoint(lord, 'iron_skin'); // command: 2
+    expect(lord.stats.command).toBe(beforeCommand + 2);
+    expect(lordDefense(lord)).toBeGreaterThan(beforeCommand);
+  });
+
+  it('applies base governance stat from economic skills', () => {
+    const lord = createLord('player', 0, 0, 'Test', 'GRAND_COMMANDER');
+    lord.skillPoints = 1;
+    const beforeGov = lord.stats.governance;
+    investSkillPoint(lord, 'tax_collector'); // governance: 2
+    expect(lord.stats.governance).toBe(beforeGov + 2);
   });
 });
 

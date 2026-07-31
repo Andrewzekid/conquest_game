@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { calculateUnrest, applyUnrestEffects, processUnrest, applyFactionUnrest }
   from '../src/economy.js';
-import { UNREST_THRESHOLDS } from '../src/config.js';
+import { UNREST_THRESHOLDS, UNREST_DECAY_RATES } from '../src/config.js';
 
 function mkTiles(arr) {
   const m = new Map();
@@ -21,24 +21,34 @@ describe('City Unrest System — calculateUnrest', () => {
     expect(result.amount).toBe(0);
   });
 
-  it('adds unrest when no garrison is present', () => {
+  it('adds no unrest in a safe city without a garrison', () => {
     const tiles = mkTiles([
       { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0 }
     ]);
     const result = calculateUnrest(tiles, '5,5', 'player', new Map(), [], 10, new Map());
-    expect(result.amount).toBeGreaterThan(0);
-    expect(result.reasons.some(r => r.reason === 'no_garrison')).toBe(true);
+    expect(result.amount).toBe(0);
   });
 
-  it('adds unrest from adjacent enemy-city cultural pressure', () => {
+  it('adds unrest when enemies are nearby and the garrison is weak', () => {
     const tiles = mkTiles([
-      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0 },
-      { x: 6, z: 5, terrain: 'CITY', owner: 'ai1', cityLevel: 2 }
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0 }
     ]);
     const units = new Map();
-    units.set(1, { id: 1, owner: 'player', x: 5, z: 5 });
+    units.set(1, { id: 1, owner: 'ai1', type: 'WARRIOR', x: 7, z: 5 });
+    units.set(2, { id: 2, owner: 'ai1', type: 'WARRIOR', x: 8, z: 5 });
     const result = calculateUnrest(tiles, '5,5', 'player', units, [], 10, new Map());
-    expect(result.reasons.some(r => r.reason === 'cultural_pressure' && r.amount > 0)).toBe(true);
+    expect(result.amount).toBeGreaterThan(0);
+    expect(result.reasons.some(r => r.reason === 'enemy_nearby' && r.amount > 0)).toBe(true);
+  });
+
+  it('does NOT add unrest from a lone enemy scout/warrior (needs a real force)', () => {
+    const tiles = mkTiles([
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0 }
+    ]);
+    const units = new Map();
+    units.set(1, { id: 1, owner: 'ai1', type: 'WARRIOR', x: 7, z: 5 });
+    const result = calculateUnrest(tiles, '5,5', 'player', units, [], 10, new Map());
+    expect(result.reasons.some(r => r.reason === 'enemy_nearby')).toBe(false);
   });
 
   it('reduces unrest when a governor is assigned', () => {
@@ -68,8 +78,8 @@ describe('City Unrest System — calculateUnrest', () => {
       { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 3, unrest: 0, lastConqueredTurn: 8 }
     ]);
     const units = new Map();
-    units.set(1, { id: 1, owner: 'player', x: 5, z: 5 });
-    // turn 9: 1 turn since conquest → conquestUnrest = 10 - 1 = 9
+    units.set(1, { id: 1, owner: 'player', type: 'WARRIOR', x: 5, z: 5 });
+    // turn 9: 1 turn since conquest → conquestUnrest = 4 - 1 = 3
     const r1 = calculateUnrest(tiles, '5,5', 'player', units, [], 9, new Map());
     expect(r1.reasons.some(rs => rs.reason === 'recent_conquest')).toBe(true);
     // turn 30: well past the decay window → no recent-conquest reason
@@ -169,7 +179,9 @@ describe('City Unrest System — processUnrest', () => {
     expect(tiles.get('5,5').unrest).toBe(0);
   });
 
-  it('triggers a rebellion at 100% unrest at least once over many tries', () => {
+  it('does not rebel when the city is safe and unrest is high', () => {
+    // A city at 100 unrest with no enemies nearby should no longer flip
+    // randomly to independent.
     let rebellionCount = 0;
     for (let i = 0; i < 200; i++) {
       const tiles = mkTiles([
@@ -179,25 +191,45 @@ describe('City Unrest System — processUnrest', () => {
       const result = processUnrest(tiles, 'player', new Map(), [], 10, new Map());
       if (result.rebellions.length > 0) rebellionCount++;
     }
-    // 30% chance per try × 200 tries should virtually always hit at least once.
+    expect(rebellionCount).toBe(0);
+  });
+
+  it('triggers a rebellion at 100% unrest when an enemy threat is present', () => {
+    let rebellionCount = 0;
+    for (let i = 0; i < 400; i++) {
+      const tiles = mkTiles([
+        { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1,
+          cityName: 'Rebelville', unrest: 100, lastConqueredTurn: 0 }
+      ]);
+      const units = new Map();
+      units.set(1, { id: 1, owner: 'ai1', type: 'WARRIOR', x: 6, z: 5 });
+      units.set(2, { id: 2, owner: 'ai1', type: 'WARRIOR', x: 6, z: 6 });
+      const result = processUnrest(tiles, 'player', units, [], 10, new Map());
+      if (result.rebellions.length > 0) rebellionCount++;
+    }
+    // 3% chance per try × 400 tries should virtually always hit at least once.
     expect(rebellionCount).toBeGreaterThan(0);
   });
 
   it('a rebellion flips the city owner and resets unrest', () => {
     // Force a rebellion by making every adjacent tile owned by a rival so
-    // findHighestInfluenceOwner returns that rival.
+    // findHighestInfluenceOwner returns that rival, and station an enemy unit
+    // nearby so rebellion is allowed.
     const tiles = mkTiles([
       { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 100, lastConqueredTurn: 0 },
       { x: 6, z: 5, terrain: 'PLAINS', owner: 'ai2' }
     ]);
+    const units = new Map();
+    units.set(1, { id: 1, owner: 'ai2', type: 'WARRIOR', x: 7, z: 5 });
+    units.set(2, { id: 2, owner: 'ai2', type: 'WARRIOR', x: 7, z: 6 });
     let rebelled = false;
-    for (let i = 0; i < 200 && !rebelled; i++) {
+    for (let i = 0; i < 400 && !rebelled; i++) {
       // reset between tries
       tiles.get('5,5').owner = 'player';
       tiles.get('5,5').unrest = 100;
       tiles.get('5,5').peaceTurns = 0;
       tiles.get('5,5').siegeTurns = 0;
-      const result = processUnrest(tiles, 'player', new Map(), [], 10, new Map());
+      const result = processUnrest(tiles, 'player', units, [], 10, new Map());
       if (result.rebellions.length > 0) {
         rebelled = true;
         expect(tiles.get('5,5').owner).toBe('ai2');
@@ -211,6 +243,7 @@ describe('City Unrest System — processUnrest', () => {
     // City at (5,5) with surrounding tiles owned by 'player'. No rival
     // influence adjacent -> findHighestInfluenceOwner returns null -> the
     // city goes independent. Surrounding tiles must also flip to null.
+    // An enemy unit nearby is required for rebellion to be permitted.
     // cityRadius(level 1) = 1, so we test tiles within radius 1.
     const tilesArr = [
       { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 100, lastConqueredTurn: 0 }
@@ -221,14 +254,17 @@ describe('City Unrest System — processUnrest', () => {
         tilesArr.push({ x: 5 + dx, z: 5 + dz, terrain: 'PLAINS', owner: 'player' });
       }
     }
+    const units = new Map();
+    units.set(1, { id: 1, owner: 'ai1', type: 'WARRIOR', x: 7, z: 5 });
+    units.set(2, { id: 2, owner: 'ai1', type: 'WARRIOR', x: 7, z: 6 });
     let rebelled = false;
-    for (let i = 0; i < 200 && !rebelled; i++) {
+    for (let i = 0; i < 400 && !rebelled; i++) {
       tilesArr.forEach(t => { t.owner = 'player'; });
       const tiles = mkTiles(tilesArr);
       tiles.get('5,5').unrest = 100;
       tiles.get('5,5').peaceTurns = 0;
       tiles.get('5,5').siegeTurns = 0;
-      const result = processUnrest(tiles, 'player', new Map(), [], 10, new Map());
+      const result = processUnrest(tiles, 'player', units, [], 10, new Map());
       if (result.rebellions.length > 0) {
         rebelled = true;
         expect(tiles.get('5,5').owner).toBeNull();
@@ -243,16 +279,49 @@ describe('City Unrest System — processUnrest', () => {
     expect(rebelled).toBe(true);
   });
 
-  it('conquest-count dampening reduces unrest gains for recaptured cities (Fix 13)', () => {
-    // Same setup as the no-garrison test, but with conquestCount = 2 (so
-    // dampening = 1 - 2*0.25 = 0.5). The no-garrison penalty should be reduced
-    // from 2 to floor(2 * 0.5) = 1.
+  it('conquest-count dampening reduces enemy-nearby unrest gains for recaptured cities', () => {
+    // With conquestCount = 2, dampening = 1 - 2*0.25 = 0.5. Two enemy warriors
+    // nearby should produce floor(2 * 1 * 0.5) = 1 unrest instead of 2.
     const tiles = mkTiles([
       { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0, conquestCount: 2 }
     ]);
-    const result = calculateUnrest(tiles, '5,5', 'player', new Map(), [], 10, new Map());
-    const noGarrison = result.reasons.find(r => r.reason === 'no_garrison');
-    expect(noGarrison).toBeTruthy();
-    expect(noGarrison.amount).toBe(1); // floor(2 * 0.5)
+    const units = new Map();
+    units.set(1, { id: 1, owner: 'ai1', type: 'WARRIOR', x: 7, z: 5 });
+    units.set(2, { id: 2, owner: 'ai1', type: 'WARRIOR', x: 8, z: 5 });
+    const result = calculateUnrest(tiles, '5,5', 'player', units, [], 10, new Map());
+    const enemyNearby = result.reasons.find(r => r.reason === 'enemy_nearby');
+    expect(enemyNearby).toBeTruthy();
+    expect(enemyNearby.amount).toBe(1);
+  });
+
+  it('adds unrest when the city walls are breached', () => {
+    const tiles = mkTiles([
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 0,
+        fortification: 0, fortMax: 6 }
+    ]);
+    const units = new Map();
+    units.set(1, { id: 1, owner: 'player', type: 'WARRIOR', x: 5, z: 5 });
+    const result = calculateUnrest(tiles, '5,5', 'player', units, [], 10, new Map());
+    expect(result.reasons.some(r => r.reason === 'breached' && r.amount > 0)).toBe(true);
+  });
+
+  it('applies extra post-conquest stability decay, especially with a garrison', () => {
+    const tiles = mkTiles([
+      { x: 5, z: 5, terrain: 'CITY', owner: 'player', cityLevel: 1, unrest: 30, lastConqueredTurn: 9 }
+    ]);
+    // turn 10: 1 turn since conquest, within the 8-turn stability window
+    const noGarrisonUnits = new Map();
+    const noGarrisonResult = calculateUnrest(tiles, '5,5', 'player', noGarrisonUnits, [], 10, new Map());
+    const noGarrisonStab = noGarrisonResult.reasons.find(r => r.reason === 'post_conquest_stability');
+    expect(noGarrisonStab).toBeTruthy();
+    expect(Math.abs(noGarrisonStab.amount)).toBe(UNREST_DECAY_RATES.POST_CONQUEST);
+
+    const garrisonUnits = new Map();
+    garrisonUnits.set(1, { id: 1, owner: 'player', type: 'WARRIOR', x: 5, z: 5 });
+    const garrisonResult = calculateUnrest(tiles, '5,5', 'player', garrisonUnits, [], 10, new Map());
+    const garrisonStab = garrisonResult.reasons.find(r => r.reason === 'post_conquest_stability');
+    expect(garrisonStab).toBeTruthy();
+    expect(Math.abs(garrisonStab.amount)).toBe(
+      UNREST_DECAY_RATES.POST_CONQUEST + UNREST_DECAY_RATES.POST_CONQUEST_GARRISON);
   });
 });

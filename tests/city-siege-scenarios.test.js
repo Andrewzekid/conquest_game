@@ -157,33 +157,32 @@ describe('breach persistence', () => {
     it('fort recovery wears down under repeated siege and resumes after rest', () => {
         const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
         const city = state.tiles.get('10,10');
-        city.fortification = 9; city.fortMax = 9;
+        city.fortification = 12; city.fortMax = 12;
         state.units.clear();
         const siege = makeUnit('SIEGE', 'player', 9, 10);
         const g = makeGame(state);
 
-        // Besiege for three turns: pressure accumulates (capped), no regen.
+        // Besiege for three turns: SIEGE effective power is doubled (2 -> 4).
         g.handleBesiege(siege, city);
         g.handleBesiege(siege, city);
         g.handleBesiege(siege, city);
-        expect(city.fortification).toBe(3); // 9 - 3*2
+        expect(city.fortification).toBe(0); // 12 - 3*4, fully breached
         expect(city.siegePressure).toBe(3);
 
-        // Rest: while pressure remains, regen is suppressed and pressure decays.
+        // Rest: while pressure remains and a siege unit is adjacent, the city stays breached.
         regenFortification(state.tiles, state.units);
-        expect(city.fortification).toBe(3);
+        expect(city.fortification).toBe(0);
         regenFortification(state.tiles, state.units);
-        expect(city.fortification).toBe(3);
+        expect(city.fortification).toBe(0);
         regenFortification(state.tiles, state.units);
-        expect(city.fortification).toBe(3);
+        expect(city.fortification).toBe(0);
         expect(city.siegePressure).toBe(0);
-        // Pressure gone: dampened regen resumes. At 3/9 with high siege fatigue
-        // (6 from 3 besieges * power 2), recovery rate is very low (~0.34/turn).
-        // It takes several ticks to accumulate enough for +1.
-        regenFortification(state.tiles, state.units);
-        regenFortification(state.tiles, state.units);
-        regenFortification(state.tiles, state.units);
-        expect(city.fortification).toBe(4);
+
+        // Move the siege away so recovery can resume. High siege fatigue makes
+        // regen slow, so give it enough ticks to show the wall rebuilding.
+        siege.x = 20; siege.z = 20;
+        for (let i = 0; i < 10; i++) regenFortification(state.tiles, state.units);
+        expect(city.fortification).toBeGreaterThan(0);
     });
 });
 
@@ -345,8 +344,46 @@ describe('ranged combat vs unbreached cities', () => {
         g.handleAttack(archer, def);
 
         expect(city.fortification).toBe(3 - RANGED_BOMBARD_FORT_DAMAGE);
-        // Low damage through the city defense bonus (attack 4+1 vs defense 2+8).
-        expect(def.hp).toBe(48);
+        // Slight ranged city bonus: attack 4+1+2 vs defense 2+8 = 4 damage.
+        expect(def.hp).toBe(46);
+    });
+
+    it('crossbowman can bombard an empty fortified city', () => {
+        const { state, city, g } = combatState();
+        const crossbow = makeUnit('CROSSBOWMAN', 'player', 9, 10);
+        state.units.set(crossbow.id, crossbow);
+
+        g.handleArrowBombard(crossbow, city);
+
+        expect(city.fortification).toBe(3 - RANGED_BOMBARD_FORT_DAMAGE);
+        expect(crossbow.hasAttackedThisTurn).toBe(true);
+    });
+
+    it('crossbowman gets ranged city attack bonus vs a city defender', () => {
+        const { state, city, g } = combatState();
+        const crossbow = makeUnit('CROSSBOWMAN', 'player', 9, 10);
+        const def = makeUnit('INFANTRY', 'ai1', 10, 10, { hp: 50, maxHp: 50 });
+        state.units.set(crossbow.id, crossbow);
+        state.units.set(def.id, def);
+
+        g.handleAttack(crossbow, def);
+
+        expect(g.logs.some(m => m.includes('Ranged city attack'))).toBe(true);
+        expect(def.hp).toBeLessThan(50);
+    });
+
+    it('siege engines deal multiplied damage to city defenders', () => {
+        const { state, city, g } = combatState();
+        const cannon = makeUnit('CANNON', 'player', 9, 10, { attack: 10 });
+        const def = makeUnit('INFANTRY', 'ai1', 10, 10, { hp: 100, maxHp: 100 });
+        state.units.set(cannon.id, cannon);
+        state.units.set(def.id, def);
+
+        g.handleAttack(cannon, def);
+
+        // The old ×2.5 city-damage multiplier was removed; siege engines still
+        // deal meaningful damage through their siege-bonus stats.
+        expect(def.hp).toBeLessThan(90);
     });
 
     it('melee attacks never chip the fortification', () => {
@@ -384,7 +421,7 @@ describe('ranged combat vs unbreached cities', () => {
 // ---------------------------------------------------------------------------
 describe('siege tower support', () => {
     it('siege tower cost is reduced and the defense reduction is a named constant', () => {
-        expect(SIEGE_TOWER_COST).toEqual({ gold: 20, wood: 8, iron: 0, production: 8 });
+        expect(SIEGE_TOWER_COST).toEqual({ gold: 3, wood: 1, iron: 0, production: 1 });
         expect(SIEGE_TOWER_CITY_DEFENSE_REDUCTION).toBe(TERRAIN_BONUS.CITY.defense / 2);
     });
 

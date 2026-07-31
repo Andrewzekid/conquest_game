@@ -256,7 +256,11 @@ function goalValid(goal, ctx) {
             if (!goal.targetTileKey) return false;
             return ctx.myCityCount < ctx.settlerTarget || ctx.scarcityTriggered;
         case 'expand-islands':
-            return ctx.needsNavalExpansion || (ctx.isIslandFaction && ctx.foreignMassWithoutCity);
+            // Only valid when a real overseas settlement tile exists. Without one,
+            // settlers have nowhere to go and the faction should pivot to naval
+            // conquest (transports + siege) instead of spamming idle settlers.
+            return !!ctx.foreignShoreKey &&
+                (ctx.needsNavalExpansion || (ctx.isIslandFaction && ctx.foreignMassWithoutCity));
         case 'develop-economy':
             return true; // always a valid fallback
         case 'diplomacy':
@@ -477,6 +481,7 @@ export function selectGoals(input) {
         enemies: enemySet, defensive: !!activeObjectives.defensive,
         myCityCount, settlerTarget, scarcityTriggered,
         needsNavalExpansion, isIslandFaction, foreignMassWithoutCity,
+        foreignShoreKey,
         neutralFactions, hasSpies, hasChokepoints, unexploredTiles,
         tiles: tiles || null, ownCities: ownCities || [], hasTransport: hasTransportNow,
         enemyKings: enemyKings || [],
@@ -494,6 +499,7 @@ export function selectGoals(input) {
 
     const personality = (factionDef && factionDef.aiPersonality) || 'BALANCED';
     const weights = PERSONALITY_WEIGHTS[personality] || PERSONALITY_WEIGHTS.BALANCED;
+    const isStorm = factionDef && factionDef.id === 'storm';
 
     const candidates = [];
     const push = (kind, score, targetTileKey, targetFaction, horizon, meta, plan = null) => {
@@ -562,6 +568,11 @@ export function selectGoals(input) {
             // Naval penalty: needs harbor + transports (slow, expensive).
             if (!reachableByLand) score -= 30;
 
+            // Storm Kingdom: weak, overseas enemy cities are prime amphibious
+            // invasion targets. Surface them so the AI builds transports + siege
+            // and lands an army instead of spamming settlers with nowhere to go.
+            if (isStorm && !reachableByLand && !c.neutral && (c.fortification || 0) <= 1) score += 55;
+
             // Nearby unclaimed cities bonus: if there are other neutral cities
             // close to this one, capturing it opens up a cluster for expansion.
             if (c.neutral && hasTiles) {
@@ -593,12 +604,14 @@ export function selectGoals(input) {
             // Naval conquest objectives are real but can't be pressed until
             // infrastructure (harbor + transports) is built. Score them lower
             // so they don't dominate over expand-islands/naval-prep goals.
-            // When an EMPTY foreign landmass exists, penalize naval conquest
-            // much harder: settling free land overseas beats a costly naval
-            // invasion, so expand-islands should win. (If every foreign
-            // landmass has enemy cities, the normal 0.6 penalty keeps naval
-            // conquest worthwhile.)
-            const scoreScale = tier === 'naval' ? (foreignMassWithoutCity ? 0.3 : 0.6) : 1.0;
+            // When a VALID overseas settlement spot exists, penalize naval
+            // conquest harder: settling free land overseas beats a costly naval
+            // invasion, so expand-islands should win. If there is no viable
+            // overseas found spot, naval conquest is the only overseas option
+            // and is only mildly penalized.
+            const scoreScale = tier === 'naval'
+                ? (isStorm && (!foreignShoreKey || (tgt.fortification || 0) <= 1) ? 1.0 : (foreignShoreKey ? 0.35 : 0.75))
+                : 1.0;
             // Resource scarcity amplifies conquest priority: when the faction
             // is starving for resources, capturing a nearby accessible city
             // provides fresh tiles and production. Boost by up to 40%.
@@ -738,8 +751,10 @@ export function selectGoals(input) {
             (BASE_SCORE.settle + (scarcityTriggered ? 40 : 0)) * weights.settle,
             bestFoundSpotKey, null, 'long', { scarcityTriggered });
     }
-    // Expand to new islands: needs a fleet to reach foreign land.
-    if (needsNavalExpansion || (isIslandFaction && foreignMassWithoutCity)) {
+    // Expand to new islands: needs a fleet AND a valid overseas settlement tile.
+    // Without a real found spot the AI would train settlers that can't found,
+    // so the goal is suppressed in favor of naval conquest.
+    if (foreignShoreKey && (needsNavalExpansion || (isIslandFaction && foreignMassWithoutCity))) {
         push('expand-islands',
             BASE_SCORE['expand-islands'] * weights['expand-islands'],
             foreignShoreKey, null, 'long', {});

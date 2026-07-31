@@ -6,6 +6,7 @@
 import { DIPLOMACY_STATES, AI_PERSONALITIES, TRADE_MATERIALS,
          GRIEVANCE_DECAY_PER_TURN, GRIEVANCE_WAR_THRESHOLD, GRIEVANCE_HOSTILE,
          WAR_WEARINESS_RATES, PEACE_DEMAND_LIMITS, PEACE_ACCEPTANCE_MODIFIERS,
+         PEACE_TRUCE_TURNS, CEASEFIRE_TRUCE_TURNS,
          COALITION_MAX_ALLIES, COALITION_JOIN_RELATIONSHIP_THRESHOLD, COALITION_SHARED_PENALTY } from './config.js';
 
 /**
@@ -133,16 +134,24 @@ export function setRelation(diploState, a, b, state, currentTurn = 0, duration =
         } else if (state === DIPLOMACY_STATES.PEACE && prevState === DIPLOMACY_STATES.WAR) {
             rel.turnsAtPeace = 0;
             rel.peaceTreaties++;
-            rel.relationship = Math.min(100, (rel.relationship || 0) + 15);
+            rel.relationship = Math.min(100, Math.max(-30, (rel.relationship || 0) + 15));
             rel.turnsAtWar = 0;
+            rel.peaceTruceUntil = (currentTurn || 0) + PEACE_TRUCE_TURNS;
             if (diploState.diplomaticEvents) {
                 diploState.diplomaticEvents.push({ type: 'peace', factions: [a, b] });
             }
         } else if (state === DIPLOMACY_STATES.PEACE && prevState !== DIPLOMACY_STATES.WAR && prevState !== DIPLOMACY_STATES.NEUTRAL) {
             rel.peaceTreaties = (rel.peaceTreaties || 0) + 1;
-            rel.relationship = Math.min(100, (rel.relationship || 0) + 10);
+            rel.relationship = Math.min(100, Math.max(-30, (rel.relationship || 0) + 10));
+            rel.peaceTruceUntil = (currentTurn || 0) + PEACE_TRUCE_TURNS;
             if (diploState.diplomaticEvents) {
                 diploState.diplomaticEvents.push({ type: 'peace', factions: [a, b] });
+            }
+        } else if (state === DIPLOMACY_STATES.CEASEFIRE) {
+            rel.peaceTruceUntil = (currentTurn || 0) + CEASEFIRE_TRUCE_TURNS;
+            rel.turnsAtWar = 0;
+            if (diploState.diplomaticEvents) {
+                diploState.diplomaticEvents.push({ type: 'ceasefire', factions: [a, b] });
             }
         } else if (state === DIPLOMACY_STATES.WAR && prevState !== DIPLOMACY_STATES.WAR) {
             rel.turnsAtWar = 0;
@@ -350,8 +359,9 @@ export function aiDecideWar(personality, powerRatio, relationship = 0, sharedEne
     // strike first. Capped so it tips borderline cases without guaranteeing war.
     const grievanceMod = Math.min(0.3, (grievances || 0) * 0.005);
     // Spectate mode: boost war likelihood so AI factions are more aggressive
-    // and the spectator sees more action
-    const spectateBonus = spectateMode ? 0.25 : 0;
+    // and the spectator sees more action, but keep it low enough that peace
+    // treaties and truces can actually matter.
+    const spectateBonus = spectateMode ? 0.15 : 0;
     return Math.random() < effectiveChance + relMod + sharedEnemyBonus + neighborBonus + grievanceMod + spectateBonus;
 }
 

@@ -257,6 +257,7 @@ describe('A. Reachability-aware conquest targets', () => {
             isIslandFaction: true,
             needsNavalExpansion: true,
             foreignMassWithoutCity: true,
+            foreignShoreKey: '2,2',
         });
         const navalConquest = navalGoals.find(g => g.kind === 'conquest');
         const expandIslands = navalGoals.find(g => g.kind === 'expand-islands');

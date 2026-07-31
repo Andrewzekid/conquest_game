@@ -189,5 +189,21 @@ describe('unit', () => {
     it('null-safe', () => {
       expect(getAttackTargets(null, new Map())).toEqual([]);
     });
+
+    it('excludes naval targets for melee attackers', () => {
+      const u = createUnit('INFANTRY', 'player', 5, 5);
+      const ship = createUnit('GALLEY', 'ai1', 6, 5);
+      const units = new Map([['1', u], ['2', ship]]);
+      const targets = getAttackTargets(u, units);
+      expect(targets).toHaveLength(0);
+    });
+
+    it('includes naval targets for ranged attackers', () => {
+      const u = createUnit('ARCHER', 'player', 5, 5);
+      const ship = createUnit('GALLEY', 'ai1', 6, 5);
+      const units = new Map([['1', u], ['2', ship]]);
+      const targets = getAttackTargets(u, units);
+      expect(targets).toContain(ship);
+    });
   });
 });

@@ -1,7 +1,7 @@
 /** Map generation: terrain, ownership, starting positions.
  *  Phase F: Updated to support non-square maps (GRID_WIDTH x GRID_HEIGHT)
  *  and per-faction city names. */
-import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY, SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX } from './config.js';
+import { GRID_WIDTH, GRID_HEIGHT, GRID_SIZE, TERRAIN, FACTIONS, UNIT_TYPE, NATURAL_WONDERS, CITY_NAMES, FACTION_CITY_NAMES, MIN_LANDMASS_SIZE, MIN_START_LANDMASS, PASS_COUNT_PER_CONTINENT, PASS_TERRAIN_KEY, SIEGE_PRESSURE_PER_HIT, SIEGE_PRESSURE_MAX, SIEGE_TYPES } from './config.js';
 import { getFactionDef } from './faction.js';
 
 // Per-faction city name counters
@@ -916,7 +916,13 @@ export function besiegeCity(unit, cityTile) {
     if (!cityTile || cityTile.terrain !== 'CITY') return msgs;
     if (cityTile.fortification <= 0) return msgs;
     if (cityTile.owner === unit.owner) return msgs; // don't besiege own/ally city
-    const power = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].besiegePower) || (unit.type === 'SIEGE' ? 2 : 1);
+    let power = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].besiegePower) || (unit.type === 'SIEGE' ? 2 : 1);
+    // Siege units are super-effective against city fortifications (siege engines
+    // and heavy artillery pulverize walls). Ships can also shore-bombard walls.
+    if (SIEGE_TYPES.has(unit.type)) power *= 2.0;
+    const udef = UNIT_TYPE[unit.type];
+    if (udef && udef.naval) power *= 1.5;
+    power = Math.floor(power);
     cityTile.fortification = Math.max(0, cityTile.fortification - power);
     // Siege pressure: taking fort damage wears the city's recovery down — it
     // cannot regrow fortification until the pressure decays (see

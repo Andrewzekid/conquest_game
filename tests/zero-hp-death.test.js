@@ -115,7 +115,7 @@ describe('0-hp combatants die when attacked (Game handlers)', () => {
         expect(state.units.has(def.id)).toBe(false);               // ...but a corpse can't dodge death
     });
 
-    it('a 0-hp king inside a city being attacked dies and his faction is eliminated', () => {
+    it('a 0-hp king inside a city being attacked dies and his faction is weakened, not eliminated', () => {
         const state = makeGameState({ diplomacy: warDiplo('player', 'ai1') });
         state.units.clear();
         const atk = makeUnit('INFANTRY', 'player', 9, 10);
@@ -123,16 +123,19 @@ describe('0-hp combatants die when attacked (Game handlers)', () => {
         // King "Nyx" stands on his city at 0 HP — the reported scenario.
         const king = makeKing('ai1', 10, 10, { hp: 0, name: 'Spymaster Nyx' });
         state.lords.push(king);
-        const remnant = makeUnit('INFANTRY', 'ai1', 11, 10); // faction remnant to wipe
+        const remnant = makeUnit('INFANTRY', 'ai1', 11, 10); // faction remnant survives
         state.units.set(remnant.id, remnant);
         const g = makeGame(state);
 
         g.handleAttack(atk, lordCombatant(king));
 
         expect(state.lords.includes(king)).toBe(false);        // the king is dead
-        expect(state.eliminated.has('ai1')).toBe(true);        // king death eliminates the faction
-        expect(state.units.has(remnant.id)).toBe(false);       // its units are removed
-        expect(state.tiles.get('10,10').owner).toBe(null);     // its cities go neutral
+        expect(state.kingDead['ai1']).toBe(true);              // faction is in disarray
+        expect(state.eliminated.has('ai1')).toBe(false);       // not eliminated outright
+        expect(state.units.has(remnant.id)).toBe(true);        // its units remain
+        expect(remnant.moraleDebuffTurns).toBe(15);            // demoralised
+        expect(state.tiles.get('10,10').owner).toBe('ai1');    // cities stay owned
+        expect(state.tiles.get('10,10').unrest).toBe(25);      // shocked citizenry
     });
 
     it('a 0-hp enemy lord shows up as a valid attack target (can be finished off)', () => {
@@ -182,7 +185,7 @@ describe('_sweepDeadCombatants', () => {
         expect(state.graveyard.some(x => x.owner === 'ai1')).toBe(true);
     });
 
-    it('removes a 0-hp king and eliminates his faction', () => {
+    it('removes a 0-hp king and throws his faction into disarray', () => {
         const state = makeGameState();
         const king = makeKing('ai1', 10, 10, { hp: 0 });
         state.lords.push(king);
@@ -191,7 +194,8 @@ describe('_sweepDeadCombatants', () => {
         g._sweepDeadCombatants();
 
         expect(state.lords.includes(king)).toBe(false);
-        expect(state.eliminated.has('ai1')).toBe(true);
+        expect(state.kingDead['ai1']).toBe(true);
+        expect(state.eliminated.has('ai1')).toBe(false);
     });
 
     it('leaves living units and lords untouched', () => {
@@ -220,7 +224,8 @@ describe('_sweepDeadCombatants', () => {
         g.endPlayerTurn();
 
         expect(state.lords.includes(king)).toBe(false);     // swept, not healed
-        expect(state.eliminated.has('ai1')).toBe(true);     // and the faction falls
+        expect(state.kingDead['ai1']).toBe(true);           // faction is in disarray
+        expect(state.eliminated.has('ai1')).toBe(false);    // not eliminated yet
         expect(state.turn).toBe(2);                         // the turn still advanced
     });
 });

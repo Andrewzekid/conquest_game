@@ -41,17 +41,17 @@ export function createLord(owner, x, z, name, classKey) {
     return lord;
 }
 
-/** A lord's max HP: base 12 + 2/level, kings are much sturdier (they are the
+/** A lord's max HP: base 26 + 6/level, kings are much sturdier (they are the
  *  faction leader and their death is catastrophic). Kings get a large HP bonus
- *  (+38) so they can survive longer in battle and lead from the front (50 HP at level 1).
- *  Kings are guaranteed at least 50 max HP regardless of level. */
+ *  (+42) so they can survive longer in battle and lead from the front (68 HP at level 1).
+ *  Kings are guaranteed at least 55 max HP regardless of level. */
 export function lordMaxHp(lord) {
     if (!lord) return 1;
     const level = (typeof lord.level === 'number' && Number.isFinite(lord.level)) ? lord.level : 1;
-    const base = 18 + (level - 1) * 3 + (lord.isKing ? 42 : 0);
+    const base = 26 + (level - 1) * 6 + (lord.isKing ? 42 : 0);
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.hp || 0) : 0;
     const result = lord.isKing ? Math.max(55, base + kingBonus) : base;
-    return Number.isFinite(result) ? result : (lord.isKing ? 55 : 18);
+    return Number.isFinite(result) ? result : (lord.isKing ? 55 : 22);
 }
 
 /** A lord's own melee attack: combat stat + class bonus + king bonus. */
@@ -138,15 +138,16 @@ export function awardXP(lord, amount) {
     while (lord.xp >= LORD_XP_PER_LEVEL * lord.level) {
         lord.xp -= LORD_XP_PER_LEVEL * lord.level;
         lord.level++;
-        // Stat increase: +1 to a random stat each level
-        const stats = ['command', 'combat', 'governance'];
-        const pick = stats[Math.floor(Math.random() * stats.length)];
-        lord.stats[pick]++;
-        // Lords grow sturdier with level (and heal a little on level-up).
+        // Stat increase: +5 to all base stats each level (lords scale more
+        // noticeably with experience).
+        lord.stats.command += 5;
+        lord.stats.combat += 5;
+        lord.stats.governance += 5;
+        // Lords grow sturdier with level (and heal on level-up).
         const newMax = lordMaxHp(lord);
-        lord.hp = Math.min(newMax, (lord.hp || 0) + 4);
+        lord.hp = Math.min(newMax, (lord.hp || 0) + 10);
         lord.maxHp = newMax;
-        messages.push(`${lord.name} reached level ${lord.level}! ${pick} +1`);
+        messages.push(`${lord.name} reached level ${lord.level}! command +5, combat +5, governance +5, hp +10`);
         // Feature 4: each level grants a skill-tree point to spend.
         lord.skillPoints = (lord.skillPoints || 0) + 1;
         messages.push(`${lord.name} gained a skill point!`);
@@ -329,12 +330,17 @@ export function investSkillPoint(lord, skillId) {
     if (!lord.skills) lord.skills = [];
     lord.skills.push(skillId);
 
-    // Apply immediate, permanent stat effects (hp + command capacity). Other
-    // effects (combat bonuses, economy bonuses) are read aggregately from
+    // Apply immediate, permanent stat effects (hp + base stats + command capacity).
+    // Other effects (combat bonuses, economy bonuses) are read aggregately from
     // getSkillEffects at use sites, so they don't need to be baked in here.
     if (skill.effect.hp) {
         lord.maxHp = (lord.maxHp || 0) + skill.effect.hp;
         lord.hp = (lord.hp || 0) + skill.effect.hp;
+    }
+    for (const stat of ['combat', 'command', 'governance']) {
+        if (skill.effect[stat]) {
+            lord.stats[stat] = (lord.stats[stat] || 0) + skill.effect[stat];
+        }
     }
     if (skill.effect.commandBonus) {
         lord.stats.command = (lord.stats.command || 0) + skill.effect.commandBonus;
@@ -346,7 +352,8 @@ export function investSkillPoint(lord, skillId) {
  *  (numerics sum, booleans OR, nested `allUnitsBonus` flattened). */
 export function getSkillEffects(lord) {
     const effects = {
-        attack: 0, defense: 0, hp: 0, critChance: 0, lifesteal: 0, lowHpBonus: 0,
+        attack: 0, defense: 0, hp: 0, combat: 0, command: 0, governance: 0,
+        critChance: 0, lifesteal: 0, lowHpBonus: 0,
         adjacentAttackBonus: 0, adjacentDefenseBonus: 0, siegeBonus: 0,
         cityAttackBonus: 0, commandBonus: 0, healAdjacent: 0, healBonus: 0,
         goldBonus: 0, upkeepReduction: 0, tradeRouteBonus: 0, allResourceBonus: 0,

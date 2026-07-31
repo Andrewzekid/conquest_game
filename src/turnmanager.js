@@ -88,6 +88,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
             // rebellions, then apply a faction-wide yield penalty. Cities
             // captured this turn (tile.lastConqueredTurn) get a recent-conquest
             // spike that decays over the following turns.
+            // Tick down king-death morale debuffs for this faction's units.
+            for (const unit of gameState.units.values()) {
+                if (unit.owner !== f) continue;
+                if (unit.moraleDebuffTurns && unit.moraleDebuffTurns > 0) {
+                    unit.moraleDebuffTurns--;
+                    if (unit.moraleDebuffTurns <= 0) {
+                        unit.moraleDebuffAmount = 0;
+                    }
+                }
+            }
             if (!gameState.eliminated || !gameState.eliminated.has(f)) {
                 const { messages: unrestMsgs, rebellions } = processUnrest(
                     gameState.tiles, f, gameState.units, gameState.lords, gameState.turn, gameState.buildings, gameState.resources[f]);

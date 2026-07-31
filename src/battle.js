@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN, LAND_VS_NAVAL_PENALTY, LAND_NAVAL_TYPES } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN, RANGED_CITY_ATTACK_BONUS, SIEGE_TYPES } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -93,10 +93,19 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const messages = [];
     if (!attackerUnit || !defenderUnit) return { messages: ['No combat: missing unit'], defenderDied: false, attackerDied: false, damageToDefender: 0 };
 
-    // Siege-only units (SIEGE) can only attack cities — block attacks on units.
     const atkType = UNIT_TYPE[attackerUnit.type];
+    const atkStats = combatStats(attackerUnit);
+    const defStats = combatStats(defenderUnit);
+
+    // Siege-only units (SIEGE) can only attack cities — block attacks on units.
     if (atkType && atkType.siegeOnly && terrain !== 'CITY') {
         return { messages: [`${combatName(attackerUnit)} can only attack cities!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
+    }
+
+    // Only ranged/artillery units can attack ships; melee units (infantry,
+    // cavalry, lords) cannot engage naval units.
+    if (defStats.naval && !atkStats.ranged) {
+        return { messages: [`${combatName(attackerUnit)} cannot attack ships!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
     }
 
     // Corrupted hp (NaN/undefined -- e.g. units from pre-HP saves leveled up
@@ -111,8 +120,6 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         if (typeof c.attack !== 'number' || !Number.isFinite(c.attack)) c.attack = 0;
         if (typeof c.defense !== 'number' || !Number.isFinite(c.defense)) c.defense = 0;
     }
-    const atkStats = combatStats(attackerUnit);
-    const defStats = combatStats(defenderUnit);
     // A breached city gives no defensive terrain bonus — treat it as open ground.
     const terrainBonus = defenderCityBreached ? TERRAIN_BONUS.PLAINS : (TERRAIN_BONUS[terrain] || TERRAIN_BONUS.PLAINS);
     // Naval units defending on water/river are in their element — no exposed-
@@ -131,12 +138,6 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             messages.push(`${attackerUnit.type} has type advantage vs ${defenderUnit.type}!`);
         }
     }
-    // Land vs naval penalty: infantry/cavalry attacking ships fight at a
-    // severe disadvantage (they can't effectively engage warships).
-    if (LAND_NAVAL_TYPES.has(attackerUnit.type) && defStats.naval) {
-        atkMultiplier *= LAND_VS_NAVAL_PENALTY;
-        messages.push(`${combatName(attackerUnit)} struggles to fight ships (-${Math.round((1 - LAND_VS_NAVAL_PENALTY) * 100)}% dmg)`);
-    }
 
     // Attacker bonuses: own commanding lord's stats + class bonus + adjacent auras.
     const atkLordBonus = getLordCombatBonus(attackerLord);
@@ -146,11 +147,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     const atkPower = attackerUnit.attack ?? atkStats.attack;
     // atkClass.attack is now an AoE (radius 1) applied via atkAdj, not army-only.
     let effectiveAttack = atkPower * atkMultiplier + (terrainBonus.attack || 0)
-        + atkLordBonus.attack + atkAdj.attack + atkTemp.attack;
+        + atkLordBonus.attack + atkAdj.attack + atkTemp.attack
+        - (attackerUnit.moraleDebuffAmount || 0);
 
-    // Siege-specific temp bonus: Iron Will gives +siegeAttack to siege units.
-    const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'SIEGE_TOWER']);
-    if (SIEGE_TYPES.has(attackerUnit.type) && atkTemp.siegeAttack) {
+    // Siege-specific temp bonus: Iron Will gives +siegeAttack to siege units
+    // (and to siege towers, which otherwise act as support units).
+    const SIEGE_TEMP_BONUS_TYPES = new Set([...SIEGE_TYPES, 'SIEGE_TOWER']);
+    if (SIEGE_TEMP_BONUS_TYPES.has(attackerUnit.type) && atkTemp.siegeAttack) {
         effectiveAttack += atkTemp.siegeAttack;
     }
 
@@ -236,6 +239,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             effectiveAttack += atkClass.siege;
             messages.push(`${attackerLord ? attackerLord.name : 'Conqueror'} class siege: +${atkClass.siege}`);
         }
+        // Ranged city attack bonus: bows, crossbows, and firearms harass defenders
+        // on walls. Siege engines get the bigger damage multiplier below instead.
+        if (atkStats.ranged && !SIEGE_TYPES.has(attackerUnit.type)) {
+            effectiveAttack += RANGED_CITY_ATTACK_BONUS;
+            messages.push(`Ranged city attack: +${RANGED_CITY_ATTACK_BONUS}`);
+        }
         // CONQUISTADOR: mounted gunpowder unit, +2 attack vs units in cities.
         if (atkStats.cityBonus) {
             effectiveAttack += atkStats.cityBonus;
@@ -272,7 +281,8 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     // defClass.defense is now an AoE (radius 1) applied via defAdj, not army-only.
     const cityTechDef = (isCity && !defenderCityBreached) ? (defenderCityDefenseBonus || 0) : 0;
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
-        + defLordBonus.defense + defAdj.defense + defTemp.defense + cityTechDef;
+        + defLordBonus.defense + defAdj.defense + defTemp.defense + cityTechDef
+        - (defenderUnit.moraleDebuffAmount || 0);
     if (cityTechDef > 0) {
         messages.push(`City fortifications from tech: +${cityTechDef} def`);
     }
@@ -388,6 +398,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         !attackerUnit.hasAttackedThisTurn) {
         damageToDefender = Math.max(1, Math.floor(damageToDefender * atkStats.chargeMultiplier));
         messages.push(`${combatName(attackerUnit)} winged charge deals ×${atkStats.chargeMultiplier} damage!`);
+    }
+    // Siege units are super-effective against naval targets (shore bombardment).
+    if (defStats.naval && SIEGE_TYPES.has(attackerUnit.type)) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * 1.5));
+        messages.push(`${combatName(attackerUnit)} shore bombardment: ×1.5 vs naval`);
     }
     // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
     // — archers and artillery exploit the spent, immobile mount.

@@ -1,6 +1,8 @@
 /** Technology tree: era-gated research that unlocks units, buildings, and bonuses.
  *  All functions are pure — they operate on a techState object passed in. */
 
+import { AI_ARTILLERY_TECH_PRIORITY } from './config.js';
+
 // --- Tech definitions ---
 // Each tech has: id, name, era, cost, prerequisites (array of tech ids),
 // unlocks (array of { type: 'unit'|'building'|'ability', id: string }),
@@ -65,7 +67,7 @@ export const TECHS = {
 
     // === MEDIEVAL ERA ===
     FORTIFICATION: {
-        id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 90,
+        id: 'FORTIFICATION', name: 'Fortification', era: 'medieval', cost: 35,
         prerequisites: ['ENGINEERING'],
         // VARANGIAN_GUARD is the byzantine faction-unique; HOUSEHOLD_GUARD is
         // the generic replacement available to everyone else.
@@ -74,14 +76,14 @@ export const TECHS = {
         desc: 'Unlocks Walls, Crossbowman, Varangian Guard (byzantine unique), and Household Guard. Cities gain +2 defense.'
     },
     ROYAL_COURTS: {
-        id: 'ROYAL_COURTS', name: 'Royal Courts', era: 'medieval', cost: 110,
+        id: 'ROYAL_COURTS', name: 'Royal Courts', era: 'medieval', cost: 40,
         prerequisites: ['FORTIFICATION', 'CHIVALRY'],
         unlocks: [],
         bonus: { kingHpBonus: 4, kingAttackBonus: 1, kingDefenseBonus: 1 },
         desc: 'Kings gain +4 HP, +1 attack, and +1 defense.'
     },
     CHIVALRY: {
-        id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 90,
+        id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 35,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
         // BERSERKER (viking unique) and WINGED_HUSSAR (polish unique) are
         // faction-locked at train time; RAIDER and MERCENARY_KNIGHT are the
@@ -91,14 +93,14 @@ export const TECHS = {
         desc: 'Unlocks Cataphract, Chariot, Berserker (viking unique), Winged Hussar (polish unique), Raider, and Mercenary Knight. Lords gain 25% more XP.'
     },
     CARTOGRAPHY: {
-        id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 90,
+        id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 35,
         prerequisites: ['NAVAL_ENGINEERING'],
         unlocks: [{ type: 'unit', id: 'FRIGATE' }, { type: 'unit', id: 'GALLEON' }],
         bonus: { navalVisionBonus: 2 },
         desc: 'Unlocks Frigate and Galleon. Naval units gain +2 vision.'
     },
     FEUDALISM: {
-        id: 'FEUDALISM', name: 'Feudalism', era: 'medieval', cost: 90,
+        id: 'FEUDALISM', name: 'Feudalism', era: 'medieval', cost: 35,
         prerequisites: ['SIEGE_CRAFT'],
         unlocks: [{ type: 'unit', id: 'SIEGE_TOWER' }],
         bonus: { cityLoyaltyBonus: 1 },
@@ -232,7 +234,7 @@ export const TECHS = {
     },
     FIELD_ARTILLERY: {
         id: 'FIELD_ARTILLERY', name: 'Field Artillery', era: 'modern', cost: 500,
-        prerequisites: ['CANNON', 'RAILROAD'],
+        prerequisites: ['METALLURGY', 'RAILROAD'],
         unlocks: [{ type: 'unit', id: 'FIELD_GUN' }, { type: 'unit', id: 'HORSE_ARTILLERY' }],
         bonus: { artilleryMoveBonus: 1 },
         desc: 'Unlocks Field Gun and Horse Artillery. Artillery gain +1 move.'
@@ -334,7 +336,7 @@ export const TECHS = {
     // era as the CROSSBOWMAN). Unlocked via a dedicated tech so it doesn't
     // crowd the existing medieval unlocks.
     POLEARM: {
-        id: 'POLEARM', name: 'Polearm', era: 'medieval', cost: 90,
+        id: 'POLEARM', name: 'Polearm', era: 'medieval', cost: 60,
         prerequisites: ['BRONZE_WORKING', 'FORTIFICATION'],
         unlocks: [{ type: 'unit', id: 'HALBERDIER' }],
         bonus: { cityDefenseBonus: 1 },
@@ -645,73 +647,87 @@ export function autoSelectResearch(state, personality) {
     if (available.length === 0) return null;
 
     const priorities = {
-        AGGRESSIVE: ['CHIVALRY', 'GUNPOWDER', 'SIEGE_CRAFT', 'FORTIFICATION',
+        AGGRESSIVE: ['SIEGE_CRAFT', 'GUNPOWDER', 'CHIVALRY', 'FORTIFICATION',
                      'MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'ANIMAL_HUSBANDRY',
                      'ARCHERY', 'BRONZE_WORKING', 'CARTOGRAPHY', 'FEUDALISM',
                      'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION',
                      // Renaissance
-                     'MATCHLOCK', 'BASTION_FORT', 'OCEAN_NAVIGATION',
+                     'MATCHLOCK', 'BASTION_FORT', 'METALLURGY', 'OCEAN_NAVIGATION',
                      // Enlightenment
-                     'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
                      // Modern
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
-                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
+                     'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic
-                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
+                     'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'ARMOR', 'DREADNOUGHT', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE'],
-        DEFENSIVE:  ['FORTIFICATION', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
-                     'BRONZE_WORKING', 'SIEGE_CRAFT', 'MATHEMATICS', 'ARCHERY',
-                     'ANIMAL_HUSBANDRY', 'NAVAL_ENGINEERING', 'CHIVALRY', 'GUNPOWDER',
+        DEFENSIVE:  ['FORTIFICATION', 'SIEGE_CRAFT', 'GUNPOWDER', 'ENGINEERING', 'MEDICINE', 'FEUDALISM',
+                     'BRONZE_WORKING', 'MATHEMATICS', 'ARCHERY',
+                     'ANIMAL_HUSBANDRY', 'NAVAL_ENGINEERING', 'CHIVALRY',
                      'CARTOGRAPHY', 'MACHINERY', 'MASS_PRODUCTION',
                      // Renaissance
-                     'BASTION_FORT', 'MATCHLOCK', 'OCEAN_NAVIGATION',
+                     'BASTION_FORT', 'MATCHLOCK', 'METALLURGY', 'OCEAN_NAVIGATION',
                      // Enlightenment
-                     'METALLURGY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
                      // Modern
-                     'EXPLOSIVES', 'RIFLED_MUSKET', 'IRONCLADS', 'TELEGRAPH',
-                     'STEAM_ENGINE', 'RAILROAD', 'FIELD_ARTILLERY', 'ELECTRICITY', 'SUBMARINE',
+                     'RIFLED_MUSKET', 'IRONCLADS', 'TELEGRAPH',
+                     'STEAM_ENGINE', 'RAILROAD', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic (defensive factions prioritize anti-armor to repel tanks)
-                     'ANTI_ARMOR', 'ROCKETRY', 'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'DREADNOUGHT', 'NAVAL_AVIATION', 'ARMOR',
+                     'ANTI_ARMOR', 'ADVANCED_ARTILLERY', 'ROCKETRY', 'INTERNAL_COMBUSTION', 'DREADNOUGHT', 'NAVAL_AVIATION', 'ARMOR',
                      // Anti-cavalry (defensive factions love these)
                      'POLEARM', 'PIKE_WARFARE'],
-        ECONOMIC:   ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
+        ECONOMIC:   ['MATHEMATICS', 'SIEGE_CRAFT', 'GUNPOWDER', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
                      'CARTOGRAPHY', 'ARCHERY', 'ANIMAL_HUSBANDRY', 'BRONZE_WORKING',
-                     'SIEGE_CRAFT', 'FORTIFICATION', 'CHIVALRY', 'GUNPOWDER',
+                     'FORTIFICATION', 'CHIVALRY',
                      'MEDICINE', 'FEUDALISM', 'MACHINERY',
                      // Renaissance
-                     'MATCHLOCK', 'OCEAN_NAVIGATION', 'BASTION_FORT',
+                     'MATCHLOCK', 'METALLURGY', 'OCEAN_NAVIGATION', 'BASTION_FORT',
                      // Enlightenment
-                     'BANKING', 'ACADEMY', 'FLINTLOCK', 'METALLURGY',
+                     'BANKING', 'ACADEMY', 'EXPLOSIVES', 'FIELD_ARTILLERY', 'FLINTLOCK',
                      // Modern
                      'ELECTRICITY', 'TELEGRAPH', 'STEAM_ENGINE', 'RAILROAD',
-                     'RIFLED_MUSKET', 'IRONCLADS', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'SUBMARINE',
+                     'RIFLED_MUSKET', 'IRONCLADS', 'SUBMARINE',
                      // Atomic
-                     'DREADNOUGHT', 'INTERNAL_COMBUSTION', 'NAVAL_AVIATION', 'ARMOR', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY',
+                     'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'INTERNAL_COMBUSTION', 'NAVAL_AVIATION', 'ARMOR', 'ANTI_ARMOR', 'ROCKETRY',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE'],
-        BALANCED:   ['ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
-                     'ENGINEERING', 'NAVAL_ENGINEERING', 'SIEGE_CRAFT', 'FORTIFICATION',
-                     'CHIVALRY', 'CARTOGRAPHY', 'FEUDALISM', 'GUNPOWDER',
+        BALANCED:   ['SIEGE_CRAFT', 'GUNPOWDER', 'ARCHERY', 'BRONZE_WORKING', 'ANIMAL_HUSBANDRY', 'MATHEMATICS',
+                     'ENGINEERING', 'NAVAL_ENGINEERING',
+                     'FORTIFICATION', 'CHIVALRY', 'CARTOGRAPHY', 'FEUDALISM',
                      'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION',
                      // Renaissance
-                     'MATCHLOCK', 'BASTION_FORT', 'OCEAN_NAVIGATION',
+                     'MATCHLOCK', 'BASTION_FORT', 'METALLURGY', 'OCEAN_NAVIGATION',
                      // Enlightenment
-                     'FLINTLOCK', 'METALLURGY', 'ACADEMY', 'BANKING',
+                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'FLINTLOCK', 'ACADEMY', 'BANKING',
                      // Modern
                      'RIFLED_MUSKET', 'STEAM_ENGINE', 'RAILROAD', 'TELEGRAPH',
-                     'EXPLOSIVES', 'FIELD_ARTILLERY', 'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
+                     'IRONCLADS', 'ELECTRICITY', 'SUBMARINE',
                      // Atomic
-                     'INTERNAL_COMBUSTION', 'ARMOR', 'DREADNOUGHT', 'ADVANCED_ARTILLERY', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
+                     'INTERNAL_COMBUSTION', 'ADVANCED_ARTILLERY', 'ARMOR', 'DREADNOUGHT', 'ANTI_ARMOR', 'ROCKETRY', 'NAVAL_AVIATION',
                      // Anti-cavalry
                      'POLEARM', 'PIKE_WARFARE']
     };
     const list = priorities[personality] || priorities.BALANCED;
-    for (const id of list) {
-        if (available.includes(id)) {
-            selectResearch(state, id);
-            return id;
+    const rank = new Map(list.map((id, i) => [id, i]));
+    const artilleryTechs = new Set(['SIEGE_CRAFT', 'GUNPOWDER', 'METALLURGY', 'FIELD_ARTILLERY', 'EXPLOSIVES', 'BASTION_FORT']);
+    let best = null;
+    let bestScore = -Infinity;
+    for (const id of available) {
+        const tech = TECHS[id];
+        const r = rank.get(id);
+        // Prefer high-priority, low-cost techs. Techs not in the personality list
+        // still get a small cost-only score so nothing is permanently ignored.
+        let score = (r !== undefined) ? (list.length - r) / tech.cost : 1 / tech.cost;
+        if (artilleryTechs.has(id)) score *= AI_ARTILLERY_TECH_PRIORITY;
+        if (score > bestScore) {
+            bestScore = score;
+            best = id;
         }
+    }
+    if (best) {
+        selectResearch(state, best);
+        return best;
     }
     selectResearch(state, available[0]);
     return available[0];

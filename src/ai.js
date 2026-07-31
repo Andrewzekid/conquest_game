@@ -13,7 +13,10 @@ import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UN
           MILITARY_BUILDING_LEVELS, BUILDING_MAX_LEVEL,
           AI_GOAL_MIN_STABILITY_TURNS, AI_ARTILLERY_RESERVE_DEFAULT, AI_ARTILLERY_RESERVE_SIEGE,
           AI_SETTLER_SCARCITY_TURN_THRESHOLD, AI_SETTLER_SCARCE_CAP_RELAX, AI_SETTLER_SCARCE_FLOOR_RELAX,
-          SCARCITY_FLOW_THRESHOLDS, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS } from './config.js';
+          SCARCITY_FLOW_THRESHOLDS, SCIENCE_VICTORY_COST, SCIENCE_VICTORY_BUILD_TURNS,
+          AI_KING_RETREAT_BASE, AI_KING_RETREAT_LATE_GAME, AI_KING_RETREAT_LATE_GAME_UNITS,
+          AI_KING_RETREAT_LATE_GAME_TURN, AI_KING_RETREAT_MAX, AI_KING_RETREAT_ENEMY_KING,
+          AI_LORD_RETREAT_BASE, AI_LORD_RETREAT_LOW, AI_LORD_RETREAT_ENEMY_RADIUS } from './config.js';
 import { canAfford, spendCost, getAttackTargets } from './unit.js';
 import { getUnitCostFor } from './faction.js';
 import { sellAtMarket, getUnitCap, grossYields } from './economy.js';
@@ -300,8 +303,11 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
         }
     }
-    const foreignMassWithoutCity = homeMassFull && hasForeignLandmassWithoutCity(tiles, owner, land, homeMass);
-    const needsNavalExpansion = hasForeignLandmassWithoutCity(tiles, owner, land, homeMass) &&
+    // Storm Kingdom ignores tiny foreign islets for settlement; if no viable
+    // large landmass exists overseas, it should pivot to amphibious conquest.
+    const stormMinForeignMass = (factionDef && factionDef.id === 'storm') ? 10 : 0;
+    const foreignMassWithoutCity = homeMassFull && hasForeignLandmassWithoutCity(tiles, owner, land, homeMass, stormMinForeignMass);
+    const needsNavalExpansion = hasForeignLandmassWithoutCity(tiles, owner, land, homeMass, stormMinForeignMass) &&
         (isIslandFaction || homeMassSettleable < 3 || noEnemyCitiesOnHomeMass);
 
     // Resource scarcity is computed once up here (before any spending block)
@@ -386,6 +392,36 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (probe) {
             const spot = findFoundSpot(probe, tiles, owner, land, homeMass, myUnits, factionDef, res);
             if (spot) freshFoundSpotKey = `${spot.x},${spot.z}`;
+        }
+    }
+
+    // Compute an overseas settlement candidate for the expand-islands goal. If
+    // no valid foreign found spot exists, the goal becomes invalid and the AI
+    // pivots to naval conquest (transport + siege invasion) instead of spamming
+    // settlers that have nowhere to go.
+    let foreignShoreKey = null;
+    if (homeMass != null) {
+        const idleSettler = myUnits.find(u => u.type === 'SETTLER' && !acted.has(u.id));
+        const probe = idleSettler || firstCity;
+        if (probe) {
+            const friendlyMasses = new Set();
+            for (const t of tiles.values()) {
+                if (t.terrain === 'CITY' && t.owner === owner) {
+                    const m = land.idOf.get(`${t.x},${t.z}`);
+                    if (m != null) friendlyMasses.add(m);
+                }
+            }
+            // Evaluate foreign masses by size (descending) so the AI targets the
+            // largest viable overseas landmass rather than a barren rock. Storm
+            // Kingdom ignores islets below the threshold so it invades instead.
+            const foreignMasses = [...land.sizes.entries()]
+                .filter(([m, size]) => m !== homeMass && !friendlyMasses.has(m) && size >= stormMinForeignMass)
+                .sort((a, b) => b[1] - a[1]);
+            for (const [m] of foreignMasses) {
+                const spot = findFoundSpot(probe, tiles, owner, land, m, myUnits, factionDef, res,
+                    true, drainingResource, enemies.length > 0);
+                if (spot) { foreignShoreKey = `${spot.x},${spot.z}`; break; }
+            }
         }
     }
 
@@ -475,7 +511,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         isIslandFaction, needsNavalExpansion, foreignMassWithoutCity,
         myCityCount, settlerTarget, scarcityTriggered,
         bestFoundSpotKey: freshFoundSpotKey,
-        foreignShoreKey: null, bestEconTileKey: null,
+        foreignShoreKey, bestEconTileKey: null,
         neutralFactions, hasSpies, hasChokepoints,
         unexploredTiles, spyTargetKey, chokepointKey,
         enemyKings,
@@ -539,13 +575,14 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         if (Object.keys(sales).length > 0) sellAtMarket(res, sales);
     }
 
-    // AI lord recruitment: lords multiply army effectiveness. Recruit up to
-    // max(3, cityCount) non-king lords so each major army group can have a
-    // commander. The gate is just the recruit cost (no extra war-chest buffer)
-    // — under the lean economy the old +150 buffer made lords unreachable.
+    // AI lord recruitment: lords multiply army effectiveness. Cap scales with
+    // cities and owned land tiles but stays much lower than the old max(cities,3)
+    // to prevent lord spam. Recruiting also requires a small war-chest buffer so
+    // the faction doesn't bankrupt itself hiring lords.
     const nonKingLords = (lords || []).filter(l => l.owner === owner && !l.isKing);
-    const lordCap = Math.max(3, myCityCount);
-    if (nonKingLords.length < lordCap && res.gold >= LORD_RECRUIT_COST.gold &&
+    const ownedLandTiles = owned.filter(t => t.terrain !== 'WATER' && t.terrain !== 'RIVER').length;
+    const lordCap = Math.min(8, Math.max(2, Math.floor(myCityCount * 0.65) + Math.floor(ownedLandTiles / 25)));
+    if (nonKingLords.length < lordCap && res.gold >= LORD_RECRUIT_COST.gold + 50 &&
         res.food >= LORD_RECRUIT_COST.food && myCityCount > 0) {
         actions.push({ type: 'recruitLord' });
         res = subtractCost(res, LORD_RECRUIT_COST);
@@ -883,13 +920,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         }
         if (enemyTotal > 0 && enemyCav / enemyTotal >= 0.40) enemyWeakToSiege = true;
     }
-    const siegeRatio = activeObjectives.siege ? 0.30
-        : goalKind === 'conquest' ? 0.35
-        : enemyWeakToSiege ? 0.25
-        : activeObjectives.decisive ? 0.08
-        : activeObjectives.defensive ? 0.10
-        : 0.12;
-    const siegeCap = Math.max(conquestActive ? 3 : 2,
+    const siegeRatio = activeObjectives.siege ? 0.50
+        : goalKind === 'conquest' ? 0.50
+        : enemyWeakToSiege ? 0.35
+        : activeObjectives.decisive ? 0.15
+        : activeObjectives.defensive ? 0.18
+        : 0.30;
+    const siegeCap = Math.max(conquestActive ? 4 : 3,
         Math.round(aiUnitCap * siegeRatio));
     if (siegeOptions.length && siegeCount < siegeCap) {
         // Prefer modern siege engines over obsolete ones. bestSiegePick
@@ -1328,7 +1365,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // siege + high-damage force instead of spamming cheap infantry. A
     // decisive-battle goal force-enables the decisive tweak (melee/cavalry
     // over siege) — the target is the enemy's field army, not its walls.
-    const trainObjective = (goalKind === 'conquest' || goalKind === 'develop-army')
+    const trainObjective = (goalKind === 'conquest' || goalKind === 'develop-army' ||
+        (goalKind === 'expand-islands' && factionDef && factionDef.id === 'storm'))
         ? { ...activeObjectives, siege: true }
         : goalKind === 'decisive-battle' ? { ...activeObjectives, decisive: true }
         : activeObjectives;
@@ -1338,7 +1376,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     if (aiState) aiState.targetComposition = effectiveComposition(factionDef, fullRoster, hasSiegeWorkshop, trainObjective);
     while (myUnits.length + trainCount() < aiUnitCap) {
         if (captureClose && (res.gold || 0) < CAPTURE_COST + 20) break;
-        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, trainObjective, hasSiegeWorkshop, aiState);
+        const trainable = findAffordableUnit(res, fullRoster, factionDef, myUnits, actions, owner, trainObjective, hasSiegeWorkshop, aiState, isAtWar);
         if (!trainable) break;
         const spawnTile = findOwnedTile(myUnits, tiles, actions, owner);
         if (!spawnTile) break;
@@ -1874,7 +1912,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             const target = findNearestBesiegeableCity(unit, tiles, owner, isAtWar);
             if (target) {
                 if (!unit.hasMovedThisTurn) {
-                    const esc = nearestEscort(unit, units, owner);
+                    const esc = nearestEscort(unit, units, owner, lords);
                     if (esc) {
                         const goal = esc.dist <= SIEGE_ESCORT_RADIUS ? target : esc.unit;
                         const step = stepToward(unit, goal, tiles, owner, units, moved, isAtWar);
@@ -2438,15 +2476,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
     // Conquest groups: the strongest 1-3 groups assigned to offensive missions.
     const conquest = new Set();
-    // King protection: if the king has <3 military units within radius 2, mark
-    // the nearest idle army group as a guard detail (it will stay close to the king
-    // instead of patrolling elsewhere).
+    // King protection: if the king has too few military units nearby, mark the
+    // nearest idle army group as a guard detail. When no enemy threatens any
+    // owned city within 10 tiles the core guard shrinks to 2-3 units and the
+    // rest of the army is freed for offense.
     const king = (lords || []).find(l => l.owner === owner && l.isKing);
     let kingGuardGroup = null;
     if (king) {
+        const nearbyThreat = hasNearbyThreats(owner, tiles, units, isAtWar, 10);
         const guardsNear = militaryPool.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' &&
             Math.abs(u.x - king.x) + Math.abs(u.z - king.z) <= 2).length;
-        if (guardsNear < 3) {
+        const guardNeed = nearbyThreat ? 3 : 2;
+        if (guardsNear < guardNeed) {
             // Find the nearest patrol group to assign as king's guard
             let bestDist = Infinity;
             for (const g of groups) {
@@ -2606,7 +2647,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     for (const g of groups) {
         let objective, stance;
         if (conquest.has(g)) {
-            stance = computeStance(g, units, owner, atWar, isAtWar);
+            stance = computeStance(g, units, owner, atWar, isAtWar, currentTurn, lords);
             // Multi-target conquest: this group's assigned city (strongest
             // group took the primary). Otherwise use the shared strategic
             // target when available (concentration of force), falling back to
@@ -2653,7 +2694,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                         theaterLand, isAtWar, c.x, c.z) : null;
                     if (tTarget) {
                         objective = tTarget;
-                        stance = computeStance(g, units, owner, atWar, isAtWar);
+                        stance = computeStance(g, units, owner, atWar, isAtWar, currentTurn, lords);
                     } else {
                         objective = nearestFriendlyCity(c, tiles, owner);
                         stance = 'hold';
@@ -2667,14 +2708,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     const [dx, dz] = topGoal.targetTileKey.split(',').map(Number);
                     if (!Number.isNaN(dx) && !Number.isNaN(dz)) {
                         objective = { x: dx, z: dz };
-                        stance = computeStance(g, units, owner, atWar, isAtWar);
+                        stance = computeStance(g, units, owner, atWar, isAtWar, currentTurn, lords);
                     } else {
                         objective = nearestFriendlyCity(c, tiles, owner);
                         stance = 'hold';
                     }
                 } else {
-                    objective = nearestFriendlyCity(c, tiles, owner);
-                    stance = 'hold';
+                    // Opportunistic expansion / harassment for idle patrol/home
+                    // groups: unclaimed cities, weak enemy cities (garrison <= 2),
+                    // or isolated enemy units within 10 tiles become targets so
+                    // idle armies (including siege engines) stay useful.
+                    const local = localPowerBalance(units, c.x, c.z, owner, atWar, isAtWar, 5);
+                    const harassTarget = findHarassTarget(g, tiles, units, owner, isAtWar);
+                    if (harassTarget && local.foe < local.friend * 0.8) {
+                        objective = harassTarget;
+                        stance = 'engage';
+                    } else {
+                        objective = nearestFriendlyCity(c, tiles, owner);
+                        stance = 'hold';
+                    }
                 }
             }
         }
@@ -2944,7 +2996,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             if (!isReachableByLand(tiles, donorUnit.x, donorUnit.z, t.x, t.z)) continue;
             if (donorGroup.units.length > 1) {
                 donorGroup.units = donorGroup.units.filter(u => u !== donorUnit);
-                donorGroup = { id: 'detach:' + donorUnit.id, lord: null, units: [donorUnit] };
+                donorGroup = { id: 'detach:' + donorUnit.id, lords: [], units: [donorUnit] };
                 groups.push(donorGroup);
             }
             groupObjectives.set(donorGroup, t);
@@ -2967,7 +3019,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 size: g.units.length,
                 stance: groupStances.get(g) || 'hold',
                 objective: obj ? `${obj.x},${obj.z}` : null,
-                lord: g.lord ? (g.lord.name || null) : null,
+                lord: (g.lords && g.lords[0]) ? (g.lords[0].name || null) : null,
+                lords: (g.lords || []).map(l => l.name || null).filter(Boolean),
                 power: g.units.reduce((s, u) => s + unitValue(u), 0),
                 composition,
             };
@@ -3602,8 +3655,13 @@ const FRAGILE_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER
 
 function unitRole(type) {
     if (MELEE_TYPES.has(type)) return 'melee';
-    if (RANGED_TYPES.has(type)) return 'ranged';
+    // Cavalry before ranged/siege: DRAGOON, TANK, HEAVY_TANK, ARMORED_CAR and
+    // HORSE_ARTILLERY are all mounted/mobile units and should fill the cavalry
+    // composition role. Without this, the only cavalry-counting units are
+    // medieval horse units that obsolete quickly, so the AI stops producing
+    // "cavalry" entirely after FLINTLOCK/ARMOR.
     if (CAVALRY_TYPES.has(type)) return 'cavalry';
+    if (RANGED_TYPES.has(type)) return 'ranged';
     if (SIEGE_TYPES.has(type)) return 'siege';
     if (SUPPORT_TYPES.has(type)) return 'support';
     if (NAVAL_TYPES.has(type)) return 'naval';
@@ -3614,12 +3672,12 @@ function unitRole(type) {
  *  advance on the objective (Chebyshev tiles). */
 const SIEGE_ESCORT_RADIUS = 3;
 
-/** The nearest friendly escort unit — a melee/ranged/cavalry combat unit that
- *  can actually protect a siege engine or tower on the march (workers,
- *  engineers, medics, scouts and other siege units don't count). Returns
- *  { unit, dist } with dist in Chebyshev tiles, or null when the faction has
- *  no escort units at all. */
-function nearestEscort(unit, units, owner) {
+/** The nearest friendly escort — a melee/ranged/cavalry combat unit OR a
+ *  friendly lord/king that can actually protect a siege engine or tower on the
+ *  march (workers, engineers, medics, scouts and other siege units don't count).
+ *  Returns { unit, dist } with dist in Chebyshev tiles, or null when the faction
+ *  has no escorts at all. */
+function nearestEscort(unit, units, owner, lords = null) {
     let best = null, bestDist = Infinity;
     for (const u of units.values()) {
         if (u.owner !== owner || u.id === unit.id) continue;
@@ -3627,6 +3685,12 @@ function nearestEscort(unit, units, owner) {
         if (r !== 'melee' && r !== 'ranged' && r !== 'cavalry') continue;
         const d = Math.max(Math.abs(u.x - unit.x), Math.abs(u.z - unit.z));
         if (d < bestDist) { bestDist = d; best = u; }
+    }
+    // Lords/kings are powerful combatants and valid escorts for siege engines.
+    for (const l of (lords || [])) {
+        if (l.owner !== owner) continue;
+        const d = Math.max(Math.abs(l.x - unit.x), Math.abs(l.z - unit.z));
+        if (d < bestDist) { bestDist = d; best = l; }
     }
     return best ? { unit: best, dist: bestDist } : null;
 }
@@ -3758,23 +3822,23 @@ export function factionComposition(def, roster, hasSiegeWorkshop = false) {
     const id = def && def.id;
     let t;
     switch (id) {
-        case 'crimson':  t = { melee: 0.35, ranged: 0.10, cavalry: 0.35, siege: 0.15, support: 0.05, naval: 0.00 }; break;
+        case 'crimson':  t = { melee: 0.30, ranged: 0.10, cavalry: 0.40, siege: 0.15, support: 0.05, naval: 0.00 }; break;
         case 'golden':   t = { melee: 0.20, ranged: 0.15, cavalry: 0.45, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.25, siege: 0.20, support: 0.10, naval: 0.00 }; break;
+        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.30, siege: 0.20, support: 0.05, naval: 0.00 }; break;
         case 'verdant':  t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
         case 'violet':   t = { melee: 0.30, ranged: 0.25, cavalry: 0.00, siege: 0.35, support: 0.10, naval: 0.00 }; break;
         case 'azure':    t = { melee: 0.40, ranged: 0.25, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
         case 'iron':     t = { melee: 0.30, ranged: 0.00, cavalry: 0.00, siege: 0.35, support: 0.15, naval: 0.00 }; break;
         case 'shadow':   t = { melee: 0.35, ranged: 0.45, cavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
         case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
-        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.10, siege: 0.10, support: 0.05, naval: 0.40 }; break;
+        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.15, siege: 0.10, support: 0.05, naval: 0.35 }; break;
         // --- New European factions (Phase G) ---
         case 'roman':    t = { melee: 0.40, ranged: 0.00, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
-        case 'viking':   t = { melee: 0.45, ranged: 0.00, cavalry: 0.35, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'byzantine':t = { melee: 0.35, ranged: 0.25, cavalry: 0.20, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'spanish':  t = { melee: 0.30, ranged: 0.20, cavalry: 0.35, siege: 0.05, support: 0.10, naval: 0.00 }; break;
-        case 'polish':   t = { melee: 0.35, ranged: 0.00, cavalry: 0.45, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        default:         t = { melee: 0.40, ranged: 0.25, cavalry: 0.15, siege: 0.15, support: 0.05, naval: 0.00 };
+        case 'viking':   t = { melee: 0.40, ranged: 0.00, cavalry: 0.40, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'byzantine':t = { melee: 0.35, ranged: 0.25, cavalry: 0.25, siege: 0.10, support: 0.05, naval: 0.00 }; break;
+        case 'spanish':  t = { melee: 0.30, ranged: 0.20, cavalry: 0.40, siege: 0.05, support: 0.05, naval: 0.00 }; break;
+        case 'polish':   t = { melee: 0.30, ranged: 0.00, cavalry: 0.50, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        default:         t = { melee: 0.35, ranged: 0.25, cavalry: 0.20, siege: 0.15, support: 0.05, naval: 0.00 };
     }
     // Zero out (and renormalize) roles the roster can't fill.
     let sum = 0;
@@ -3805,7 +3869,7 @@ export function effectiveComposition(def, roster, hasSiegeWorkshop = false, obje
         // unfillable role and just dilute the trainable ones. Cavalry takes
         // the biggest cut; ranged keeps a small share so gunpowder-era ranged
         // lines don't vanish entirely during a conquest.
-        target.siege = Math.min(0.65, target.siege + 0.40);
+        target.siege = Math.min(0.65, target.siege + 0.45);
         target.cavalry = Math.max(0, target.cavalry - 0.15);
         target.ranged = Math.max(0, target.ranged - 0.05);
         target.melee = Math.max(0.20, target.melee - 0.05);
@@ -3861,6 +3925,44 @@ const ROLE_ORDER = {
     support: ['COMBAT_ENGINEER', 'DEMOLITION_SQUAD', 'ENGINEER', 'MEDIC'],
     naval:   ['AIRCRAFT_CARRIER', 'BATTLESHIP', 'SUBMARINE_II', 'DESTROYER', 'MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT_SHIP', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN'],
 };
+
+const ANTI_CAVALRY_TYPES = new Set(['HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM']);
+
+/** Adjust composition targets based on what the enemy is fielding.
+ *  Cavalry hard-counters infantry and artillery, so increase the cavalry share
+ *  when the enemy has many of those and few anti-cavalry specialists. Pull back
+ *  when the enemy is bristling with pikes/anti-tank teams. If the enemy's
+ *  infantry/artillery outnumber ours, raise the cavalry target more aggressively
+ *  (+0.25); otherwise a moderate +0.20 bump. */
+function adjustTargetForEnemyComposition(target, units, owner, isAtWar, counts = null) {
+    if (!isAtWar || !units) return target;
+    let enemyInfantry = 0;
+    let enemyArtillery = 0;
+    let enemyAntiCav = 0;
+    for (const u of (units.values ? units.values() : units)) {
+        if (u.owner === owner) continue;
+        if (!isAtWar(u.owner)) continue;
+        const role = unitRole(u.type);
+        if (role === 'melee') enemyInfantry++;
+        else if (role === 'siege') enemyArtillery++;
+        if (ANTI_CAVALRY_TYPES.has(u.type)) enemyAntiCav++;
+    }
+    const softTargets = enemyInfantry + enemyArtillery;
+    const mySoft = (counts ? (counts.melee || 0) + (counts.siege || 0) : 0);
+    const enemyOutnumbers = mySoft > 0 ? softTargets > mySoft : softTargets > 0;
+    if (softTargets > 0 && enemyAntiCav * 2 < softTargets) {
+        // Stronger reactive cavalry: cavalry hard-counters infantry/artillery,
+        // so ramp the target share when the enemy is soft and lacks counters.
+        const bump = enemyOutnumbers ? 0.25 : 0.20;
+        target.cavalry = Math.min(0.60, target.cavalry + bump);
+    } else if (enemyAntiCav >= 3 && enemyAntiCav >= softTargets * 0.25) {
+        target.cavalry = Math.max(0, target.cavalry - 0.10);
+    }
+    const sum = Object.values(target).reduce((a, b) => a + b, 0);
+    if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
+    return target;
+}
+
 /** Pick an affordable unit from this faction's roster, biased toward a
  *  faction-specialized army composition. Early on it secures melee screens,
  *  then fills the biggest role deficit. Falls back to the strongest affordable
@@ -3897,7 +3999,7 @@ export function findDefensiveUnit(resources, roster, factionDef, units, actions,
     return tiers.length > 0 ? tiers[0].t : null;
 }
 
-export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false, aiState = null) {
+export function findAffordableUnit(resources, roster, factionDef, units, actions, owner, objective = null, hasSiegeWorkshop = false, aiState = null, isAtWar = null) {
     const counts = countByRole(units, actions, owner);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     // Base faction composition + objective-driven tweaks (see
@@ -3905,10 +4007,16 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     // while a decisive field battle or defense pulls siege back in favor of
     // melee/cavalry.
     let target = effectiveComposition(factionDef, roster, hasSiegeWorkshop, objective);
-    // Reserve a baseline artillery slice (CATAPULT/TREBUCHET) even when no
-    // siege objective is active, so a workshop-bearing faction always builds
-    // some long-range engines rather than letting basic siege saturate the cap.
-    if (hasSiegeWorkshop && target.siege < AI_ARTILLERY_RESERVE_DEFAULT) {
+    // Reactive cavalry scaling: if the enemy fields lots of infantry/artillery
+    // (units that cavalry hard-counters) and few anti-cavalry specialists, bump
+    // the cavalry share. Conversely, pull back when the enemy is heavy on pikes,
+    // bayonet rifles, or anti-tank teams.
+    target = adjustTargetForEnemyComposition(target, units, owner, isAtWar, counts);
+    // Reserve a baseline siege/artillery slice (~25%) even when no siege
+    // objective is active, as long as the faction can actually train siege.
+    // This stops the AI from neglecting artillery and leaving siege engines idle.
+    const canTrainSiege = roster.some(t => unitRole(t) === 'siege') || hasSiegeWorkshop;
+    if (canTrainSiege && target.siege < AI_ARTILLERY_RESERVE_DEFAULT) {
         target.siege = AI_ARTILLERY_RESERVE_DEFAULT;
         const sum = Object.values(target).reduce((a, b) => a + b, 0);
         if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
@@ -4017,6 +4125,19 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         }
     }
     if (total >= 4) {
+        // Cavalry floor: factions that can field cavalry should train at least
+        // one mounted unit once the initial melee screen is secured, so the army
+        // doesn't stay pure infantry. Skip when playing defensively or when the
+        // faction is naval-focused (Storm), because naval should fill its own
+        // deficit first. The unit must be a cavalry-class type (CAVALRY_TYPES).
+        const isNavalFocused = factionDef && factionDef.id === 'storm' && (target.naval || 0) > (target.cavalry || 0);
+        if (!isNavalFocused && target.cavalry > 0 && (counts.cavalry || 0) === 0 &&
+            target.cavalry >= (target.naval || 0) && !(objective && objective.defensive)) {
+            for (const t of ROLE_ORDER.cavalry) {
+                if (roster.includes(t) && CAVALRY_TYPES.has(t) &&
+                    canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
+            }
+        }
         const role = roleDeficit(roster, counts, total, target);
         const order = [...(ROLE_ORDER[role] || [])];
         for (const t of order) {
@@ -4348,6 +4469,63 @@ function localPowerBalance(units, x, z, owner, atWar, isAtWar, radius = 2) {
     return { friend, foe };
 }
 
+/** True if any at-war enemy military unit is within `radius` tiles (Manhattan)
+ *  of one of the owner's cities. Used to decide whether the king needs a full
+ *  guard detail or whether the core defense can be thinned to free units for
+ *  offense. */
+function hasNearbyThreats(owner, tiles, units, isAtWar, radius = 10) {
+    const ownCities = [...tiles.values()].filter(t => t.terrain === 'CITY' && t.owner === owner);
+    if (ownCities.length === 0) return false;
+    for (const u of units.values()) {
+        if (u.owner === owner) continue;
+        if (u.type === 'SETTLER' || u.type === 'WORKER') continue;
+        if (isAtWar && !isAtWar(u.owner)) continue;
+        for (const c of ownCities) {
+            if (manhattan(u.x, u.z, c.x, c.z) <= radius) return true;
+        }
+    }
+    return false;
+}
+
+/** Find an easy target for an otherwise idle patrol group: unclaimed cities,
+ *  weak enemy cities (garrison <= 2), or isolated enemy units within 10 tiles.
+ *  Returns a tile-like object {x,z} or null. */
+function findHarassTarget(group, tiles, units, owner, isAtWar) {
+    const c = groupCentroid(group);
+    let best = null, bestScore = -Infinity;
+    for (const t of tiles.values()) {
+        if (t.terrain !== 'CITY') continue;
+        const d = manhattan(c.x, c.z, t.x, t.z);
+        if (d > 10) continue;
+        if (!t.owner) {
+            const score = 100 - d;
+            if (score > bestScore) { bestScore = score; best = t; }
+            continue;
+        }
+        if (t.owner === owner) continue;
+        if (isAtWar && !isAtWar(t.owner)) continue;
+        let garrison = 0;
+        for (const u of units.values()) {
+            if (u.x === t.x && u.z === t.z && u.owner === t.owner) garrison++;
+        }
+        if (garrison > 2) continue;
+        const score = 80 - d * 2;
+        if (score > bestScore) { bestScore = score; best = t; }
+    }
+    for (const u of units.values()) {
+        if (u.owner === owner) continue;
+        if (isAtWar && !isAtWar(u.owner)) continue;
+        const d = manhattan(c.x, c.z, u.x, u.z);
+        if (d > 10) continue;
+        const local = localPowerBalance(units, u.x, u.z, owner, true, isAtWar, 3);
+        if (local.friend <= 0) continue;
+        if (local.foe >= local.friend) continue;
+        const score = 60 - d + (isFragile(u) ? 20 : 0);
+        if (score > bestScore) { bestScore = score; best = { x: u.x, z: u.z }; }
+    }
+    return best;
+}
+
 /** Nearest own CITY tile by Manhattan distance (retreat destination).
  *  Scores cities by distance + enemy proximity penalty so the king avoids
  *  retreating toward hostile units. Falls back to pure distance if no enemy
@@ -4438,7 +4616,9 @@ function enemyWillPassThroughConcealTile(u, units, tiles, owner, isAtWar) {
 }
 /** Group military units into army groups: by commanding lord's army first,
  *  then spatially cluster the rest (nearest existing group within Chebyshev 2,
- *  else a new single-unit group). Returns [{ id, lord, units: [...] }]. */
+ *  else a new single-unit group). Returns [{ id, lords: [...], units: [...] }].
+ *  A group may contain multiple lords when small lord-led groups merge into a
+ *  larger formation. */
 function buildArmyGroups(myUnits, lords, owner, land = null) {
     const groups = [];
     const assigned = new Set();
@@ -4447,7 +4627,7 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
             if (lord.owner !== owner) continue;
             const members = myUnits.filter(u => lord.army && lord.army.includes(u.id));
             if (members.length) {
-                groups.push({ id: 'lord:' + lord.id, lord, units: members });
+                groups.push({ id: 'lord:' + lord.id, lords: [lord], units: members });
                 members.forEach(u => assigned.add(u.id));
             }
         }
@@ -4461,23 +4641,25 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
             if (d <= 3 && d < bestDist) { bestDist = d; best = g; }
         }
         if (best) best.units.push(u);
-        else groups.push({ id: 'cluster:' + u.id, lord: null, units: [u] });
+        else groups.push({ id: 'cluster:' + u.id, lords: [], units: [u] });
     }
     // Merge pass: fold small (1-2 unit) groups into a nearby larger group so
     // the AI fields real armies instead of scattered squads — most groups
     // were singletons. Rules: never merge INTO a king-led group (the king's
-    // guard stays nimble), never merge across water (same landmass only,
-    // checked via the optional landmass map), and keep merged groups at
-    // most ~8 units so they stay maneuverable. Small lord-led groups MAY
-    // merge into another group — that's how a tough conquest group ends up
-    // carrying multiple lords' retinues.
+    // guard stays nimble), never merge a king-led group away, never merge
+    // across water (same landmass only, checked via the optional landmass map),
+    // and keep merged groups at most ~8 units so they stay maneuverable.
+    // Small lord-led groups MAY merge into another group — that's how a tough
+    // conquest group ends up carrying multiple lords' retinues.
+    const hasKing = (grp) => grp.lords && grp.lords.some(l => l.isKing);
     for (const g of [...groups]) {
         if (g.units.length > 2) continue;
+        if (hasKing(g)) continue; // king guard stays independent
         const c = groupCentroid(g);
         let best = null, bestD = Infinity;
         for (const h of groups) {
             if (h === g) continue;
-            if (h.lord && h.lord.isKing) continue;
+            if (hasKing(h)) continue;
             if (h.units.length < g.units.length) continue; // merge upward/sideways, not into another squad
             if (h.units.length + g.units.length > 8) continue;
             const hc = groupCentroid(h);
@@ -4489,7 +4671,40 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
         }
         if (best) {
             best.units.push(...g.units);
+            // Transfer any lords from the absorbed group so they stay attached.
+            for (const l of (g.lords || [])) {
+                if (!best.lords.some(existing => existing.id === l.id)) best.lords.push(l);
+            }
             groups.splice(groups.indexOf(g), 1);
+        }
+    }
+
+    // Lord-merge pass: if a second lord is within 3 tiles of a group and the
+    // combined unit count is still reasonable (<= 2/3 of a typical army cap),
+    // merge the lord groups under the higher-level lord. Multiple lords in one
+    // stack stack command bonuses and keep retinues from wandering separately.
+    const ARMY_CAP_PROXY = 12;
+    const LORD_MERGE_CAP = Math.floor(ARMY_CAP_PROXY * 2 / 3);
+    for (const g of [...groups]) {
+        if (!g.lords || g.lords.length === 0 || hasKing(g)) continue;
+        const gc = groupCentroid(g);
+        for (const h of groups) {
+            if (h === g || !h.lords || h.lords.length === 0 || hasKing(h)) continue;
+            const hc = groupCentroid(h);
+            const d = Math.max(Math.abs(hc.x - gc.x), Math.abs(hc.z - gc.z));
+            if (d > 3) continue;
+            if (g.units.length + h.units.length > LORD_MERGE_CAP) continue;
+            if (land && land.idOf &&
+                land.idOf.get(`${gc.x},${gc.z}`) !== land.idOf.get(`${hc.x},${hc.z}`)) continue;
+            const gLevel = Math.max(...g.lords.map(l => l.level || 1));
+            const hLevel = Math.max(...h.lords.map(l => l.level || 1));
+            const [src, dst] = gLevel >= hLevel ? [h, g] : [g, h];
+            dst.units.push(...src.units);
+            for (const l of (src.lords || [])) {
+                if (!dst.lords.some(existing => existing.id === l.id)) dst.lords.push(l);
+            }
+            groups.splice(groups.indexOf(src), 1);
+            break;
         }
     }
     return groups;
@@ -4601,8 +4816,8 @@ function groupLocalBalance(group, units, owner, atWar, isAtWar, radius = 4) {
 /** Is this group "in trouble" and a candidate for reinforcement? True when its
  *  king is wounded, OR local enemy power exceeds friendly power near it. */
 function groupIsInTrouble(group, units, owner, atWar, isAtWar) {
-    if (group.lord && group.lord.isKing) {
-        const k = group.lord;
+    const kings = (group.lords || []).filter(l => l.isKing);
+    for (const k of kings) {
         const hpRatio = (k.hp || 0) / (k.maxHp || 1);
         if (hpRatio < 0.5) return true;
     }
@@ -4665,7 +4880,8 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal
     // never beeline at an army — assassinating kings is attack-king's job.
     // Falls through to normal city targeting when no (unclaimed) clusters
     // remain.
-    if (topGoal && topGoal.kind === 'decisive-battle' && !(group.lord && group.lord.isKing) &&
+    if (topGoal && topGoal.kind === 'decisive-battle' &&
+        !(group.lords || []).some(l => l.isKing) &&
         topGoal.meta && Array.isArray(topGoal.meta.clusters)) {
         const available = topGoal.meta.clusters.filter(cl =>
             !(claimedClusters && claimedClusters.has(`${cl.x},${cl.z}`)));
@@ -4779,14 +4995,81 @@ function pickGroupObjective(group, tiles, owner, isAtWar, stance, units, topGoal
     }
 }
 
+/** Compute the HP fraction below which a king should retreat. Scales strongly
+ *  with local enemy power: if foes outnumber friends the threshold rises toward
+ *  0.75, and if foes are 1.5x+ stronger it hits the max (0.80). An enemy king
+ *  within attack range adds a large bonus so the king retreats rather than
+ *  duelling. */
+function computeKingRetreatThreshold(king, units, owner, atWar, isAtWar, currentTurn, lords) {
+    const military = [...units.values()].filter(u =>
+        u.owner === owner && !['SCOUT', 'SETTLER', 'WORKER'].includes(u.type));
+    const lateGame = military.length >= AI_KING_RETREAT_LATE_GAME_UNITS ||
+        (currentTurn || 0) >= AI_KING_RETREAT_LATE_GAME_TURN;
+    let threshold = lateGame ? AI_KING_RETREAT_LATE_GAME : AI_KING_RETREAT_BASE;
+
+    // Enemy king within attack range: avoid 1v1 duel.
+    for (const el of (lords || [])) {
+        if (el.owner === owner || !el.isKing) continue;
+        if (isAtWar && !isAtWar(el.owner)) continue;
+        const dist = Math.max(Math.abs(el.x - king.x), Math.abs(el.z - king.z));
+        if (dist <= 1) { threshold += AI_KING_RETREAT_ENEMY_KING; break; }
+    }
+
+    const local = localPowerBalance(units, king.x, king.z, owner, atWar, isAtWar, 3);
+    if (local.foe > local.friend) {
+        const ratio = local.foe / Math.max(1, local.friend);
+        // Scale toward 0.75 as the foe advantage grows.
+        threshold += Math.min(0.75 - threshold, (ratio - 1) * 0.15);
+    }
+    if (local.foe >= local.friend * 1.5) {
+        threshold = AI_KING_RETREAT_MAX;
+    }
+    return Math.min(AI_KING_RETREAT_MAX, threshold);
+}
+
+/** True when a non-king lord should fall back to a friendly city. */
+function lordShouldRetreat(lord, units, owner, atWar, isAtWar) {
+    const hpFrac = (lord.hp || 0) / (lord.maxHp || 1);
+    if (hpFrac < AI_LORD_RETREAT_LOW) return true;
+    if (hpFrac < AI_LORD_RETREAT_BASE) {
+        for (const u of units.values()) {
+            if (u.owner === owner) continue;
+            if (isAtWar && !isAtWar(u.owner)) continue;
+            if (Math.max(Math.abs(u.x - lord.x), Math.abs(u.z - lord.z)) <= AI_LORD_RETREAT_ENEMY_RADIUS) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 /** Stance from the local power balance at the group centroid:
  *  `engage` (we match them), `retreat` (outmatched and we have fragile units to
- *  save), else `hold`. When not at war, the group holds/defends. */
-function computeStance(group, units, owner, atWar, isAtWar) {
+ *  save), else `hold`. When not at war, the group holds/defends. Kings/lords in
+ *  the group force retreat earlier when wounded so high-value leaders don't
+ *  throw themselves away. */
+function computeStance(group, units, owner, atWar, isAtWar, currentTurn = 0, lords = null) {
     if (!atWar) return 'hold';
     const c = groupCentroid(group);
     const bal = localPowerBalance(units, c.x, c.z, owner, atWar, isAtWar, 4);
     if (bal.foe <= 0) return 'hold';
+
+    // King-led groups: retreat if the king is below its dynamic HP threshold or
+    // if local enemies are stronger (avoid 1v1 / locally superior foes).
+    for (const k of (group.lords || []).filter(l => l.isKing)) {
+        const threshold = computeKingRetreatThreshold(k, units, owner, atWar, isAtWar, currentTurn, lords);
+        const hpFrac = (k.hp || 0) / (k.maxHp || 1);
+        if (hpFrac < threshold) return 'retreat';
+        const local = localPowerBalance(units, k.x, k.z, owner, atWar, isAtWar, 3);
+        if (local.foe > local.friend) return 'retreat';
+    }
+
+    // Non-king lords: retreat when low HP or moderately wounded with enemies near.
+    for (const l of (group.lords || [])) {
+        if (l.isKing) continue;
+        if (lordShouldRetreat(l, units, owner, atWar, isAtWar)) return 'retreat';
+    }
+
     const hasFragile = group.units.some(u => isFragile(u));
     if (bal.friend < bal.foe * 0.6 && hasFragile) return 'retreat';
     if (bal.friend >= bal.foe * 0.8) return 'engage';
@@ -4822,7 +5105,10 @@ function chooseGroupTarget(group, units, owner, atWar, isAtWar, lords = []) {
         // Artillery/siege priority: these are the highest-threat enemy units
         // (high attack, long range, 0-1 defense). The group should focus-fire
         // them to eliminate the biggest damage source first.
-        if (SIEGE_TYPES.has(e.type)) score += 40;
+        if (SIEGE_TYPES.has(e.type)) score += 50;
+        // Cavalry priority: fast, hard-hitting mounted units are the next-highest
+        // threat after enemy siege engines.
+        if (CAVALRY_TYPES.has(e.type)) score += 30;
         if (score > bestScore) { bestScore = score; best = e; }
     }
     // Also consider at-war enemy lords/kings as focus targets. Kings are the
@@ -5247,7 +5533,10 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                 if (typeMatch(u.type, e.type)) score += 10;
                 // Siege hunter bonus: ranged units prioritize killing enemy
                 // artillery/siege to eliminate the highest damage source.
-                if (SIEGE_TYPES.has(e.type)) score += 15;
+                if (SIEGE_TYPES.has(e.type)) score += 50;
+                // Cavalry threat bonus: fast, hard-hitting mounted units are the
+                // next-highest priority after enemy siege engines.
+                if (CAVALRY_TYPES.has(e.type)) score += 30;
                 // AOE splash bonus: siege engines prefer clustered enemies
                 if (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].aoe) {
                     let splashCount = 0;
@@ -5500,7 +5789,7 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
             // unit keeps advancing until conditions improve — otherwise it would stall
             // for 2 turns, advance once, then stall for 2 turns again (stutter cycle).
             if (foeNear) {
-                const esc = nearestEscort(u, units, owner);
+                const esc = nearestEscort(u, units, owner, lords);
                 const inStall = esc && esc.dist > SIEGE_ESCORT_RADIUS;
                 if (inStall) {
                     if ((u._siegeStallTurns || 0) < 2) {
@@ -5634,8 +5923,9 @@ function homeMassHasFoundSpot(tiles, owner, land, massId) {
 
 /** True if there exists a non-home landmass with no friendly city on it AND
  *  which contains at least one tile a settler could found on (rejects barren
- *  rocks, so the AI doesn't build a harbor for useless water). */
-function hasForeignLandmassWithoutCity(tiles, owner, land, homeMass) {
+ *  rocks, so the AI doesn't build a harbor for useless water). `minSize`
+ *  optionally rejects landmasses below a tile count (e.g. tiny islets). */
+function hasForeignLandmassWithoutCity(tiles, owner, land, homeMass, minSize = 0) {
     const friendlyMasses = new Set();
     for (const t of tiles.values()) {
         if (t.terrain === 'CITY' && t.owner === owner) {
@@ -5646,6 +5936,7 @@ function hasForeignLandmassWithoutCity(tiles, owner, land, homeMass) {
     for (const m of land.sizes.keys()) {
         if (m === homeMass) continue;
         if (friendlyMasses.has(m)) continue;
+        if ((land.sizes.get(m) || 0) < minSize) continue;
         // Require at least one settleable tile on this foreign mass.
         for (const t of tiles.values()) {
             if (land.idOf.get(`${t.x},${t.z}`) !== m) continue;
@@ -5931,8 +6222,10 @@ export function kingRangedResponse(lord, enemyUnits, friendLocal, foeLocal) {
     const sdef = UNIT_TYPE[shooter.type];
     const srange = (sdef && sdef.attackRange) || (sdef && sdef.ranged ? 2 : 1);
     const d = Math.max(Math.abs(shooter.x - lord.x), Math.abs(shooter.z - lord.z));
-    const outmatched = foeLocal > friendLocal * 1.1;
-    if (!outmatched && d <= 3) {
+    // Only close on a ranged shooter when the king has a clear local advantage.
+    // If enemies are equal or stronger, retreat instead of walking into a duel.
+    const outmatched = foeLocal >= friendLocal;
+    if (!outmatched && d <= 3 && friendLocal > foeLocal * 1.2) {
         // 2 steps from distance 3 reaches adjacent, so d<=3 is closeable.
         return { close: true, target: { x: shooter.x, z: shooter.z } };
     }
@@ -6063,7 +6356,9 @@ export function buildArmyGroupsHTML(aiState, factions, factionDefs, factionColor
             const comp = Object.entries(g.composition || {})
                 .map(([type, n]) => `${(UNIT_TYPE[type] && UNIT_TYPE[type].name) || type} ×${n}`)
                 .join(' · ');
-            const leader = g.lord ? `${g.lord}` : '—';
+            const leader = (g.lords && g.lords.length)
+                ? g.lords.join(', ')
+                : (g.lord ? `${g.lord}` : '—');
             const obj = g.objective ? ` → ${g.objective}` : '';
             return `<div style="font-size:11px;line-height:1.4;margin:2px 0;padding:2px 4px;background:rgba(255,255,255,0.04);border-radius:3px;">
   <strong>${leader}</strong> <span class="muted">${g.stance || 'hold'}${obj} · pow ${g.power || 0}</span><br>

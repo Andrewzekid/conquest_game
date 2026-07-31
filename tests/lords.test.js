@@ -35,7 +35,7 @@ describe('lords', () => {
       const lord = createLord('player', 0, 0, 'T', 'WARLORD');
       lord.isKing = false;
       lord.level = 1;
-      expect(lordMaxHp(lord)).toBe(18);
+      expect(lordMaxHp(lord)).toBe(26);
     });
 
     it('king gets bonus', () => {
@@ -120,6 +120,16 @@ describe('lords', () => {
       const msgs = awardXP(lord, 50);
       expect(lord.level).toBe(2);
       expect(msgs.some(m => m.includes('reached level'))).toBe(true);
+    });
+
+    it('level up increases all base stats', () => {
+      const lord = createLord('player', 0, 0, 'T', 'WARLORD');
+      const before = { ...lord.stats };
+      awardXP(lord, 50);
+      expect(lord.level).toBe(2);
+      expect(lord.stats.command).toBe(before.command + 5);
+      expect(lord.stats.combat).toBe(before.combat + 5);
+      expect(lord.stats.governance).toBe(before.governance + 5);
     });
 
     it('ability unlocks at correct level', () => {

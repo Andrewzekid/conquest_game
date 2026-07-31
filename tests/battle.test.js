@@ -7,6 +7,7 @@ function makeUnit(type, owner, x, z, overrides = {}) {
     INFANTRY: { hp: 10, maxHp: 10, attack: 3, defense: 2, moveRange: 2, type: 'INFANTRY' },
     ARCHER: { hp: 8, maxHp: 8, attack: 4, defense: 1, moveRange: 2, type: 'ARCHER', ranged: true },
     CAVALRY: { hp: 12, maxHp: 12, attack: 5, defense: 3, moveRange: 3, type: 'CAVALRY' },
+    GALLEY: { hp: 14, maxHp: 14, attack: 6, defense: 3, moveRange: 4, type: 'GALLEY', naval: true, ranged: true },
   };
   return { id: Math.random(), owner, x, z, level: 1, xp: 0, ...defaults[type], ...overrides };
 }
@@ -92,6 +93,29 @@ describe('battle', () => {
       const def = makeUnit('ARCHER', 'b', 1, 0, { hp: 50, maxHp: 50 });
       const result = resolveCombat(atk, def, 'PLAINS');
       expect(result.messages.some(m => m.includes('type advantage'))).toBe(true);
+    });
+
+    it('melee units cannot attack naval units', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const def = makeUnit('GALLEY', 'b', 1, 0);
+      const result = resolveCombat(atk, def, 'WATER');
+      expect(result.damageToDefender).toBe(0);
+      expect(result.messages.some(m => m.includes('cannot attack ships'))).toBe(true);
+    });
+
+    it('cavalry cannot attack naval units', () => {
+      const atk = makeUnit('CAVALRY', 'a', 0, 0);
+      const def = makeUnit('GALLEY', 'b', 1, 0);
+      const result = resolveCombat(atk, def, 'WATER');
+      expect(result.damageToDefender).toBe(0);
+      expect(result.messages.some(m => m.includes('cannot attack ships'))).toBe(true);
+    });
+
+    it('ranged units can attack naval units', () => {
+      const atk = makeUnit('ARCHER', 'a', 0, 0);
+      const def = makeUnit('GALLEY', 'b', 1, 0, { hp: 50, maxHp: 50 });
+      const result = resolveCombat(atk, def, 'WATER');
+      expect(result.damageToDefender).toBeGreaterThan(0);
     });
   });
 

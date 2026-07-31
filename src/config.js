@@ -62,7 +62,7 @@ export const UNIT_TYPE = {
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
-    SIEGE:       { name: 'Siege',        hp: 14, attack: 2, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 4, wood: 2, iron: 1 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, siegeOnly: true },
+    SIEGE:       { name: 'Siege',        hp: 14, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 4, wood: 2, iron: 1 }, siegeBonus: 8, besiege: true, besiegePower: 2, ranged: true, attackRange: 2 },
     SETTLER:     { name: 'Settler',      hp: 6,  attack: 1, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 2 }, canFoundCity: true, buildTurns: 2, ranged: false, attackRange: 1 },
     ENGINEER:    { name: 'Engineer',     hp: 8,  attack: 2, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 2, wood: 1 }, canBuildBridge: true, canBuildSiegeTower: true, canBuildStructure: true, ranged: false, attackRange: 1 },
     // Worker: a Civ-style improvement builder. It travels the map and constructs
@@ -115,80 +115,80 @@ export const UNIT_TYPE = {
     SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 },
     // === RENAISSANCE ERA UNITS (1700-1800) ===
     // MUSKETEER: early firearm infantry with volley fire mechanic.
-    MUSKETEER:   { name: 'Musketman', hp: 14, attack: 8, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
+    MUSKETEER:   { name: 'Musketman', hp: 15, attack: 10, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
     // ARQUEBUSIER: early rifle with slow reload - cannot attack turn after firing.
-    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 8, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
+    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 9, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
     // RENAISSANCE NAVAL: wooden warships dominate the seas.
     MAN_OF_WAR:  { name: 'Man-of-War', hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 6, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 6, flagship: true },
     GALLEASS:    { name: 'Galleass', hp: 25, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, oared: true },
     PINNACE:     { name: 'Pinnace', hp: 18, attack: 7, defense: 4, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 2, vision: 7 },
     // === ENLIGHTENMENT ERA UNITS (1800-1850) ===
     // LINE_INFANTRY: disciplined formation fighters with formation bonus.
-    LINE_INFANTRY: { name: 'Line Infantry', hp: 16, attack: 10, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
+    LINE_INFANTRY: { name: 'Line Infantry', hp: 20, attack: 14, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
     // DRAGOON: mounted ranged - hybrid cavalry that can charge or fire.
-    DRAGOON:     { name: 'Dragoon', hp: 14, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
+    DRAGOON:     { name: 'Dragoon', hp: 16, attack: 14, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
     // CANNON: heavy artillery with devastating siege power.
-    CANNON:      { name: 'Cannon', hp: 10, attack: 10, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
+    CANNON:      { name: 'Cannon', hp: 12, attack: 14, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
     // MORTAR: indirect fire with AOE splash damage.
-    MORTAR:      { name: 'Mortar', hp: 8, attack: 9, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
+    MORTAR:      { name: 'Mortar', hp: 10, attack: 12, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
     // ENLIGHTENMENT NAVAL: faster sailing warships.
     CORVETTE:    { name: 'Corvette', hp: 22, attack: 9, defense: 5, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 2, raider: true },
     FROLIC:      { name: 'Frolic', hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, broadside: true },
     MERCHANTMAN: { name: 'Merchantman', hp: 20, attack: 4, defense: 4, moveRange: 3, upkeep: { food: 4, gold: 6, wood: 3, iron: 1 }, naval: true, capacity: 3, tradeBonus: 10 },
     // === MODERN ERA UNITS (1850-1880) ===
     // RIFLEMAN: accurate firearm infantry that ignores defense.
-    RIFLEMAN:    { name: 'Rifleman', hp: 18, attack: 12, defense: 6, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
+    RIFLEMAN:    { name: 'Rifleman', hp: 22, attack: 16, defense: 7, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
     // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
-    SHARPSHOOTER: { name: 'Sharpshooter', hp: 12, attack: 13, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
+    SHARPSHOOTER: { name: 'Sharpshooter', hp: 14, attack: 17, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
     // RAILGUN: devastating railway artillery with long reload.
-    RAILGUN:     { name: 'Railgun', hp: 12, attack: 15, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
+    RAILGUN:     { name: 'Railgun', hp: 14, attack: 19, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
     // ARMORED_TRAIN: mobile railway fortress that can move and fire.
-    ARMORED_TRAIN: { name: 'Armored Train', hp: 25, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
+    ARMORED_TRAIN: { name: 'Armored Train', hp: 27, attack: 16, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
     // FIELD_GUN: rapid-fire artillery.
-    FIELD_GUN:   { name: 'Field Gun', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
+    FIELD_GUN:   { name: 'Field Gun', hp: 12, attack: 18, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
     // HORSE_ARTILLERY: fast-deploy mobile cannon.
-    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 10, attack: 12, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
+    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 12, attack: 16, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
     // DEMOLITION_SQUAD: combat engineers with bonus vs cities. In the modern
     // era this is the ENGINEER line's upgrade — it keeps the engineer's
     // canBuildStructure/canBuildBridge utility (so it can lay modern mines &
     // bunkers once the tech is researched) but trades the SIEGE_TOWER build
     // for a strong demolish bonus vs cities/buildings. Obsoletes the basic
     // ENGINEER once EXPLOSIVES is researched.
-    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 10, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
+    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 12, attack: 16, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
     // COMBAT_ENGINEER: the atomic-era engineer. Faster (motorized), tankier,
     // and builds the modern structure line (MINEFIELD / BUNKER / AT_MINE) once
     // the relevant techs are researched. Obsoletes DEMOLITION_SQUAD once
     // INTERNAL_COMBUSTION is researched — it's the proper modern equivalent of
     // the classical ENGINEER, keeping the bridge/structure utility the AI
     // relies on for river crossings and defensive fortifications.
-    COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 14, attack: 12, defense: 9, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
+    COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 16, attack: 14, defense: 9, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
     // SIEGE_CANNON: heavy siege gun that destroys fortifications.
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 8, attack: 17, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 10, attack: 21, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
     // MODERN NAVAL: steam-powered iron warships.
     IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
     STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
     GUNBOAT:     { name: 'Gunboat', hp: 18, attack: 10, defense: 5, moveRange: 4, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, naval: true, ranged: true, attackRange: 2, shallowDraft: true },
-    IRONCLAD_FRIGATE: { name: 'Ironclad Frigate', hp: 45, attack: 15, defense: 12, moveRange: 3, upkeep: { food: 8, gold: 14, wood: 2, iron: 7 }, naval: true, ranged: true, attackRange: 3, heavyArmor: true },
-    MONITOR:     { name: 'Monitor', hp: 35, attack: 16, defense: 14, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true },
-    FRIGATE_2:   { name: 'Frigate II', hp: 38, attack: 13, defense: 9, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 3, fastSail: true },
+    IRONCLAD_FRIGATE: { name: 'Ironclad Frigate', hp: 47, attack: 17, defense: 12, moveRange: 3, upkeep: { food: 8, gold: 14, wood: 2, iron: 7 }, naval: true, ranged: true, attackRange: 3, heavyArmor: true },
+    MONITOR:     { name: 'Monitor', hp: 37, attack: 18, defense: 14, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true },
+    FRIGATE_2:   { name: 'Frigate II', hp: 40, attack: 15, defense: 9, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 3, fastSail: true },
     SUBMARINE:   { name: 'Submarine', hp: 25, attack: 12, defense: 6, moveRange: 3, upkeep: { food: 4, gold: 10, wood: 1, iron: 5 }, naval: true, ranged: true, attackRange: 3, stealth: true },
-    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 15, attack: 18, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true },
+    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 17, attack: 20, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true },
     // === ANTI-CAVALRY UNITS ===
     // HALBERDIER: medieval anti-cavalry specialist. Strong bonus vs cavalry and
     // chariots; slower than a Pikeman but tankier. A straight Pikeman upgrade
     // for the medieval era, especially vs mounted-heavy factions.
-    HALBERDIER:  { name: 'Halberdier', hp: 14, attack: 6, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 4, iron: 2 }, ranged: false, attackRange: 1, antiCavalry: true },
+    HALBERDIER:  { name: 'Halberdier', hp: 16, attack: 8, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 4, iron: 2 }, ranged: false, attackRange: 1, antiCavalry: true },
     // PIKE_MASTER: enlightenment-era long-pike infantry. The hardest counter to
     // cavalry charges (Winged Hussar, Cataphract, Dragoon) — takes reduced
     // charge damage and deals +2 vs mounted.
-    PIKE_MASTER: { name: 'Pike Master', hp: 18, attack: 8, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 3 }, ranged: false, attackRange: 1, antiCavalry: true },
+    PIKE_MASTER: { name: 'Pike Master', hp: 20, attack: 10, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 3 }, ranged: false, attackRange: 1, antiCavalry: true },
     // BAYONET_RIFLE: a rifleman with a fixed bayonet — modern anti-cavalry.
     // Slightly less raw ranged power than RIFLEMAN, but the bayonet gives a
     // big bonus when charged by tanks/cavalry.
-    BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 20, attack: 11, defense: 9, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
+    BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 22, attack: 13, defense: 9, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
     // ANTI_TANK_GUN: a towed anti-tank gun — the transitional step between the
     // bayonet rifle and the RPG. High damage vs armored units, low mobility.
-    ANTI_TANK_GUN: { name: 'Anti-Tank Gun', hp: 14, attack: 16, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 5 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true },
+    ANTI_TANK_GUN: { name: 'Anti-Tank Gun', hp: 16, attack: 18, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 5 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true },
     // RPG_TEAM: the modern anti-armor specialist. A two-man team with a
     // rocket-propelled-grenade launcher. Devastating vs tanks/heavy tanks/
     // armored cars (the modern "cavalry"), with a small AOE splash. This is
@@ -196,7 +196,7 @@ export const UNIT_TYPE = {
     // successor to the Pikeman's long pike, now pointed at armor instead of
     // horses. infantry anti-tank teams are the canonical counter to massed
     // armor in this era.
-    RPG_TEAM:     { name: 'RPG Team', hp: 16, attack: 22, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 12, iron: 6 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true, aoe: true, aoeRadius: 1 },
+    RPG_TEAM:     { name: 'RPG Team', hp: 18, attack: 24, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 12, iron: 6 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true, aoe: true, aoeRadius: 1 },
     // === MOBILIZED UNITS (Atomic Era, 1880-1940) ===
     // Mobilized units are motorized/motor-trained versions of the base line:
     // they give up a bit of raw combat power for much higher move range, which
@@ -205,25 +205,25 @@ export const UNIT_TYPE = {
     // researched, and obsolete their foot-bound predecessors.
     // MOBILIZED_INFANTRY: motorized riflemen — trucks grant +2 move over
     // RIFLEMAN and a larger HP pool, at the cost of ranged attack range.
-    MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 24, attack: 14, defense: 9, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
+    MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 26, attack: 18, defense: 9, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
     // MOBILIZED_ARTILLERY: towed field guns moved by trucks. Far more mobile
     // than the foot-bound FIELD_GUN (+2 move), same devastating bombardment.
-    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 14, attack: 18, defense: 8, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
+    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 16, attack: 22, defense: 8, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
     // MOTOR_ARTILLERY: self-propelled guns — the heaviest mobile artillery. Can
     // move and fire the same turn (mobile: true like ARMORED_TRAIN), giving it
     // true shoot-and-scoot capability.
-    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 18, attack: 20, defense: 10, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
+    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 20, attack: 24, defense: 10, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
     // TANK: the modern successor to cavalry. Tracks give it the charge bonus of
     // cavalry (canCharge) but with massively better HP/ATK/DEF. Its tread charge
     // replaces the horse charge in the modern era — old cavalry (CAVALRY,
     // CATAPHRACT, WINGED_HUSSAR) are obsoleted once ARMOR is researched.
-    TANK:        { name: 'Tank', hp: 32, attack: 20, defense: 14, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
+    TANK:        { name: 'Tank', hp: 36, attack: 24, defense: 15, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
     // HEAVY_TANK: a breakthrough tank — slower but even more durable, with a
     // bigger gun. The ultimate land unit of the era.
-    HEAVY_TANK:  { name: 'Heavy Tank', hp: 42, attack: 24, defense: 18, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
+    HEAVY_TANK:  { name: 'Heavy Tank', hp: 46, attack: 28, defense: 19, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
     // ARMORED_CAR: a fast, light mechanized scout/raider. High move range, low
     // cost — the spiritual successor to the Chariot/Scout line in the modern era.
-    ARMORED_CAR: { name: 'Armored Car', hp: 18, attack: 12, defense: 8, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
+    ARMORED_CAR: { name: 'Armored Car', hp: 20, attack: 16, defense: 8, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
     // === GENERIC REPLACEMENTS for faction-unique units ===
     // These exist so that non-owning factions still get a unit from the tech
     // that used to unlock a faction-unique unit (e.g. CHIVALRY used to unlock
@@ -388,7 +388,7 @@ export const BRIDGE_COST = { gold: 40, wood: 3 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 20, wood: 8, iron: 0, production: 8 };
+export const SIEGE_TOWER_COST = { gold: 3, wood: 1, iron: 0, production: 1 };
 export const SIEGE_TOWER_BUILD_TURNS = 2;
 export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
@@ -403,41 +403,60 @@ export const LADDER_COST = { gold: 30, wood: 15 };
 export const LADDER_BUILD_TURNS = 1;
 export const LADDER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 
-// Type advantage system (rock-paper-scissors bonus)
+// Type advantage system (rock-paper-scissors web)
+//
+// Core land triangle:
+//   Cavalry beats Infantry & Archers (fast charge)
+//   Infantry beats Archers & Siege (closes distance, melee overwhelm)
+//   Archers/Crossbows beat Artillery & Siege (out-range slow engines)
+//   Artillery beats Cavalry & massed Infantry (area fire / cannons)
+//   Pikemen/Halberdiers hard-counter Cavalry
+//
+// Era progression:
+//   Gunpowder units (Musketeer -> Line -> Rifle) beat older melee/ranged.
+//   Tanks/Armor beat infantry and old artillery, but are countered by
+//   bayonet rifles, anti-tank guns, and RPG teams.
 export const TYPE_ADVANTAGE = {
-    // Infantry: strong against archers (closing distance) and siege (melee overwhelm).
-    INFANTRY:    { strongAgainst: ['ARCHER', 'SIEGE'], multiplier: 1.6 },
-    ARCHER:      { strongAgainst: 'ARTILLERY', multiplier: 1.4 },
-    ARTILLERY:   { strongAgainst: 'CAVALRY',   multiplier: 1.4 },
-    CAVALRY:     { strongAgainst: 'INFANTRY',  multiplier: 1.4 },
-    PIKEMAN:     { strongAgainst: 'CAVALRY',   multiplier: 1.5 },
-    CATAPHRACT:  { strongAgainst: 'INFANTRY',  multiplier: 1.5 },
-    CHARIOT:     { strongAgainst: 'ARCHER',    multiplier: 1.4 },
+    // Infantry: strong against ranged (closing distance) and siege (melee overwhelm).
+    INFANTRY:    { strongAgainst: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'SIEGE', 'ARTILLERY'], multiplier: 1.5 },
+    ARCHER:      { strongAgainst: ['ARTILLERY', 'SIEGE', 'CROSSBOWMAN'], multiplier: 1.4 },
+    LONGBOWMAN:  { strongAgainst: ['ARTILLERY', 'SIEGE'], multiplier: 1.4 },
+    ARTILLERY:   { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'SIEGE', 'INFANTRY'], multiplier: 1.5 },
+    CAVALRY:     { strongAgainst: ['INFANTRY', 'ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN'], multiplier: 1.5 },
+    PIKEMAN:     { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR'], multiplier: 1.6 },
+    CATAPHRACT:  { strongAgainst: ['INFANTRY', 'ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN'], multiplier: 1.5 },
+    CHARIOT:     { strongAgainst: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'INFANTRY'], multiplier: 1.4 },
+    CROSSBOWMAN: { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'INFANTRY'], multiplier: 1.4 },
     // Naval type advantages
     FRIGATE:     { strongAgainst: 'GALLEY',    multiplier: 1.5 },
     GALLEON:     { strongAgainst: 'FRIGATE',   multiplier: 1.4 },
     // Renaissance era type advantages
-    MUSKETEER:   { strongAgainst: 'CROSSBOWMAN', multiplier: 1.4 },
+    ARQUEBUSIER: { strongAgainst: ['INFANTRY', 'ARCHER', 'PIKEMAN', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.4 },
+    MUSKETEER:   { strongAgainst: ['CROSSBOWMAN', 'INFANTRY', 'ARCHER', 'PIKEMAN', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.4 },
     MAN_OF_WAR:  { strongAgainst: 'GALLEON',   multiplier: 1.5 },
     // Enlightenment era type advantages
-    LINE_INFANTRY: { strongAgainst: 'MUSKETEER', multiplier: 1.3 },
-    CANNON:      { strongAgainst: 'MUSKETEER', multiplier: 1.5 },
-    MORTAR:      { strongAgainst: 'LINE_INFANTRY', multiplier: 1.5 },
+    LINE_INFANTRY: { strongAgainst: ['MUSKETEER', 'INFANTRY', 'ARCHER', 'PIKEMAN', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.4 },
+    DRAGOON:     { strongAgainst: ['INFANTRY', 'ARCHER', 'ARTILLERY', 'CROSSBOWMAN'], multiplier: 1.4 },
+    CANNON:      { strongAgainst: ['MUSKETEER', 'SIEGE', 'CAVALRY', 'GALLEY', 'TRANSPORT', 'FRIGATE'], multiplier: 1.5 },
+    MORTAR:      { strongAgainst: ['LINE_INFANTRY', 'INFANTRY', 'SIEGE'], multiplier: 1.5 },
     CORVETTE:    { strongAgainst: 'TRANSPORT', multiplier: 1.6 },
     FROLIC:      { strongAgainst: 'CORVETTE',  multiplier: 1.4 },
     // Modern era type advantages
-    RIFLEMAN:    { strongAgainst: 'LINE_INFANTRY', multiplier: 1.4 },
+    RIFLEMAN:    { strongAgainst: ['LINE_INFANTRY', 'MUSKETEER', 'INFANTRY', 'ARCHER', 'PIKEMAN', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.5 },
+    SHARPSHOOTER:{ strongAgainst: ['RIFLEMAN', 'MUSKETEER', 'LINE_INFANTRY', 'INFANTRY', 'ARCHER', 'PIKEMAN', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.4 },
     IRONCLAD:    { strongAgainst: 'FRIGATE',   multiplier: 1.6 },
     MONITOR:     { strongAgainst: 'IRONCLAD',  multiplier: 1.4 },
-    RAILGUN:     { strongAgainst: 'CANNON',    multiplier: 1.5 },
+    RAILGUN:     { strongAgainst: ['CANNON', 'SIEGE_CANNON', 'INFANTRY'], multiplier: 1.5 },
+    FIELD_GUN:   { strongAgainst: ['CAVALRY', 'INFANTRY', 'TANK', 'SIEGE'], multiplier: 1.4 },
+    HORSE_ARTILLERY: { strongAgainst: ['CAVALRY', 'INFANTRY', 'SIEGE'], multiplier: 1.4 },
     SUBMARINE:   { strongAgainst: 'MAN_OF_WAR', multiplier: 1.5 },
     TORPEDO_BOAT: { strongAgainst: 'IRONCLAD', multiplier: 1.8 },
     // Anti-cavalry specialists: very strong vs all mounted units (cavalry,
     // cataphract, chariot, hussar, dragoon, tank, armored car). Their whole
     // role is to break cavalry charges.
-    HALBERDIER:  { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR'], multiplier: 1.8 },
-    PIKE_MASTER: { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON'], multiplier: 2.0 },
-    BAYONET_RIFLE: { strongAgainst: ['TANK', 'ARMORED_CAR', 'HEAVY_TANK', 'CAVALRY'], multiplier: 1.7 },
+    HALBERDIER:  { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR'], multiplier: 1.8 },
+    PIKE_MASTER: { strongAgainst: ['CAVALRY', 'CATAPHRACT', 'CHARIOT', 'WINGED_HUSSAR', 'DRAGOON', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR'], multiplier: 2.0 },
+    BAYONET_RIFLE: { strongAgainst: ['TANK', 'ARMORED_CAR', 'HEAVY_TANK', 'CAVALRY', 'CATAPHRACT'], multiplier: 1.7 },
     // Anti-tank gun: transitional anti-armor — strong vs tanks, decent vs
     // armored cars, but less effective vs infantry (specialist).
     ANTI_TANK_GUN: { strongAgainst: ['TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MOTOR_ARTILLERY'], multiplier: 1.9 },
@@ -446,16 +465,16 @@ export const TYPE_ADVANTAGE = {
     // good vs old cavalry. The AOE splash means a hit can chip adjacent armor.
     RPG_TEAM:     { strongAgainst: ['TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MOTOR_ARTILLERY', 'MOBILIZED_ARTILLERY', 'CAVALRY', 'CATAPHRACT'], multiplier: 2.2 },
     // Atomic era: tanks crush old infantry and artillery (modern cavalry role).
-    TANK:        { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY', 'MUSKETEER', 'FIELD_GUN', 'MORTAR'], multiplier: 1.6 },
-    HEAVY_TANK:  { strongAgainst: ['TANK', 'RIFLEMAN', 'FIELD_GUN', 'MORTAR', 'CANNON'], multiplier: 1.5 },
-    ARMORED_CAR: { strongAgainst: ['INFANTRY', 'ARCHER', 'SCOUT'], multiplier: 1.5 },
+    TANK:        { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY', 'MUSKETEER', 'INFANTRY', 'FIELD_GUN', 'MORTAR', 'ARTILLERY'], multiplier: 1.6 },
+    HEAVY_TANK:  { strongAgainst: ['TANK', 'RIFLEMAN', 'LINE_INFANTRY', 'MUSKETEER', 'FIELD_GUN', 'MORTAR', 'CANNON', 'ARTILLERY', 'INFANTRY'], multiplier: 1.5 },
+    ARMORED_CAR: { strongAgainst: ['INFANTRY', 'ARCHER', 'SCOUT', 'CROSSBOWMAN'], multiplier: 1.5 },
     // Mobilized units outmaneuver the foot-bound line but are themselves
     // vulnerable to entrenched defenders (a motorized column takes extra
     // damage from fortification/anti-tank weapons — represented here by
     // BAYONET_RIFLE's advantage over them).
-    MOBILIZED_INFANTRY: { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY'], multiplier: 1.4 },
-    MOBILIZED_ARTILLERY: { strongAgainst: ['FIELD_GUN', 'CANNON', 'MORTAR'], multiplier: 1.5 },
-    MOTOR_ARTILLERY: { strongAgainst: ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN'], multiplier: 1.5 },
+    MOBILIZED_INFANTRY: { strongAgainst: ['RIFLEMAN', 'LINE_INFANTRY', 'INFANTRY'], multiplier: 1.4 },
+    MOBILIZED_ARTILLERY: { strongAgainst: ['FIELD_GUN', 'CANNON', 'MORTAR', 'ARTILLERY'], multiplier: 1.5 },
+    MOTOR_ARTILLERY: { strongAgainst: ['SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'INFANTRY'], multiplier: 1.5 },
     // Naval: destroyers counter submarines, battleships dominate cruisers,
     // carriers boost adjacent fleets. Submarine II is deadlier vs capital ships.
     DESTROYER:   { strongAgainst: ['SUBMARINE', 'SUBMARINE_II', 'TORPEDO_BOAT'], multiplier: 1.7 },
@@ -464,7 +483,7 @@ export const TYPE_ADVANTAGE = {
     SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 1.8 },
     // Artillery has a slight advantage vs ships (shore bombardment).
     ARTILLERY:   { strongAgainst: ['CAVALRY', 'GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'], multiplier: 1.2 },
-    CANNON:      { strongAgainst: ['MUSKETEER', 'GALLEY', 'TRANSPORT', 'FRIGATE'], multiplier: 1.2 }
+    CANNON:      { strongAgainst: ['MUSKETEER', 'SIEGE', 'GALLEY', 'TRANSPORT', 'FRIGATE'], multiplier: 1.2 }
 };
 
 // --- Land vs Naval combat penalties ---
@@ -476,6 +495,10 @@ export const LAND_VS_NAVAL_PENALTY = 0.35;
 export const LAND_NAVAL_TYPES = new Set(['INFANTRY', 'CAVALRY', 'PIKEMAN', 'CATAPHRACT', 'CHARIOT',
     'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'HALBERDIER', 'PIKE_MASTER',
     'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER']);
+
+/** Siege/artillery unit types used for special combat and city-besiege rules. */
+export const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR',
+    'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN']);
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
 
@@ -563,11 +586,19 @@ export const CHARIOT_CHARGE_VULN_MULT = 2.0;      // extra damage multiplier vs 
 export const FREEZE_TURNS = 1; // units frozen by Winter's Grasp skip 1 move
 
 // --- Ranged arrow bombard vs cities ---
-// Non-siege ranged units (ARCHER, LONGBOWMAN) can fire arrows at an enemy
-// fortified city to chip its fortification from range. Damage is intentionally
-// nerfed (1/turn) vs proper siege engines — bows harass, they don't breach.
+// Non-siege ranged units can fire at an enemy fortified city to chip its
+// fortification from range. Damage is intentionally nerfed (1/turn) vs proper
+// siege engines — bows and muskets harass, they don't breach.
 export const RANGED_BOMBARD_FORT_DAMAGE = 1;
-export const RANGED_BOMBARD_TYPES = ['ARCHER', 'LONGBOWMAN'];
+export const RANGED_BOMBARD_TYPES = ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'RIFLEMAN', 'SHARPSHOOTER'];
+
+// --- Ranged / siege effectiveness vs city defenders ---
+// Ranged units get a slight attack bonus when shooting at a defender inside a
+// city (shooting into a packed garrison/walls is easier than open-field skirmish).
+// Siege engines deal multiplied damage to city defenders — they are purpose-built
+// to smash fortifications and entrenched garrisons.
+export const RANGED_CITY_ATTACK_BONUS = 2;
+export const SIEGE_CITY_DAMAGE_MULTIPLIER = 2.5;
 
 // --- Siege pressure (fortification wear-down) ---
 // Each time a city takes fortification damage (besiege, arrow bombard, or a
@@ -861,7 +892,7 @@ export const LORD_CLASSES = {
     GRAND_COMMANDER:{ name: 'Grand Commander',icon: 'star', bonus: { attack: 1, defense: 1, extraCommand: 2 }, desc: '+1 atk & +1 def to army, and commands 2 extra units.' }
 };
 
-export const LORD_BASE_STATS = { command: 2, combat: 2, governance: 2 };
+export const LORD_BASE_STATS = { command: 7, combat: 7, governance: 7 };
 export const LORD_RECRUIT_COST = { gold: 140, food: 60 };
 export const LORD_XP_PER_KILL = 10;
 export const LORD_XP_PER_LEVEL = 50;
@@ -878,7 +909,7 @@ export const LORD_SKILL_TREES = {
             combat: {
                 name: 'Blade Mastery',
                 skills: [
-                    { id: 'blade_master', name: 'Blade Master', tier: 1, prereqs: [], effect: { attack: 1 }, desc: '+1 attack' },
+                    { id: 'blade_master', name: 'Blade Master', tier: 1, prereqs: [], effect: { combat: 2 }, desc: '+2 combat (lord attack)' },
                     { id: 'toughness', name: 'Toughness', tier: 1, prereqs: [], effect: { hp: 3 }, desc: '+3 HP' },
                     { id: 'critical_strike', name: 'Critical Strike', tier: 2, prereqs: ['blade_master', 'toughness'], effect: { critChance: 0.15 }, desc: '15% chance for double damage' },
                     { id: 'lifesteal', name: 'Lifesteal', tier: 2, prereqs: ['blade_master', 'toughness'], effect: { lifesteal: 0.2 }, desc: 'Heal 20% of damage dealt' },
@@ -902,7 +933,7 @@ export const LORD_SKILL_TREES = {
             defense: {
                 name: 'Iron Guard',
                 skills: [
-                    { id: 'iron_skin', name: 'Iron Skin', tier: 1, prereqs: [], effect: { defense: 1 }, desc: '+1 defense' },
+                    { id: 'iron_skin', name: 'Iron Skin', tier: 1, prereqs: [], effect: { command: 2 }, desc: '+2 command (lord defense & army size)' },
                     { id: 'fortify', name: 'Fortify', tier: 1, prereqs: [], effect: { fortBonus: 2 }, desc: '+2 defense in cities' },
                     { id: 'shield_wall', name: 'Shield Wall', tier: 2, prereqs: ['iron_skin', 'fortify'], effect: { adjacentDefenseBonus: 1 }, desc: '+1 defense to adjacent units' },
                     { id: 'unbreakable', name: 'Unbreakable', tier: 2, prereqs: ['iron_skin', 'fortify'], effect: { surviveLethal: true }, desc: 'Survive a fatal hit at 1 HP (once)' },
@@ -960,11 +991,11 @@ export const LORD_SKILL_TREES = {
             economy: {
                 name: 'Civil Administration',
                 skills: [
-                    { id: 'tax_collector', name: 'Tax Collector', tier: 1, prereqs: [], effect: { goldBonus: 0.1 }, desc: '+10% gold income' },
-                    { id: 'logistics', name: 'Logistics', tier: 1, prereqs: [], effect: { upkeepReduction: 0.1 }, desc: '-10% unit upkeep' },
-                    { id: 'trade_master', name: 'Trade Master', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { tradeRouteBonus: 5 }, desc: '+5 gold per trade route' },
-                    { id: 'resource_manager', name: 'Resource Manager', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { allResourceBonus: 0.1 }, desc: '+10% all resources' },
-                    { id: 'chancellor', name: 'Chancellor', tier: 3, prereqs: ['trade_master', 'resource_manager'], effect: { cityYieldBonus: 0.15 }, desc: '+15% yields all cities' }
+                    { id: 'tax_collector', name: 'Tax Collector', tier: 1, prereqs: [], effect: { goldBonus: 0.1, governance: 2 }, desc: '+10% gold income, +2 governance' },
+                    { id: 'logistics', name: 'Logistics', tier: 1, prereqs: [], effect: { upkeepReduction: 0.1, governance: 2 }, desc: '-10% unit upkeep, +2 governance' },
+                    { id: 'trade_master', name: 'Trade Master', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { tradeRouteBonus: 5, governance: 1 }, desc: '+5 gold per trade route, +1 governance' },
+                    { id: 'resource_manager', name: 'Resource Manager', tier: 2, prereqs: ['tax_collector', 'logistics'], effect: { allResourceBonus: 0.1, governance: 1 }, desc: '+10% all resources, +1 governance' },
+                    { id: 'chancellor', name: 'Chancellor', tier: 3, prereqs: ['trade_master', 'resource_manager'], effect: { cityYieldBonus: 0.15, governance: 1 }, desc: '+15% yields all cities, +1 governance' }
                 ]
             }
         }
@@ -1067,8 +1098,10 @@ export const AI_PERSONALITIES = {
 export const AI_GOAL_MIN_STABILITY_TURNS = 3;
 // Fraction of the unit cap reserved for long-range artillery (CATAPULT/TREBUCHET)
 // so basic siege (SIEGE/ARTILLERY) saturating the siege cap doesn't crowd them out.
-export const AI_ARTILLERY_RESERVE_DEFAULT = 0.12;
-export const AI_ARTILLERY_RESERVE_SIEGE = 0.25;
+export const AI_ARTILLERY_RESERVE_DEFAULT = 0.25;
+export const AI_ARTILLERY_RESERVE_SIEGE = 0.35;
+// Artillery/siege techs get a research-selection score multiplier for the AI.
+export const AI_ARTILLERY_TECH_PRIORITY = 1.3;
 // Settler scarcity trigger: consecutive scarce turns before the AI aggressively
 // expands to acquire missing resources, and the cap/floor relaxation it grants.
 export const AI_SETTLER_SCARCITY_TURN_THRESHOLD = 2;
@@ -1081,6 +1114,37 @@ export const AI_BREACH_DETACH_RADIUS = 8;
 // (moveRange + attackRange beyond the foe's distance to the king). Mobile
 // threats that can strike this turn scare the king into retreating earlier.
 export const AI_KING_MOBILITY_THREAT_FACTOR = 0.25;
+
+// King AI caution tuning. The king retreats when its HP fraction falls below
+// a threshold that rises with local danger. Higher thresholds = more cautious.
+export const AI_KING_RETREAT_BASE = 0.60;            // base HP fraction to start retreating
+export const AI_KING_RETREAT_LATE_GAME = 0.70;       // higher caution once armies grow or turns pass
+export const AI_KING_RETREAT_LATE_GAME_UNITS = 8;    // unit count that triggers late-game caution
+export const AI_KING_RETREAT_LATE_GAME_TURN = 40;    // turn that triggers late-game caution
+export const AI_KING_RETREAT_MAX = 0.80;             // absolute cap on retreat threshold
+export const AI_KING_RETREAT_PER_FOE = 0.02;         // +threshold per reachable enemy (cap 0.06)
+export const AI_KING_RETREAT_FOE_CAP = 0.06;
+export const AI_KING_RETREAT_ARTILLERY = 0.12;       // bonus when artillery/siege can strike
+export const AI_KING_RETREAT_RANGED = 0.06;          // bonus when ranged units can strike
+export const AI_KING_RETREAT_ENEMY_KING = 0.20;      // bonus when an enemy king is nearby
+export const AI_KING_RETREAT_ENEMY_LORD = 0.06;      // bonus per nearby enemy lord
+export const AI_KING_RETREAT_LORD_CAP = 0.12;
+export const AI_KING_RETREAT_POWER_RATIO_SCALE = 0.20; // +threshold per 1.0x local foe advantage above 1.0x (cap 0.20)
+export const AI_KING_RETREAT_POWER_RATIO_CAP = 0.20;
+export const AI_KING_RETREAT_POWER_RATIO_TRIGGER = 1.0; // instant retreat if foe mobile power >= friend power * this
+export const AI_KING_HUNT_ADVANTAGE_EARLY = 1.5;     // friendLocal must exceed foeLocal by this much to hunt early
+export const AI_KING_HUNT_ADVANTAGE_LATE = 2.5;      // friendLocal must exceed foeLocal by this much to hunt late
+export const AI_KING_HUNT_RANGE_EARLY = 5;           // max Manhattan distance to hunt enemy king early
+export const AI_KING_HUNT_RANGE_LATE = 3;            // max Manhattan distance to hunt enemy king late
+
+// Regular lord AI caution tuning. Lords are less precious than kings but still
+// should not throw themselves at the enemy when wounded. They retreat at a
+// higher HP fraction when local enemies outpower friendly units, and fall back
+// unconditionally at very low HP.
+export const AI_LORD_RETREAT_BASE = 0.40;            // retreat when below this HP fraction and enemies are near
+export const AI_LORD_RETREAT_LOW = 0.25;             // unconditional retreat below this HP fraction
+export const AI_LORD_RETREAT_ENEMY_RADIUS = 4;       // how close enemies count as "near"
+export const AI_LORD_RETREAT_POWER_TRIGGER = 1.0;    // retreat if local foe power >= friend power * this
 
 // Flow-aware scarcity: a resource counts as "strained" when its per-turn net
 // flow is at or below these (negative) thresholds — i.e. the faction is
@@ -1121,9 +1185,12 @@ export const ECONOMIC_VICTORY_TRADE_ROUTES = 6; // trade route count needed
 export const ECONOMIC_VICTORY_BONUS_TRADE_GOLD = 50; // bonus gold per turn near victory
 
 // --- City Unrest & Loyalty system ---
-// Unrest is a 0-100 per-city value. It rises with distance, foreign cultural
-// pressure, and recent conquest; it falls with garrisons, governors, walls,
-// and city level. High unrest cuts a city's yields; at 100 it can rebel.
+// Unrest is a 0-100 per-city value. It now rises ONLY from real danger:
+// prolonged sieges, enemy forces nearby when the garrison is weak/absent,
+// breached walls, and the lingering shock of recent conquest. Safe cities
+// do not drift into rebellion. It falls with garrisons, governors, walls,
+// city level, and a post-conquest "occupation stability" window. High
+// unrest cuts a city's yields; at 100 it can rebel.
 export const UNREST_THRESHOLDS = {
     NONE: 0,        // no effect
     LOW: 25,        // -25% yields
@@ -1133,35 +1200,50 @@ export const UNREST_THRESHOLDS = {
 };
 
 export const UNREST_DECAY_RATES = {
-    GARRISON: 6,           // per turn, a friendly unit sits on the city tile (scales ×1/1.5/2 with count)
+    GARRISON: 8,           // per turn, a friendly unit sits on the city tile (scales ×1/1.5/2 with count)
     GOVERNOR: 8,           // per turn, a lord is assigned as the city's governor
     WALLS: 3,              // per turn, if WALLS building present on the city
-    CITY_LEVEL: 1          // per turn per city level
+    CITY_LEVEL: 1,          // per turn per city level
+    POST_CONQUEST: 10,      // extra decay for recently captured cities
+    POST_CONQUEST_GARRISON: 14  // extra decay on top of POST_CONQUEST if a garrison is present
 };
 
 export const UNREST_INCREASE_RATES = {
-    DISTANCE: 1,           // per tile distance from the nearest same-owner city
-    NO_GARRISON: 2,        // per turn, no friendly unit on the city tile
-    CULTURAL_PRESSURE: 1,  // per adjacent enemy-owned city tile
-    RECENT_CONQUEST: 6,   // immediate on capture, decays 1/turn over 14 turns
-    RECENT_CONQUEST_DECAY_TURNS: 14,
+    DISTANCE: 0,           // removed: safe frontier cities no longer drift to rebellion
+    NO_GARRISON: 0,        // removed standalone; folded into enemy_threat (only dangerous without threat)
+    CULTURAL_PRESSURE: 0,  // removed standalone; folded into enemy_threat
+    RECENT_CONQUEST: 4,   // immediate on capture, decays 1/turn over 10 turns
+    RECENT_CONQUEST_DECAY_TURNS: 10,
     OCCUPATION: 1,         // per turn while enemy units are on adjacent tiles
-    CAPTURE_INITIAL: 25   // captured cities start at this unrest
+    CAPTURE_INITIAL: 8,   // captured cities start at this unrest
+    BREACH_PENALTY: 5,    // per turn while city fortification is 0 (breached)
+    ENEMY_NEARBY_PRESENCE: 1, // per threatening enemy unit near the city when garrison is weak/absent
+    SIEGE_DURATION_PENALTY: 1, // per turn after the siege threshold while enemy units are nearby
+    SIEGE_DURATION_THRESHOLD: 3  // turns of enemy presence before the siege-duration penalty starts
 };
 
 // Rebellion: at 100 unrest a city has this chance per turn to flip to the
-// most influential neighboring owner (or go independent).
-export const UNREST_REBEL_CHANCE = 0.1;
+// most influential neighboring owner (or go independent). Reaching 100 now
+// requires active danger, so the chance is lower than the old model.
+export const UNREST_REBEL_CHANCE = 0.03;
+
+// Number of turns after capture during which the city receives extra unrest
+// decay (occupation stabilization). A garrison adds a further decay bonus.
+export const POST_CONQUEST_STABILITY_TURNS = 15;
+
+// Radius (Chebyshev) around a city in which enemy units count as a threat
+// for unrest purposes. Covers "large enemy nearby".
+export const UNREST_THREAT_RADIUS = 4;
 
 // Stability factors: reduce (or increase) unrest based on the empire's
 // overall condition — prosperity, military strength, fortifications,
-// governance, and peace duration all stabilize a city; prolonged sieges
-// destabilize it. Applied after the base increase/decrease calc.
+// governance, and peace duration all stabilize a city. Prolonged sieges and
+// breached walls are handled directly via UNREST_INCREASE_RATES now.
 export const STABILITY_FACTORS = {
     PROSPERITY_BONUS: -2,        // per 100 gold in treasury (max -10)
     ARMY_STRENGTH_BONUS: -3,     // per full 1.0x army ratio above 1.5x neighbor avg (max -15)
     FRIENDLY_CITY_NEIGHBOR: -2, // per adjacent friendly city tile
-    SIEGE_DURATION_PENALTY: 1,  // per turn city is under siege (enemy units within 2)
+    SIEGE_DURATION_PENALTY: 0,  // handled by UNREST_INCREASE_RATES.SIEGE_DURATION_PENALTY
     CONSECUTIVE_PEACE_BONUS: -1,// per turn at peace (max -10)
     FORTIFICATION_BONUS: -1,    // if WALLS present on the city
     GOVERNOR_PRESENCE: -2,      // if a lord is governing (stacks with GOVERNOR decay)
@@ -1191,6 +1273,12 @@ export const PEACE_ACCEPTANCE_MODIFIERS = {
     RELATIONSHIP_BONUS: 0.002,   // per relationship point
     TREATY_HISTORY_PENALTY: -0.1 // per broken treaty
 };
+
+// After a peace treaty or ceasefire is signed, the parties cannot re-declare
+// war on each other for this many turns. This stops AI factions from
+// immediately re-entering the same war (especially visible in spectate mode).
+export const PEACE_TRUCE_TURNS = 6;
+export const CEASEFIRE_TRUCE_TURNS = 3;
 
 // --- Trade Route Establishment ---
 // A trade route connects two cities (≥ min level) and pays its owner income

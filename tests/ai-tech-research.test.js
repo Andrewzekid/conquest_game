@@ -61,6 +61,41 @@ describe('autoSelectResearch', () => {
         expect(result).toBe('FORTIFICATION');
     });
 
+    it('BALANCED prioritizes GUNPOWDER when it is the top available artillery tech', () => {
+        // Research everything that comes before GUNPOWDER in the BALANCED list,
+        // plus the other cheap medieval techs so cost-adjusted scoring still
+        // favors the higher-priority artillery option.
+        ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'SIEGE_CRAFT', 'FORTIFICATION', 'CHIVALRY',
+         'CARTOGRAPHY', 'FEUDALISM']
+            .forEach(id => state.researched.add(id));
+        const result = autoSelectResearch(state, 'BALANCED');
+        expect(result).toBe('GUNPOWDER');
+    });
+
+    it('AGGRESSIVE prioritizes METALLURGY over non-artillery techs', () => {
+        // Research everything before METALLURGY in the AGGRESSIVE list (and
+        // OCEAN_NAVIGATION, which is cheaper and would otherwise win on cost).
+        ['CHIVALRY', 'GUNPOWDER', 'SIEGE_CRAFT', 'FORTIFICATION', 'MATHEMATICS',
+         'ENGINEERING', 'NAVAL_ENGINEERING', 'ANIMAL_HUSBANDRY', 'CARTOGRAPHY',
+         'FEUDALISM', 'MEDICINE', 'MACHINERY', 'MASS_PRODUCTION', 'MATCHLOCK', 'BASTION_FORT',
+         'OCEAN_NAVIGATION']
+            .forEach(id => state.researched.add(id));
+        const result = autoSelectResearch(state, 'AGGRESSIVE');
+        expect(result).toBe('METALLURGY');
+    });
+
+    it('ECONOMIC prioritizes EXPLOSIVES over rifle techs', () => {
+        // Research everything before EXPLOSIVES in the ECONOMIC list.
+        ['MATHEMATICS', 'ENGINEERING', 'NAVAL_ENGINEERING', 'MASS_PRODUCTION',
+         'CARTOGRAPHY', 'ANIMAL_HUSBANDRY', 'BRONZE_WORKING', 'SIEGE_CRAFT',
+         'GUNPOWDER', 'FORTIFICATION', 'CHIVALRY', 'MEDICINE', 'FEUDALISM',
+         'MACHINERY', 'MATCHLOCK', 'METALLURGY', 'OCEAN_NAVIGATION', 'BASTION_FORT',
+         'BANKING', 'ACADEMY', 'FLINTLOCK']
+            .forEach(id => state.researched.add(id));
+        const result = autoSelectResearch(state, 'ECONOMIC');
+        expect(result).toBe('EXPLOSIVES');
+    });
+
     it('returns null when all techs researched', () => {
         for (const id of Object.keys(TECHS)) {
             state.researched.add(id);
