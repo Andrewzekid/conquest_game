@@ -1549,61 +1549,274 @@ export class GameRenderer {
         return g;
     }
 
+    /** Build a mounted unit: horse + rider + distinctive weapon/helmet/wings.
+     *  Used for CAVALRY, CATAPHRACT, DRAGOON, WINGED_HUSSAR, CONQUISTADOR,
+     *  MERCENARY_KNIGHT and FRONTIERSMAN to keep cavalry silhouettes consistent. */
+    _addCavalry(g, P, opts = {}) {
+        const armored = opts.armored || false;
+        const weapon = opts.weapon || 'saber';
+        const wings = opts.wings || false;
+        const morion = opts.morion || false;
+        const riderArmor = opts.riderArmor !== undefined ? opts.riderArmor : armored;
+        const riderHelmet = opts.riderHelmet !== undefined ? opts.riderHelmet : true;
+        const tall = opts.tall || false;
+        if (armored) {
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.5), P.armor);
+            body.position.y = 0.34; g.add(body);
+            const neck = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.2, 0.12), P.armor);
+            neck.position.set(0, 0.42, 0.28); g.add(neck);
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.16), P.body);
+            head.position.set(0, 0.5, 0.36); g.add(head);
+            for (const [sx, sz] of [[-0.1, 0.18], [0.1, 0.18], [-0.1, -0.18], [0.1, -0.18]]) {
+                const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.06), P.dark);
+                leg.position.set(sx, 0.13, sz); g.add(leg);
+            }
+            const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.04), P.dark);
+            tail.position.set(0, 0.28, -0.27); g.add(tail);
+        } else {
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.46), P.body);
+            body.position.y = 0.3; g.add(body);
+            const neck = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), P.body);
+            neck.position.set(0, 0.4, 0.24); g.add(neck);
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.14), P.skin);
+            head.position.set(0, 0.5, 0.3); g.add(head);
+            for (const [sx, sz] of [[-0.08, 0.16], [0.08, 0.16], [-0.08, -0.16], [0.08, -0.16]]) {
+                const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.05), P.dark);
+                leg.position.set(sx, 0.12, sz); g.add(leg);
+            }
+            const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.04), P.dark);
+            tail.position.set(0, 0.26, -0.24); g.add(tail);
+        }
+        const rider = new THREE.Group();
+        const rt = this._addHumanoid(rider, P, { armor: riderArmor, helmet: riderHelmet, tall });
+        rider.position.set(0, armored ? 0.46 : 0.42, -0.05);
+        g.add(rider);
+        if (weapon === 'lance') {
+            const lance = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), P.wood);
+            lance.rotation.z = 0.35;
+            lance.position.set(0.18, armored ? 0.7 : 0.65, 0.1);
+            g.add(lance);
+        } else if (weapon === 'saber') {
+            const saber = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.2, 0.04), P.metal);
+            saber.position.set(0.16, armored ? 0.6 : 0.55, 0.05);
+            g.add(saber);
+        } else if (weapon === 'carbine') {
+            const carbine = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.03), P.metal);
+            carbine.position.set(0.16, armored ? 0.6 : 0.55, 0.05);
+            g.add(carbine);
+        } else if (weapon === 'arquebus') {
+            const gun = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.28, 0.04), P.dark);
+            gun.position.set(0.16, armored ? 0.62 : 0.57, 0.06);
+            g.add(gun);
+        } else if (weapon === 'bow') {
+            this._addBow(g, P, 0.16, armored ? 0.62 : 0.58, 1);
+        }
+        if (wings) {
+            for (const sx of [-0.12, 0.12]) {
+                const wing = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.3, 0.18),
+                    new THREE.MeshPhongMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide }));
+                wing.position.set(sx, armored ? 0.7 : 0.65, -0.12);
+                wing.rotation.x = 0.3;
+                g.add(wing);
+            }
+        }
+        if (morion) {
+            const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.02, 12), P.metal);
+            brim.position.set(0, rt * 0.545 + 0.02, 0);
+            rider.add(brim);
+            const comb = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.12), P.metal);
+            comb.position.set(0, rt * 0.545 + 0.06, 0);
+            rider.add(comb);
+        }
+        return g;
+    }
+
+    /** Build a wheeled cannon/barrel rig. Used by CANNON, FIELD_GUN, SIEGE_CANNON,
+     *  HORSE_ARTILLERY and ANTI_TANK_GUN to keep artillery silhouettes consistent. */
+    _addCannon(g, P, opts = {}) {
+        const carriageW = opts.carriageW ?? 0.3;
+        const carriageH = opts.carriageH ?? 0.1;
+        const carriageD = opts.carriageD ?? 0.45;
+        const carriageColor = opts.carriageColor || P.darkWood;
+        const base = new THREE.Mesh(new THREE.BoxGeometry(carriageW, carriageH, carriageD), carriageColor);
+        base.position.y = carriageH / 2;
+        g.add(base);
+        if (opts.shield) {
+            const s = new THREE.Mesh(new THREE.BoxGeometry(opts.shield.w, opts.shield.h, 0.02), P.metal);
+            s.position.set(0, carriageH / 2 + opts.shield.h / 2, opts.shield.z);
+            g.add(s);
+        }
+        const wheels = opts.wheels || [{ x: -0.18, z: -0.05 }, { x: 0.18, z: -0.05 }];
+        const wheelRadius = opts.wheelRadius ?? 0.12;
+        const wheelWidth = opts.wheelWidth ?? 0.03;
+        const wheelColor = opts.wheelColor || P.wood;
+        const wheelY = opts.wheelY ?? wheelRadius;
+        for (const w of wheels) {
+            const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelWidth, 12), wheelColor);
+            wheel.rotation.z = Math.PI / 2;
+            wheel.position.set(w.x, wheelY, w.z);
+            g.add(wheel);
+        }
+        const barrelRTop = opts.barrelRTop ?? 0.035;
+        const barrelRBot = opts.barrelRBot ?? 0.055;
+        const barrelLen = opts.barrelLen ?? 0.5;
+        const barrelColor = opts.barrelColor || P.metal;
+        const barrelAngle = opts.barrelAngle ?? Math.PI / 2.2;
+        const barrelY = opts.barrelY ?? 0.22;
+        const barrelZ = opts.barrelZ ?? 0.05;
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(barrelRTop, barrelRBot, barrelLen, 10), barrelColor);
+        barrel.rotation.x = barrelAngle;
+        barrel.position.set(0, barrelY, barrelZ);
+        g.add(barrel);
+        return g;
+    }
+
+    /** Build a basic ship hull/deck/bow. Used by makeShipModel for every vessel. */
+    _addShipHull(g, P, opts = {}) {
+        const length = opts.length ?? 1.0;
+        const width = opts.width ?? 0.56;
+        const height = opts.height ?? 0.2;
+        const submarine = opts.submarine ?? false;
+        const metal = opts.metal ?? false;
+        const hullH = submarine ? 0.16 : height;
+        const hullMat = metal ? P.metal : P.darkWood;
+        const hull = new THREE.Mesh(new THREE.BoxGeometry(width, hullH, length), hullMat);
+        hull.position.y = submarine ? 0.08 : height / 2;
+        g.add(hull);
+        const deckMat = metal ? P.dark : P.wood;
+        const deck = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.05, length * 0.9), deckMat);
+        deck.position.y = submarine ? 0.14 : 0.2;
+        g.add(deck);
+        if (!submarine) {
+            const bowMat = metal ? P.metal : P.darkWood;
+            const bow = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.22, 4), bowMat);
+            bow.rotation.x = Math.PI / 2;
+            bow.rotation.y = Math.PI / 4;
+            bow.position.set(0, 0.12, length / 2 + 0.06);
+            g.add(bow);
+        }
+        return g;
+    }
+
     makeShipModel(type, color) {
         const P = this._unitPalette(color);
         const g = new THREE.Group();
-        const isTransport = ['TRANSPORT', 'STEAM_TRANSPORT', 'MERCHANTMAN'].includes(type);
-        const isFast = ['GALLEY', 'TRIREME', 'FRIGATE', 'CORVETTE', 'PINNACE', 'FRIGATE_2', 'TORPEDO_BOAT', 'GUNBOAT'].includes(type);
-        const isIronclad = ['BATTLESHIP', 'IRONCLAD', 'IRONCLAD_FRIGATE', 'MONITOR'].includes(type);
-        const isSub = type === 'SUBMARINE';
-        const hullLen = isTransport ? 0.72 : isSub ? 0.56 : isFast ? 0.86 : 1.0;
-        const hullW = isTransport ? 0.64 : isSub ? 0.46 : isFast ? 0.42 : 0.56;
-        const hull = new THREE.Mesh(new THREE.BoxGeometry(hullW, isSub ? 0.16 : 0.2, hullLen), P.darkWood);
-        hull.position.y = isSub ? 0.08 : 0.1; g.add(hull);
-        const deck = new THREE.Mesh(new THREE.BoxGeometry(hullW * 0.86, 0.05, hullLen * 0.9), P.wood);
-        deck.position.y = isSub ? 0.14 : 0.2; g.add(deck);
-        const bow = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.22, 4), P.darkWood);
-        bow.rotation.x = Math.PI / 2;
-        bow.rotation.y = Math.PI / 4;
-        bow.position.set(0, 0.12, hullLen / 2 + 0.06); g.add(bow);
+        const isTransport = ['TRANSPORT', 'STEAM_TRANSPORT', 'MERCHANTMAN', 'TRANSPORT_SHIP'].includes(type);
+        const isAncient = ['GALLEY', 'TRIREME', 'GALLEASS'].includes(type);
+        const isMultiMast = ['GALLEON', 'MAN_OF_WAR', 'FROLIC'].includes(type);
+        const isLightSail = ['FRIGATE', 'CORVETTE', 'PINNACE', 'FRIGATE_2', 'CARAVEL'].includes(type);
+        const isIronclad = ['IRONCLAD', 'IRONCLAD_FRIGATE', 'BATTLESHIP', 'DESTROYER', 'MONITOR'].includes(type);
+        const isSub = ['SUBMARINE', 'SUBMARINE_II'].includes(type);
+        const isTorpedo = ['TORPEDO_BOAT', 'GUNBOAT'].includes(type);
+        const isCarrier = type === 'AIRCRAFT_CARRIER';
+        let length = 1.0;
+        let width = 0.56;
+        let metal = false;
+        if (isTransport) { length = 0.72; width = 0.64; }
+        else if (isAncient) { length = 0.9; width = 0.46; }
+        else if (isMultiMast) { length = 1.05; width = 0.58; }
+        else if (isLightSail) { length = 0.86; width = 0.42; }
+        else if (isIronclad) { length = 1.0; width = 0.56; }
+        else if (isTorpedo) { length = 0.7; width = 0.34; metal = true; }
+        else if (isSub) { length = 0.56; width = 0.46; }
+        else if (isCarrier) { length = 1.15; width = 0.6; metal = true; }
+        this._addShipHull(g, P, { length, width, metal, submarine: isSub });
         if (isSub) {
             const tower = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.16), P.metal);
             tower.position.set(0, 0.2, -0.04); g.add(tower);
             const prop = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.24, 8), P.dark);
             prop.rotation.z = Math.PI / 2;
             prop.position.set(0, 0.12, 0.14); g.add(prop);
-        } else {
-            const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.55, 6), P.darkWood);
-            mast.position.y = 0.42; g.add(mast);
-            const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.34), P.sail);
-            sail.position.set(0.02, 0.48, 0); g.add(sail);
-            if (isTransport) {
-                const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.28), P.wood);
-                crate.position.y = 0.3; g.add(crate);
-                const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.2, 6), P.metal);
-                stack.position.set(0.16, 0.22, -0.12); g.add(stack);
-            } else if (isIronclad) {
-                const barbette = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), P.metal);
-                barbette.position.set(0, 0.25, -0.08); g.add(barbette);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
-                turret.rotation.x = Math.PI / 2;
-                turret.position.set(0, 0.25, 0.12); g.add(turret);
-            } else if (type === 'MONITOR') {
+            if (type === 'SUBMARINE_II') {
+                const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.1, 6), P.metal);
+                scope.position.set(0, 0.27, -0.04); g.add(scope);
+            }
+        } else if (isCarrier) {
+            const flightDeck = new THREE.Mesh(new THREE.BoxGeometry(width * 0.92, 0.04, length * 0.95), P.dark);
+            flightDeck.position.y = 0.22; g.add(flightDeck);
+            const island = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.18, 0.22), P.metal);
+            island.position.set(width * 0.25, 0.32, -0.15); g.add(island);
+            const plane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.03, 0.18), P.white);
+            plane.position.set(0.05, 0.25, 0.18); g.add(plane);
+        } else if (isIronclad) {
+            const funnelCount = (type === 'BATTLESHIP' || type === 'DESTROYER') ? 2 : 1;
+            for (let i = 0; i < funnelCount; i++) {
+                const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.22, 8), P.dark);
+                funnel.position.set(0, 0.32, -0.15 + i * 0.3); g.add(funnel);
+            }
+            if (type === 'MONITOR') {
                 const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 10), P.dark);
                 turret.rotation.x = Math.PI / 2;
                 turret.position.set(0, 0.24, 0.08); g.add(turret);
                 const shield = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.3), P.metal);
                 shield.position.y = 0.24; g.add(shield);
             } else {
-                for (const sz of [-0.3, 0.3]) {
-                    const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.4, 5), P.wood);
-                    oar.rotation.x = Math.PI / 2;
-                    oar.position.set(0, 0.18, sz); g.add(oar);
+                const barbette = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), P.metal);
+                barbette.position.set(0, 0.25, -0.08); g.add(barbette);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
+                turret.rotation.x = Math.PI / 2;
+                turret.position.set(0, 0.25, 0.12); g.add(turret);
+                if (type === 'BATTLESHIP' || type === 'DESTROYER') {
+                    const turret2 = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
+                    turret2.rotation.x = Math.PI / 2;
+                    turret2.position.set(0, 0.25, -0.28); g.add(turret2);
                 }
-                const flag = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.1),
-                    new THREE.MeshPhongMaterial({ color }));
-                flag.position.set(0, 0.62, -0.28); g.add(flag);
             }
+        } else if (isTorpedo) {
+            const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.22, 8), P.dark);
+            gun.rotation.x = Math.PI / 2; gun.position.set(0, 0.24, 0.1); g.add(gun);
+            for (const sx of [-0.06, 0.06]) {
+                const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.16, 8), P.metal);
+                tube.rotation.x = Math.PI / 2;
+                tube.position.set(sx, 0.2, length / 2 - 0.05); g.add(tube);
+            }
+        } else if (isTransport) {
+            const crate = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.28), P.wood);
+            crate.position.y = 0.3; g.add(crate);
+            if (type === 'STEAM_TRANSPORT' || type === 'TRANSPORT_SHIP') {
+                const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.24, 6), P.metal);
+                stack.position.set(0.16, 0.24, -0.12); g.add(stack);
+                if (type === 'TRANSPORT_SHIP') {
+                    const stack2 = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.24, 6), P.metal);
+                    stack2.position.set(-0.16, 0.24, -0.12); g.add(stack2);
+                }
+            } else if (type === 'MERCHANTMAN') {
+                const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.2, 6), P.metal);
+                stack.position.set(0.12, 0.22, -0.1); g.add(stack);
+            }
+        } else if (isAncient) {
+            for (const sz of [-length * 0.32, length * 0.32]) {
+                const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.4, 5), P.wood);
+                oar.rotation.x = Math.PI / 2;
+                oar.position.set(0, 0.18, sz); g.add(oar);
+            }
+            const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.55, 6), P.darkWood);
+            mast.position.y = 0.42; g.add(mast);
+            const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.34), P.sail);
+            sail.position.set(0.02, 0.48, 0); g.add(sail);
+            const flag = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.1),
+                new THREE.MeshPhongMaterial({ color }));
+            flag.position.set(0, 0.62, -0.28); g.add(flag);
+        } else if (isMultiMast) {
+            const mastCount = type === 'MAN_OF_WAR' ? 3 : 2;
+            for (let i = 0; i < mastCount; i++) {
+                const z = -length * 0.25 + i * length * 0.25;
+                const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.6, 6), P.darkWood);
+                mast.position.set(0, 0.45, z); g.add(mast);
+                const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.34), P.sail);
+                sail.position.set(0.02, 0.5, z); g.add(sail);
+            }
+            const flag = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.1),
+                new THREE.MeshPhongMaterial({ color }));
+            flag.position.set(0, 0.65, -length * 0.35); g.add(flag);
+        } else if (isLightSail) {
+            const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.028, 0.58, 6), P.darkWood);
+            mast.position.y = 0.44; g.add(mast);
+            const sail = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.36), P.sail);
+            sail.position.set(0.02, 0.5, 0); g.add(sail);
+            const flag = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.1),
+                new THREE.MeshPhongMaterial({ color }));
+            flag.position.set(0, 0.65, -0.28); g.add(flag);
         }
         return g;
     }
@@ -1921,9 +2134,95 @@ export class GameRenderer {
                 quiver.position.set(-0.1, 0.42 * t, -0.08); g.add(quiver);
                 break;
             }
+            case 'CROSSBOWMAN': {
+                const t = this._addHumanoid(g, P, { helmet: false });
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.03, 0.04), P.wood);
+                stock.position.set(0.14, 0.38 * t, 0.06); g.add(stock);
+                const prod = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.012, 6, 12, Math.PI), P.wood);
+                prod.rotation.y = Math.PI / 2;
+                prod.position.set(0.14, 0.38 * t, 0.06); g.add(prod);
+                const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.16, 4), P.metal);
+                bolt.rotation.z = Math.PI / 2;
+                bolt.position.set(0.14, 0.38 * t, 0.06); g.add(bolt);
+                break;
+            }
+            case 'LEGIONNAIRE': {
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true });
+                // Large rectangular scutum on the left arm.
+                const scutum = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.28, 0.18), P.metal);
+                scutum.position.set(-0.18, 0.34 * t, 0.04); g.add(scutum);
+                // Pilum (throwing spear).
+                const pilum = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.55, 6), P.wood);
+                pilum.rotation.z = 0.15; pilum.position.set(0.18, 0.42 * t, 0.04); g.add(pilum);
+                const tip = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.07, 6), P.metal);
+                tip.rotation.z = -0.15; tip.position.set(0.18, 0.72 * t, 0.04); g.add(tip);
+                break;
+            }
+            case 'BERSERKER': {
+                const t = this._addHumanoid(g, P, { helmet: false });
+                // Bare arms override.
+                for (const sx of [-0.13, 0.13]) {
+                    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.18 * t, 0.052), P.skin);
+                    arm.position.set(sx, 0.35 * t, 0); g.add(arm);
+                }
+                // Big battle axe.
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.34, 6), P.wood);
+                handle.position.set(0.18, 0.4 * t, 0.04); handle.rotation.z = 0.3; g.add(handle);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.06, 0.04), P.metal);
+                head.position.set(0.24, 0.58 * t, 0.04); head.rotation.z = 0.3; g.add(head);
+                break;
+            }
+            case 'VARANGIAN_GUARD': {
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true });
+                // Long two-handed axe.
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.7, 6), P.wood);
+                handle.position.set(0.14, 0.5, 0.08); handle.rotation.z = 0.25; g.add(handle);
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.04), P.metal);
+                blade.position.set(0.14, 0.86, 0.08); blade.rotation.z = 0.25; g.add(blade);
+                const spike = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 6), P.metal);
+                spike.position.set(0.14, 0.14, 0.08); spike.rotation.z = -0.25; g.add(spike);
+                break;
+            }
+            case 'HOUSEHOLD_GUARD': {
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true });
+                const sword = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.08), P.metal);
+                sword.position.set(0.16, 0.32 * t, 0); g.add(sword);
+                this._addShield(g, P, -1);
+                break;
+            }
+            case 'RAIDER': {
+                const t = this._addHumanoid(g, P, { helmet: false });
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.32, 6), P.wood);
+                handle.position.set(0.16, 0.38 * t, 0.04); handle.rotation.z = 0.3; g.add(handle);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.03), P.metal);
+                head.position.set(0.22, 0.56 * t, 0.04); head.rotation.z = 0.3; g.add(head);
+                break;
+            }
+            case 'SPY': {
+                const t = this._addHumanoid(g, P, { helmet: false });
+                const cloakMat = new THREE.MeshPhongMaterial({ color: 0x2a1a3a });
+                const cloak = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.34 * t, 0.05), cloakMat);
+                cloak.position.set(0, 0.34 * t, -0.1); g.add(cloak);
+                const hood = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 8, 0, Math.PI * 2, 0, Math.PI / 1.6), cloakMat);
+                hood.position.y = 0.53 * t; g.add(hood);
+                const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.02), P.metal);
+                dagger.position.set(0.12, 0.3 * t, 0.1); g.add(dagger);
+                break;
+            }
+            case 'COMBAT_ENGINEER': {
+                const t = this._addHumanoid(g, P, { helmet: true });
+                // Wrench/hammer tool.
+                const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 5), P.wood);
+                handle.position.set(0.16, 0.36 * t, 0.04); handle.rotation.z = 0.2; g.add(handle);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, 0.04), P.metal);
+                head.position.set(0.16, 0.47 * t, 0.04); g.add(head);
+                // Satchel.
+                const satchel = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.06), P.cloth);
+                satchel.position.set(-0.12, 0.26 * t, 0.1); g.add(satchel);
+                break;
+            }
             case 'PIKEMAN': {
                 const t = this._addHumanoid(g, P, { armor: true, helmet: true });
-                // Long pike held vertically.
                 const pike = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.85, 6), P.wood);
                 pike.position.set(0.1, 0.5, 0.02); g.add(pike);
                 const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 6), P.metal);
@@ -1931,48 +2230,60 @@ export class GameRenderer {
                 this._addShield(g, P, -1);
                 break;
             }
+            case 'HALBERDIER': {
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true });
+                const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.8, 6), P.wood);
+                pole.position.set(0.1, 0.48, 0.04); g.add(pole);
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.02), P.metal);
+                blade.position.set(0.1, 0.82, 0.04); g.add(blade);
+                const spike = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 6), P.metal);
+                spike.position.set(0.1, 0.9, 0.04); g.add(spike);
+                this._addShield(g, P, -1);
+                break;
+            }
+            case 'PIKE_MASTER': {
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true });
+                const pike = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 1.0, 6), P.wood);
+                pike.position.set(0.1, 0.55, 0.04); g.add(pike);
+                const tip = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.09, 6), P.metal);
+                tip.position.set(0.1, 1.1, 0.04); g.add(tip);
+                this._addShield(g, P, -1);
+                break;
+            }
+            case 'BAYONET_RIFLE': {
+                const t = this._addHumanoid(g, P, { helmet: true });
+                const rifle = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.44, 6), P.dark);
+                rifle.rotation.z = 0.14; rifle.position.set(0.16, 0.36 * t, 0.02); g.add(rifle);
+                const bayonet = new THREE.Mesh(new THREE.ConeGeometry(0.012, 0.06, 6), P.metal);
+                bayonet.rotation.z = -0.14; bayonet.position.set(0.16, 0.6 * t, 0.02); g.add(bayonet);
+                break;
+            }
             case 'CATAPHRACT': {
-                // Armored heavy horse + lancer rider.
-                const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.5), P.armor);
-                body.position.y = 0.34; g.add(body);
-                const neck = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.2, 0.12), P.armor);
-                neck.position.set(0, 0.42, 0.28); g.add(neck);
-                const head = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.16), P.body);
-                head.position.set(0, 0.5, 0.36); g.add(head);
-                for (const [sx, sz] of [[-0.1, 0.18], [0.1, 0.18], [-0.1, -0.18], [0.1, -0.18]]) {
-                    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.06), P.dark);
-                    leg.position.set(sx, 0.13, sz); g.add(leg);
-                }
-                const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.04), P.dark);
-                tail.position.set(0, 0.28, -0.27); g.add(tail);
-                // Rider
-                const rider = new THREE.Group();
-                const rt = this._addHumanoid(rider, P, { armor: true, helmet: true });
-                rider.position.set(0, 0.46, -0.05); g.add(rider);
-                // Lance
-                const lance = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), P.wood);
-                lance.rotation.z = 0.35; lance.position.set(0.18, 0.7, 0.1); g.add(lance);
+                this._addCavalry(g, P, { armored: true, weapon: 'lance', riderArmor: true });
                 break;
             }
             case 'CAVALRY': {
-                // Light horse + rider with saber.
-                const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.46), P.body);
-                body.position.y = 0.3; g.add(body);
-                const neck = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), P.body);
-                neck.position.set(0, 0.4, 0.24); g.add(neck);
-                const head = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.14), P.skin);
-                head.position.set(0, 0.5, 0.3); g.add(head);
-                for (const [sx, sz] of [[-0.08, 0.16], [0.08, 0.16], [-0.08, -0.16], [0.08, -0.16]]) {
-                    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.05), P.dark);
-                    leg.position.set(sx, 0.12, sz); g.add(leg);
-                }
-                const tail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, 0.04), P.dark);
-                tail.position.set(0, 0.26, -0.24); g.add(tail);
-                const rider = new THREE.Group();
-                this._addHumanoid(rider, P, { helmet: true });
-                rider.position.set(0, 0.42, -0.05); g.add(rider);
-                const saber = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.2, 0.04), P.metal);
-                saber.position.set(0.16, 0.55, 0.05); g.add(saber);
+                this._addCavalry(g, P, { weapon: 'saber' });
+                break;
+            }
+            case 'WINGED_HUSSAR': {
+                this._addCavalry(g, P, { armored: true, weapon: 'lance', wings: true, riderArmor: true });
+                break;
+            }
+            case 'CONQUISTADOR': {
+                this._addCavalry(g, P, { weapon: 'arquebus', morion: true });
+                break;
+            }
+            case 'MERCENARY_KNIGHT': {
+                this._addCavalry(g, P, { armored: true, weapon: 'saber', riderArmor: true });
+                break;
+            }
+            case 'FRONTIERSMAN': {
+                this._addCavalry(g, P, { weapon: 'arquebus', riderHelmet: false });
+                break;
+            }
+            case 'DRAGOON': {
+                this._addCavalry(g, P, { weapon: 'carbine' });
                 break;
             }
             case 'CHARIOT': {
@@ -1987,19 +2298,15 @@ export class GameRenderer {
                     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.05), P.dark);
                     leg.position.set(sx, 0.11, sz); g.add(leg);
                 }
-                // Cart platform behind the horse.
                 const cart = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.22), P.wood);
                 cart.position.set(0, 0.26, -0.1); g.add(cart);
-                // Two wheels.
                 for (const sx of [-0.16, 0.16]) {
                     const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 10), P.dark);
                     wheel.rotation.z = Math.PI / 2;
                     wheel.position.set(sx, 0.13, -0.1); g.add(wheel);
                 }
-                // Draft pole linking cart to horse.
                 const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.4, 5), P.wood);
                 pole.rotation.x = Math.PI / 2; pole.position.set(0, 0.24, 0.12); g.add(pole);
-                // Standing driver on the cart.
                 const driver = new THREE.Group();
                 this._addHumanoid(driver, P, { helmet: true });
                 driver.position.set(0, 0.3, -0.14); g.add(driver);
@@ -2007,14 +2314,12 @@ export class GameRenderer {
             }
             case 'SCOUT': {
                 const t = this._addHumanoid(g, P, { helmet: false });
-                // Hooded cape.
                 const cape = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.26, 0.04), P.cloth);
                 cape.position.set(0, 0.34 * t, -0.09); g.add(cape);
                 break;
             }
             case 'MEDIC': {
                 const t = this._addHumanoid(g, P, { helmet: false });
-                // White cross staff.
                 const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.6, 6), P.white);
                 staff.position.set(0.14, 0.4, 0.04); g.add(staff);
                 const v = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.02, 0.02), P.white);
@@ -2025,7 +2330,6 @@ export class GameRenderer {
             }
             case 'ENGINEER': {
                 const t = this._addHumanoid(g, P, { helmet: true });
-                // Hammer in hand.
                 const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 5), P.wood);
                 handle.position.set(0.16, 0.36 * t, 0.04); g.add(handle);
                 const head = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, 0.04), P.metal);
@@ -2034,7 +2338,6 @@ export class GameRenderer {
             }
             case 'WORKER': {
                 const t = this._addHumanoid(g, P, { helmet: false });
-                // Shovel: handle + blade, leaning on the shoulder.
                 const sh = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 5), P.wood);
                 sh.position.set(0.14, 0.4 * t, 0.06); sh.rotation.z = 0.3; g.add(sh);
                 const blade = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.06, 0.012), P.metal);
@@ -2042,7 +2345,6 @@ export class GameRenderer {
                 break;
             }
             case 'SETTLER': {
-                // Covered wagon: body + 2 wheels + canvas top.
                 const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.5), P.wood);
                 base.position.y = 0.2; g.add(base);
                 const canvas = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.34, 8, 1, false, 0, Math.PI), P.white);
@@ -2056,7 +2358,6 @@ export class GameRenderer {
                 break;
             }
             case 'SIEGE': {
-                // Battering ram: log + covered roof + 4 wheels.
                 const log = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.6, 8), P.darkWood);
                 log.rotation.x = Math.PI / 2;
                 log.position.y = 0.22; g.add(log);
@@ -2072,7 +2373,6 @@ export class GameRenderer {
                 break;
             }
             case 'ARTILLERY': {
-                // Cannon: barrel + carriage + 2 wheels.
                 const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.42, 12), P.metal);
                 barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.24, 0.04); g.add(barrel);
                 const mount = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.12, 0.3), P.darkWood);
@@ -2085,10 +2385,8 @@ export class GameRenderer {
                 break;
             }
             case 'SIEGE_TOWER': {
-                // Tall wheeled siege tower with ladders + a top platform.
                 const frame = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.8, 0.4), P.darkWood);
                 frame.position.y = 0.42; g.add(frame);
-                // Ladder rungs up the front face.
                 for (let i = 0; i < 5; i++) {
                     const rung = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.02, 0.02), P.wood);
                     rung.position.set(0, 0.12 + i * 0.14, 0.21); g.add(rung);
@@ -2105,17 +2403,13 @@ export class GameRenderer {
                 break;
             }
             case 'CATAPULT': {
-                // Wheeled catapult: base frame + throwing arm + bucket.
                 const base = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.14, 0.42), P.darkWood);
                 base.position.y = 0.16; g.add(base);
-                // Throwing arm pivoting up from the front.
                 const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, 0.05), P.wood);
                 arm.position.set(0, 0.32, 0.08);
                 arm.rotation.x = -0.7; g.add(arm);
-                // Bucket at the end of the arm.
                 const bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.06, 0.1, 8), P.metal);
                 bucket.position.set(0, 0.5, 0.18); g.add(bucket);
-                // Tension crossbar.
                 const cross = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.05), P.wood);
                 cross.position.set(0, 0.28, -0.06); g.add(cross);
                 for (const sx of [-0.16, 0.16]) {
@@ -2128,21 +2422,16 @@ export class GameRenderer {
                 break;
             }
             case 'TREBUCHET': {
-                // Trebuchet: longer base + tall A-frame + counterweighted beam + sling.
                 const base = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.12, 0.5), P.darkWood);
                 base.position.y = 0.16; g.add(base);
-                // A-frame uprights.
                 for (const sx of [-0.14, 0.14]) {
                     const post = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.55, 0.05), P.wood);
                     post.position.set(sx, 0.42, 0); post.rotation.z = sx * 0.5; g.add(post);
                 }
-                // Long throwing beam.
                 const beam = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.7, 0.05), P.wood);
                 beam.position.set(0, 0.5, 0.02); beam.rotation.z = 0.5; g.add(beam);
-                // Counterweight box at the short end.
                 const cw = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.12), P.dark);
                 cw.position.set(0.22, 0.34, 0.02); g.add(cw);
-                // Sling pouch at the long end.
                 const sling = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.12), P.cloth);
                 sling.position.set(-0.26, 0.62, 0.02); g.add(sling);
                 for (const sx of [-0.18, 0.18]) {
@@ -2172,41 +2461,16 @@ export class GameRenderer {
                 rifle.rotation.z = 0.14; rifle.position.set(0.18, 0.37 * t, 0.02); g.add(rifle);
                 break;
             }
-            case 'DRAGOON': {
-                const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.46), P.body);
-                body.position.y = 0.3; g.add(body);
-                const neck = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), P.body);
-                neck.position.set(0, 0.4, 0.24); g.add(neck);
-                const head = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 0.14), P.skin);
-                head.position.set(0, 0.5, 0.3); g.add(head);
-                for (const [sx, sz] of [[-0.08, 0.16], [0.08, 0.16], [-0.08, -0.16], [0.08, -0.16]]) {
-                    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.24, 0.05), P.dark);
-                    leg.position.set(sx, 0.12, sz); g.add(leg);
-                }
-                const rider = new THREE.Group();
-                this._addHumanoid(rider, P, { helmet: true });
-                rider.position.set(0, 0.42, -0.05); g.add(rider);
-                const carbine = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, 0.03), P.metal);
-                carbine.position.set(0.16, 0.55, 0.05); g.add(carbine);
-                break;
-            }
             case 'CANNON': {
-                const carriage = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.45), P.darkWood);
-                carriage.position.y = 0.12;
-                g.add(carriage);
-                for (const sx of [-0.18, 0.18]) {
-                    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.03, 12), P.wood);
-                    w.rotation.z = Math.PI / 2;
-                    w.position.set(sx, 0.12, -0.05);
-                    g.add(w);
-                }
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.055, 0.5, 10), P.metal);
-                barrel.rotation.x = Math.PI / 2.2;
-                barrel.position.set(0, 0.22, 0.05);
-                g.add(barrel);
+                this._addCannon(g, P, {
+                    carriageW: 0.3, carriageH: 0.1, carriageD: 0.45,
+                    wheels: [{ x: -0.18, z: -0.05 }, { x: 0.18, z: -0.05 }],
+                    wheelRadius: 0.12, wheelY: 0.12,
+                    barrelRTop: 0.035, barrelRBot: 0.055, barrelLen: 0.5,
+                    barrelAngle: Math.PI / 2.2, barrelY: 0.22, barrelZ: 0.05
+                });
                 break;
             }
-
             case 'MORTAR': {
                 const basePlate = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.08, 0.32), P.metal);
                 basePlate.position.y = 0.08;
@@ -2223,27 +2487,17 @@ export class GameRenderer {
                 }
                 break;
             }
-
             case 'FIELD_GUN': {
-                const carriage = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.52), P.darkWood);
-                carriage.position.y = 0.12;
-                g.add(carriage);
-                const shield = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.02), P.metal);
-                shield.position.set(0, 0.22, 0.02);
-                g.add(shield);
-                for (const sx of [-0.19, 0.19]) {
-                    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.03, 12), P.darkWood);
-                    w.rotation.z = Math.PI / 2;
-                    w.position.set(sx, 0.13, 0);
-                    g.add(w);
-                }
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.045, 0.58, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.1;
-                barrel.position.set(0, 0.24, 0.12);
-                g.add(barrel);
+                this._addCannon(g, P, {
+                    carriageW: 0.32, carriageH: 0.1, carriageD: 0.52,
+                    shield: { w: 0.34, h: 0.22, z: 0.02 },
+                    wheels: [{ x: -0.19, z: 0 }, { x: 0.19, z: 0 }],
+                    wheelRadius: 0.13, wheelY: 0.13, wheelColor: P.darkWood,
+                    barrelRTop: 0.03, barrelRBot: 0.045, barrelLen: 0.58,
+                    barrelAngle: Math.PI / 2.1, barrelY: 0.24, barrelZ: 0.12
+                });
                 break;
             }
-
             case 'HORSE_ARTILLERY': {
                 const horse = this._addHorse(g, P, { armored: false });
                 horse.position.set(-0.16, 0, 0.18);
@@ -2263,16 +2517,13 @@ export class GameRenderer {
                 break;
             }
             case 'SIEGE_CANNON': {
-                const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.3), P.darkWood);
-                base.position.y = 0.16; g.add(base);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, type === 'MORTAR' ? 0.28 : 0.36, 10), P.metal);
-                barrel.rotation.x = Math.PI / 2;
-                barrel.position.set(0, 0.24, type === 'MORTAR' ? 0.02 : 0.08); g.add(barrel);
-                for (const sx of [-0.14, 0.14]) {
-                    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.03, 10), P.dark);
-                    wheel.rotation.z = Math.PI / 2;
-                    wheel.position.set(sx, 0.1, -0.02); g.add(wheel);
-                }
+                this._addCannon(g, P, {
+                    carriageW: 0.34, carriageH: 0.12, carriageD: 0.3,
+                    wheels: [{ x: -0.14, z: -0.02 }, { x: 0.14, z: -0.02 }],
+                    wheelRadius: 0.09, wheelY: 0.1, wheelColor: P.dark,
+                    barrelRTop: 0.06, barrelRBot: 0.07, barrelLen: 0.36,
+                    barrelAngle: Math.PI / 2, barrelY: 0.24, barrelZ: 0.08
+                });
                 break;
             }
             case 'RIFLEMAN': {
@@ -2309,6 +2560,125 @@ export class GameRenderer {
                 satchel.position.set(-0.12, 0.28 * t, 0.1); g.add(satchel);
                 break;
             }
+            case 'ANTI_TANK_GUN': {
+                this._addCannon(g, P, {
+                    carriageW: 0.34, carriageH: 0.1, carriageD: 0.5,
+                    shield: { w: 0.36, h: 0.24, z: 0.08 },
+                    wheels: [{ x: -0.2, z: 0 }, { x: 0.2, z: 0 }],
+                    wheelRadius: 0.14, wheelY: 0.14, wheelColor: P.dark,
+                    barrelRTop: 0.025, barrelRBot: 0.04, barrelLen: 0.7,
+                    barrelAngle: Math.PI / 2.05, barrelY: 0.26, barrelZ: 0.12
+                });
+                break;
+            }
+            case 'RPG_TEAM': {
+                const t = this._addHumanoid(g, P, { helmet: true });
+                const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.36, 8), P.dark);
+                tube.rotation.z = 0.4; tube.position.set(0.16, 0.4 * t, 0.08); g.add(tube);
+                const warhead = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 8), P.metal);
+                warhead.rotation.z = -0.4; warhead.position.set(0.16, 0.6 * t, 0.08); g.add(warhead);
+                const box = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 0.08), P.cloth);
+                box.position.set(-0.16, 0.08, 0.08); g.add(box);
+                break;
+            }
+            case 'MOBILIZED_INFANTRY': {
+                // Small truck plus a rifleman.
+                const truck = new THREE.Group();
+                const cab = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.16), P.dark);
+                cab.position.set(-0.14, 0.16, 0); truck.add(cab);
+                const bed = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.1, 0.18), P.dark);
+                bed.position.set(0.1, 0.13, 0); truck.add(bed);
+                for (const sx of [-0.22, 0.22]) {
+                    for (const sz of [-0.1, 0.1]) {
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 8), P.dark);
+                        w.rotation.z = Math.PI / 2;
+                        w.position.set(sx, 0.06, sz); truck.add(w);
+                    }
+                }
+                truck.position.set(-0.05, 0, 0.12); g.add(truck);
+                const soldier = new THREE.Group();
+                this._addHumanoid(soldier, P, { helmet: true });
+                const rifle = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.3, 6), P.dark);
+                rifle.position.set(0.14, 0.36, 0.02); soldier.add(rifle);
+                soldier.position.set(0.18, 0, -0.12); g.add(soldier);
+                break;
+            }
+            case 'MOBILIZED_ARTILLERY': {
+                // Truck towing a long field gun.
+                const cab = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.18), P.dark);
+                cab.position.set(-0.18, 0.18, 0); g.add(cab);
+                const bed = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.12, 0.22), P.dark);
+                bed.position.set(0.12, 0.16, 0); g.add(bed);
+                for (const sx of [-0.24, 0.24]) {
+                    for (const sz of [-0.12, 0.12]) {
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.04, 8), P.dark);
+                        w.rotation.z = Math.PI / 2;
+                        w.position.set(sx, 0.07, sz); g.add(w);
+                    }
+                }
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.5, 10), P.metal);
+                barrel.rotation.x = Math.PI / 2.2;
+                barrel.position.set(0.12, 0.28, 0.06); g.add(barrel);
+                break;
+            }
+            case 'MOTOR_ARTILLERY': {
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.32), P.dark);
+                hull.position.y = 0.16; g.add(hull);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 12), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.26, 0.02); g.add(turret);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.52, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.28, 0.18); g.add(barrel);
+                for (const sx of [-0.2, 0.2]) {
+                    for (const sz of [-0.12, 0.12]) {
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 8), P.dark);
+                        w.rotation.z = Math.PI / 2;
+                        w.position.set(sx, 0.08, sz); g.add(w);
+                    }
+                }
+                break;
+            }
+            case 'TANK': {
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.6), P.dark);
+                hull.position.y = 0.18; g.add(hull);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.2, 12), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.3, 0.04); g.add(turret);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.55, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.32, 0.24); g.add(barrel);
+                for (const sx of [-0.22, 0.22]) {
+                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.56), P.dark);
+                    track.position.set(sx, 0.1, 0); g.add(track);
+                }
+                break;
+            }
+            case 'HEAVY_TANK': {
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 0.7), P.dark);
+                hull.position.y = 0.2; g.add(hull);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.36, 0.04); g.add(turret);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.65, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.38, 0.28); g.add(barrel);
+                for (const sx of [-0.26, 0.26]) {
+                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.66), P.dark);
+                    track.position.set(sx, 0.11, 0); g.add(track);
+                }
+                break;
+            }
+            case 'ARMORED_CAR': {
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.28), P.dark);
+                hull.position.y = 0.16; g.add(hull);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.14, 12), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.26, 0.02); g.add(turret);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.36, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.28, 0.14); g.add(barrel);
+                for (const sx of [-0.2, 0.2]) {
+                    for (const sz of [-0.12, 0.12]) {
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 8), P.dark);
+                        w.rotation.z = Math.PI / 2;
+                        w.position.set(sx, 0.07, sz); g.add(w);
+                    }
+                }
+                break;
+            }
             case 'GALLEY':
             case 'TRANSPORT':
             case 'TRIREME':
@@ -2331,6 +2701,9 @@ export class GameRenderer {
             case 'CORVETTE':
             case 'FROLIC':
             case 'MERCHANTMAN':
+            case 'AIRCRAFT_CARRIER':
+            case 'TRANSPORT_SHIP':
+            case 'SUBMARINE_II':
                 return this.makeShipModel(type, color);
             default: {
                 this._addHumanoid(g, P, { helmet: true });
@@ -2891,9 +3264,8 @@ export class GameRenderer {
                     o.material.emissiveIntensity = 0.18;
                 }
             });
-            const unitIconName = UNIT_ICON_NAME[unit.type] || (hasIcon(unit.type) ? unit.type : null);
-            if (unitIconName) {
-                mesh.add(this.makeIconSprite(unitIconName, 0.45, naval ? 0.7 : 0.95));
+            if (hasIcon(unit.type)) {
+                mesh.add(this.makeIconSprite(unit.type, 0.45, naval ? 0.7 : 0.95));
             }
             // Cargo pips on a Transport: one dot per carried unit.
             if (unit.type === 'TRANSPORT' && unit.cargo && unit.cargo.length) {

@@ -15,6 +15,7 @@ import { maxArmySize, lordAttack, lordDefense, kingGuardBonus, canCommand, getAv
 import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
+import { getArmyComposition } from './ui_data.js';
 import { getUnlockedUnits, getUnlockedStructures, isUnitUnlocked, TECHS } from './tech.js';
 import { applyObsolescence } from './unit_obsolescence.js';
 
@@ -50,6 +51,14 @@ function costChips(cost, res) {
         parts.push(`<span class="${ok ? 'ok' : 'no'}">${v}${abbr}</span>`);
     }
     return parts.join('');
+}
+
+function formatArmyComposition(types, iconSize = 12) {
+    const entries = Object.entries(types || {});
+    if (!entries.length) return '<span style="opacity:.6;">No units</span>';
+    return entries.map(([type, count]) =>
+        `<span style="display:inline-flex; align-items:center; gap:2px; margin-right:6px;">${svgIcon(type, { size: iconSize })} <b>${count}</b></span>`
+    ).join('');
 }
 
 export function bindUI(gameState, callbacks) {
@@ -374,7 +383,7 @@ export function bindUI(gameState, callbacks) {
         const srow = (ic, label, val) => `<div class="stat-row"><span class="stat-ico">${svgIcon(ic, { size: 16 })}</span>${label}<b>${val}</b></div>`;
         const canMove = !unit.hasMovedThisTurn;
         const canAtk = !unit.hasAttackedThisTurn;
-        let html = `<div class="info-card"><h4>${stats.name} · Lv.${lvl} #${unit.id}</h4>`;
+        let html = `<div class="info-card"><h4>${svgIcon(unit.type, { size: 20 })} ${stats.name} · Lv.${lvl} #${unit.id}</h4>`;
         html += srow('hp', 'HP', `${unit.hp}/${unit.maxHp}`);
         html += srow('attack', 'Attack', atk);
         html += srow('defense', 'Defense', def);
@@ -667,6 +676,12 @@ export function bindUI(gameState, callbacks) {
         html += srow('swords', 'XP', `${lord.xp}/${50 * lord.level}`);
         html += srow('flag', 'Owner', fc.name || lord.owner);
         html += srow('join', 'Army', `${army}/${maxArmySize(lord)}${lord.isKing ? ` (+${kingGuardBonus(lord)} guard DEF)` : ''}`);
+        if (gameState.units) {
+            const comp = getArmyComposition([lord], gameState.units, lord.owner)[0];
+            if (comp && comp.total > 0) {
+                html += `<div class="stat-row" style="align-items:flex-start; flex-wrap:wrap;"><span class="stat-ico">${svgIcon('join', { size: 16 })}</span>Roster: ${formatArmyComposition(comp.types, 12)}</div>`;
+            }
+        }
         html += `<div class="stat-row"><span class="stat-ico">${svgIcon('star', { size: 16 })}</span>CMD/CMB/GOV<b>${lord.stats.command}/${lord.stats.combat}/${lord.stats.governance}</b></div>`;
         html += `<div style="font-size:11px; color:var(--muted); margin-top:4px;">${cls.name} — ${cls.desc}</div>`;
         html += `<div style="font-size:11px; color:var(--muted);">Abilities: ${abilities}</div>`;
@@ -1081,7 +1096,7 @@ export function bindUI(gameState, callbacks) {
                     let label = `${UNIT_TYPE[unitType].name} (${formatCost(effCost)})`;
                     if (hasBarracks) label += ' ★';
                     if (buildTurns > 1) label += ` ⟳${buildTurns}t`;
-                    btn.textContent = label;
+                    btn.innerHTML = `${svgIcon(unitType, { size: 14 })} ${label}`;
                     btn.disabled = !canTrain;
                     btn.title = hasBarracks
                         ? 'Barracks: trains as veteran (Lv.2) for 25% less gold.'
@@ -1271,6 +1286,16 @@ export function bindUI(gameState, callbacks) {
                 Abilities: ${abilities}<br>
                 ${lord.governingCity ? `Governing: ${lord.governingCity}` : ''}
             `;
+            // Per-unit-type army composition summary.
+            if (gameState.units) {
+                const comp = getArmyComposition([lord], gameState.units, PLAYER_FACTION)[0];
+                if (comp && comp.total > 0) {
+                    const compDiv = document.createElement('div');
+                    compDiv.style.cssText = 'font-size:11px; color:#9ab; margin-top:2px;';
+                    compDiv.innerHTML = formatArmyComposition(comp.types, 12);
+                    div.appendChild(compDiv);
+                }
+            }
             // King active ability button.
             if (lord.isKing && lord.active) {
                 const cd = (gameState.kingCooldowns && gameState.kingCooldowns[PLAYER_FACTION]) || 0;
