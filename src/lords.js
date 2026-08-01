@@ -1,6 +1,6 @@
 /** Lords system: hero units with stats, abilities, leveling, governance, army command. */
 import { LORD_BASE_STATS, LORD_ABILITIES, LORD_XP_PER_KILL, LORD_XP_PER_LEVEL, LORD_RECRUIT_COST, LORD_CLASSES, LORD_SKILL_TREES } from './config.js';
-import { getKingTechBonuses } from './tech.js';
+import { getKingTechBonuses, getLordTechBonuses } from './tech.js';
 
 let _lordId = 0;
 function nextLordId() { return ++_lordId; }
@@ -34,7 +34,8 @@ export function createLord(owner, x, z, name, classKey) {
         hasMovedThisTurn: false,
         hasAttackedThisTurn: false, // lords can attack once per turn (like units)
         isKing: false,
-        kingTechBonuses: { hp: 0, attack: 0, defense: 0 }
+        kingTechBonuses: { hp: 0, attack: 0, defense: 0 },
+        lordTechBonuses: { command: 0, combat: 0, governance: 0, hp: 0 }
     };
     lord.maxHp = lordMaxHp(lord);
     lord.hp = lord.maxHp;
@@ -44,31 +45,37 @@ export function createLord(owner, x, z, name, classKey) {
 /** A lord's max HP: base 26 + 6/level, kings are much sturdier (they are the
  *  faction leader and their death is catastrophic). Kings get a large HP bonus
  *  (+42) so they can survive longer in battle and lead from the front (68 HP at level 1).
- *  Kings are guaranteed at least 55 max HP regardless of level. */
+ *  Kings are guaranteed at least 55 max HP regardless of level. Lords also gain
+ *  bonus HP from researched technologies. */
 export function lordMaxHp(lord) {
     if (!lord) return 1;
     const level = (typeof lord.level === 'number' && Number.isFinite(lord.level)) ? lord.level : 1;
-    const base = 26 + (level - 1) * 6 + (lord.isKing ? 42 : 0);
+    const base = 26 + (level - 1) * 6 + (lord.isKing ? 24 : 0);
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.hp || 0) : 0;
-    const result = lord.isKing ? Math.max(55, base + kingBonus) : base;
+    const lordBonus = (lord.lordTechBonuses?.hp || 0);
+    const result = lord.isKing ? Math.max(55, base + kingBonus) : (base + lordBonus);
     return Number.isFinite(result) ? result : (lord.isKing ? 55 : 22);
 }
 
-/** A lord's own melee attack: combat stat + class bonus + king bonus. */
+/** A lord's own melee attack: combat stat + class bonus + king/lord tech bonus. */
 export function lordAttack(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.attack || 0) : 0;
-    const result = (lord.stats?.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    const lordBonus = (lord.lordTechBonuses?.combat || 0);
+    const abilityBonus = (!lord.isKing && lord.abilities && lord.abilities.includes('GRAND_STRATEGIST')) ? 1 : 0;
+    const result = (lord.stats?.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus + lordBonus + abilityBonus;
     return Number.isFinite(result) ? result : 0;
 }
 
-/** A lord's own defense: command stat + class bonus + king bonus. */
+/** A lord's own defense: command stat + class bonus + king/lord tech bonus. */
 export function lordDefense(lord) {
     if (!lord) return 0;
     const cb = (LORD_CLASSES[lord.class] || {}).bonus || {};
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.defense || 0) : 0;
-    const result = (lord.stats?.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1) + kingBonus;
+    const lordBonus = (lord.lordTechBonuses?.command || 0);
+    const abilityBonus = (!lord.isKing && lord.abilities && lord.abilities.includes('GRAND_STRATEGIST')) ? 2 : 0;
+    const result = (lord.stats?.command || 0) + (cb.defense || 0) + (lord.isKing ? 3 : 1) + kingBonus + lordBonus + abilityBonus;
     return Number.isFinite(result) ? result : 0;
 }
 
@@ -87,6 +94,36 @@ export function applyKingTechBonuses(lord, techState) {
     lord.hp = previousHp === null ? lord.maxHp : Math.min(lord.maxHp, previousHp);
     if (!Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
     return lord.kingTechBonuses;
+}
+
+/** Apply technology-derived bonuses to a lord. Unlike kings, every lord in the
+ *  faction receives these bonuses, so they scale with the faction's overall
+ *  technological advancement. Also unlocks tech-gated abilities. */
+export function applyLordTechBonuses(lord, techState) {
+    if (!lord || lord.isKing) return null;
+    const bonuses = getLordTechBonuses(techState);
+    lord.lordTechBonuses = {
+        command: Number.isFinite(bonuses?.command) ? bonuses.command : 0,
+        combat: Number.isFinite(bonuses?.combat) ? bonuses.combat : 0,
+        governance: Number.isFinite(bonuses?.governance) ? bonuses.governance : 0,
+        hp: Number.isFinite(bonuses?.hp) ? bonuses.hp : 0
+    };
+    // Sanitize lord level before computing maxHp.
+    if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
+    const previousHp = typeof lord.hp === 'number' && Number.isFinite(lord.hp) ? lord.hp : null;
+    lord.maxHp = lordMaxHp(lord);
+    lord.hp = previousHp === null ? lord.maxHp : Math.min(lord.maxHp, previousHp);
+    if (!Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
+    // Unlock tech-gated abilities.
+    const researchedCount = techState && techState.researched ? techState.researched.size : 0;
+    const messages = [];
+    for (const [key, ab] of Object.entries(LORD_ABILITIES)) {
+        if (ab.unlockTechs && researchedCount >= ab.unlockTechs && !lord.abilities.includes(key)) {
+            lord.abilities.push(key);
+            messages.push(`${lord.name} unlocked ability: ${ab.name}!`);
+        }
+    }
+    return { bonuses: lord.lordTechBonuses, messages };
 }
 
 /** Build a unit-like combatant for a lord so resolveCombat can fight it. The
@@ -125,7 +162,10 @@ export function syncLordHp(combatant) {
     combatant._lord.maxHp = maxHp;
 }
 
-/** Award XP to a lord; level up if threshold reached. Returns log messages. */
+/** Award XP to a lord; level up if threshold reached. Returns log messages.
+ *  Kings gain fewer stats per level (they already start powerful and receive
+ *  separate tech bonuses), while regular lords gain more and scale faster as
+ *  they accumulate experience. */
 export function awardXP(lord, amount) {
     // Sanitize first: a lord missing level/xp/hp (old saves) turns NaN here —
     // lordMaxHp reads lord.level, and NaN hp is unkillable.
@@ -138,22 +178,27 @@ export function awardXP(lord, amount) {
     while (lord.xp >= LORD_XP_PER_LEVEL * lord.level) {
         lord.xp -= LORD_XP_PER_LEVEL * lord.level;
         lord.level++;
-        // Stat increase: +5 to all base stats each level (lords scale more
-        // noticeably with experience).
-        lord.stats.command += 5;
-        lord.stats.combat += 5;
-        lord.stats.governance += 5;
+        // Kings taper off; lords accelerate.
+        const statGain = lord.isKing
+            ? Math.max(2, 4 - Math.floor((lord.level - 1) / 3))
+            : 5 + Math.floor((lord.level - 1) / 3);
+        const hpGain = lord.isKing
+            ? Math.max(4, 7 - Math.floor((lord.level - 1) / 3))
+            : 8 + Math.floor((lord.level - 1) / 3);
+        lord.stats.command += statGain;
+        lord.stats.combat += statGain;
+        lord.stats.governance += statGain;
         // Lords grow sturdier with level (and heal on level-up).
         const newMax = lordMaxHp(lord);
-        lord.hp = Math.min(newMax, (lord.hp || 0) + 10);
+        lord.hp = Math.min(newMax, (lord.hp || 0) + hpGain);
         lord.maxHp = newMax;
-        messages.push(`${lord.name} reached level ${lord.level}! command +5, combat +5, governance +5, hp +10`);
+        messages.push(`${lord.name} reached level ${lord.level}! command +${statGain}, combat +${statGain}, governance +${statGain}, hp +${hpGain}`);
         // Feature 4: each level grants a skill-tree point to spend.
         lord.skillPoints = (lord.skillPoints || 0) + 1;
         messages.push(`${lord.name} gained a skill point!`);
-        // Unlock abilities
+        // Unlock level-gated abilities.
         for (const [key, ab] of Object.entries(LORD_ABILITIES)) {
-            if (lord.level >= ab.unlockLevel && !lord.abilities.includes(key)) {
+            if (ab.unlockLevel && lord.level >= ab.unlockLevel && !lord.abilities.includes(key)) {
                 lord.abilities.push(key);
                 messages.push(`${lord.name} unlocked ability: ${ab.name}!`);
             }
@@ -262,6 +307,10 @@ export function getAdjacentLordBonuses(lords, unit) {
         // Ability auras.
         if (l.abilities.includes('RALLY')) out.attack += 2;
         if (l.abilities.includes('TACTICIAN')) out.defense += 1;
+        if (l.abilities.includes('RENAISSANCE_PRINCE')) {
+            out.attack += 1;
+            out.defense += 1;
+        }
     }
     return out;
 }
@@ -285,6 +334,7 @@ export function getLordGovernanceMultiplier(lord) {
     if (!lord || !lord.governingCity) return 1.0;
     let mult = 1.0 + lord.stats.governance * 0.1;
     if (lord.abilities.includes('ADMINISTRATOR')) mult += 0.5;
+    if (lord.abilities.includes('INDUSTRIAL_MAGNATE')) mult += 0.25;
     return mult;
 }
 

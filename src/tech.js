@@ -506,6 +506,9 @@ export function getTechBonuses(state) {
         navalMoveBonus: 0,
         roadMoveBonus: 0,
         lordCommandBonus: 0,
+        lordCombatBonus: 0,
+        lordGovernanceBonus: 0,
+        lordHpBonus: 0,
         cityDamageBonus: 0,
         artilleryMoveBonus: 0,
         navalHpBonus: 0,
@@ -545,6 +548,22 @@ export function getKingTechBonuses(state) {
         hp: (bonuses.kingHpBonus || 0) + extraTechs,
         attack: (bonuses.kingAttackBonus || 0) + extraTechs * 0.25,
         defense: (bonuses.kingDefenseBonus || 0) + extraTechs * 0.25
+    };
+}
+
+/** Aggregate tech bonuses that apply to all lords (not just the king). Includes
+ *  per-tech flat bonuses plus a small scaling bonus for every researched tech
+ *  beyond the starting Ancient era so lords grow stronger as the game progresses. */
+export function getLordTechBonuses(state) {
+    const techState = state || { researched: new Set() };
+    const bonuses = getTechBonuses(techState);
+    const researchedCount = techState.researched ? techState.researched.size : 0;
+    const extraTechs = Math.max(0, researchedCount - 3);
+    return {
+        command: (bonuses.lordCommandBonus || 0) + extraTechs * 0.5,
+        combat: (bonuses.lordCombatBonus || 0) + extraTechs * 0.5,
+        governance: (bonuses.lordGovernanceBonus || 0) + extraTechs * 0.5,
+        hp: (bonuses.lordHpBonus || 0) + extraTechs * 2
     };
 }
 

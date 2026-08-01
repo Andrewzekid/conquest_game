@@ -6,7 +6,22 @@ import { regenFortification, cityFortMax } from './map.js';
 import { processTradePacts, updatePeaceCounters, addGrievance, getRelation, grievanceLevel,
          processWarWeariness } from './diplomacy.js';
 import { addResearch, calculateResearchOutput, autoSelectResearch, TECHS, getTechBonuses } from './tech.js';
-import { applyKingTechBonuses } from './lords.js';
+import { applyKingTechBonuses, applyLordTechBonuses } from './lords.js';
+
+/** Compute research-speed multiplier for a faction. Includes global tech
+ *  bonuses and the +10% Scholar ability for any governing lord. */
+function researchSpeedMultiplier(faction, gameState) {
+    const techState = faction === PLAYER_FACTION ? gameState.techState : (gameState.aiTechStates && gameState.aiTechStates[faction]);
+    const techBonus = techState ? (getTechBonuses(techState).researchSpeedBonus || 0) : 0;
+    let scholarBonus = 0;
+    for (const lord of gameState.lords || []) {
+        if (lord.owner !== faction || lord.isKing) continue;
+        if (lord.governingCity && lord.abilities && lord.abilities.includes('SCHOLAR')) {
+            scholarBonus = Math.max(scholarBonus, 0.1);
+        }
+    }
+    return 1 + techBonus + scholarBonus;
+}
 
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
@@ -172,12 +187,19 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
 
         // Tech tree: accumulate research for the player each turn.
         if (gameState.techState) {
-            const researchPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION, gameState.buildings);
+            const rawPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION, gameState.buildings);
+            const researchPts = rawPts > 0 ? Math.floor(rawPts * researchSpeedMultiplier(PLAYER_FACTION, gameState)) : 0;
             if (researchPts > 0) {
                 const completed = addResearch(gameState.techState, researchPts);
                 if (completed && completed.length > 0) {
                     for (const lord of gameState.lords || []) {
-                        if (lord.owner === PLAYER_FACTION && lord.isKing) applyKingTechBonuses(lord, gameState.techState);
+                        if (lord.owner === PLAYER_FACTION) {
+                            if (lord.isKing) applyKingTechBonuses(lord, gameState.techState);
+                            else {
+                                const res = applyLordTechBonuses(lord, gameState.techState);
+                                if (res && res.messages) for (const m of res.messages) if (logger) logger(m);
+                            }
+                        }
                     }
                     for (const techId of completed) {
                         if (logger) logger(`Research complete: ${techId}!`);
@@ -197,18 +219,24 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                     const personality = (def && def.aiPersonality) || 'BALANCED';
                     autoSelectResearch(aiTs, personality);
                 }
-                const researchPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
+                const rawPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
                 // AI research bonus: AI factions get +2 flat research per turn
                 // on top of their university-based research. This ensures AI
                 // tech progresses even when they have few universities, matching
                 // the player's tendency to heavily invest in science.
                 const aiResearchBonus = 2;
-                const totalResearch = researchPts + aiResearchBonus;
+                const totalResearch = rawPts > 0 ? Math.floor((rawPts + aiResearchBonus) * researchSpeedMultiplier(ai, gameState)) : 0;
                 if (totalResearch > 0) {
                     const completed = addResearch(aiTs, totalResearch);
                     if (completed && completed.length) {
                         for (const lord of gameState.lords || []) {
-                            if (lord.owner === ai && lord.isKing) applyKingTechBonuses(lord, aiTs);
+                            if (lord.owner === ai) {
+                                if (lord.isKing) applyKingTechBonuses(lord, aiTs);
+                                else {
+                                    const res = applyLordTechBonuses(lord, aiTs);
+                                    if (res && res.messages) for (const m of res.messages) if (logger) logger(m);
+                                }
+                            }
                         }
                         if (logger) {
                             const fname = (gameState.factionColors && gameState.factionColors[ai] && gameState.factionColors[ai].name) || ai;

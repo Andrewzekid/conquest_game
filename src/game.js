@@ -47,7 +47,7 @@ import { createDiplomacyState, setRelation, getRelation, canAttack, aiDecideWar,
 import { createLord, canRecruitLord, awardXP, assignGovernance, assignArmy,
          findCommandingLord, canCommand, removeUnitFromArmies, maxArmySize,
          lordCombatant, lordMaxHp, lordAttack, lordDefense, syncLordHp,
-         getAvailableSkills, investSkillPoint, getSkillEffects, applyKingTechBonuses } from './lords.js';
+         getAvailableSkills, investSkillPoint, getSkillEffects, applyKingTechBonuses, applyLordTechBonuses } from './lords.js';
 import { constructBuilding, removeBuilding, pillageableOn, getBuildingState, upgradeBuilding, damageBuilding, clearBuildingsOnTile, getMilitaryBuildingDefenseBonus } from './building.js';
 import { MILITARY_BUILDING_DEFENSE, MILITARY_PILLAGE_GOLD, UNREST_INCREASE_RATES, SPY_ACTION_COST, WAR_WEARINESS_RATES } from './config.js';
 import { collectResources, processUpkeep, getUnitCap, countCities, countTiles,
@@ -527,9 +527,11 @@ export class Game {
             // FIRST -- lordMaxHp reads lord.level (undefined level => NaN hp).
             if (typeof lord.level !== 'number' || !Number.isFinite(lord.level)) lord.level = 1;
             if (typeof lord.xp !== 'number' || !Number.isFinite(lord.xp)) lord.xp = 0;
+            if (!lord.lordTechBonuses) lord.lordTechBonuses = { command: 0, combat: 0, governance: 0, hp: 0 };
             if (typeof lord.maxHp !== 'number' || !Number.isFinite(lord.maxHp)) lord.maxHp = lordMaxHp(lord);
             if (typeof lord.hp !== 'number' || !Number.isFinite(lord.hp)) lord.hp = lord.maxHp;
             if (lord.isKing) applyKingTechBonuses(lord, this.gameState.techState);
+            else applyLordTechBonuses(lord, this.gameState.techState);
             if (typeof lord.hasAttackedThisTurn !== 'boolean') lord.hasAttackedThisTurn = false;
         }
         // Backfill unit combat fields for pre-HP saves: a unit missing
@@ -3502,6 +3504,7 @@ export class Game {
         this.gameState.resources.player.gold -= LORD_RECRUIT_COST.gold;
         this.gameState.resources.player.food -= LORD_RECRUIT_COST.food;
         const lord = createLord(PLAYER_FACTION, city.x, city.z);
+        applyLordTechBonuses(lord, this.gameState.techState);
         const unit = createUnit('INFANTRY', PLAYER_FACTION, city.x, city.z, { factionDef: this.factionDefs[PLAYER_FACTION] });
         this.gameState.units.set(unit.id, unit);
         assignArmy(lord, unit.id);
@@ -5237,6 +5240,8 @@ export class Game {
                     pool.gold -= LORD_RECRUIT_COST.gold;
                     pool.food -= LORD_RECRUIT_COST.food;
                     const lord = createLord(faction, city.x, city.z);
+                    const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
+                    applyLordTechBonuses(lord, aiTs || this.gameState.techState);
                     const unit = createUnit('INFANTRY', faction, city.x, city.z, { factionDef: def });
                     this.gameState.units.set(unit.id, unit);
                     assignArmy(lord, unit.id);

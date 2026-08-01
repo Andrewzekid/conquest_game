@@ -784,7 +784,12 @@ export const LORD_ABILITIES = {
     RALLY:         { name: 'Rally',         desc: '+2 attack to adjacent friendly units', unlockLevel: 2 },
     SIEGE_MASTER:  { name: 'Siege Master',  desc: '+3 damage vs cities',                  unlockLevel: 3 },
     ADMINISTRATOR: { name: 'Administrator', desc: '+50% city yields when governing',      unlockLevel: 2 },
-    TACTICIAN:     { name: 'Tactician',     desc: '+1 defense to adjacent friendly units', unlockLevel: 4 }
+    TACTICIAN:     { name: 'Tactician',     desc: '+1 defense to adjacent friendly units', unlockLevel: 4 },
+    // Tech-unlocked abilities: awarded as a faction researches more technologies.
+    SCHOLAR:       { name: 'Scholar',       desc: '+10% research speed when governing',   unlockTechs: 6 },
+    GRAND_STRATEGIST: { name: 'Grand Strategist', desc: '+2 command and +1 combat',        unlockTechs: 10 },
+    RENAISSANCE_PRINCE: { name: 'Renaissance Prince', desc: '+1 attack/defense/move to adjacent friendly units', unlockTechs: 14 },
+    INDUSTRIAL_MAGNATE: { name: 'Industrial Magnate', desc: '+25% production and gold in governed city', unlockTechs: 18 }
 };
 
 // Lord classes (archetypes): each lord is born into one class, which gives a

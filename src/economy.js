@@ -99,10 +99,15 @@ export function grossYields(tiles, owner, buildings, lords, factionDef) {
         const terrainData = TERRAIN[tile.terrain] || TERRAIN.CITY;
         const cl = tile.cityLevel || 1;
         let gold = (terrainData.amount || 0) + (cl - 1) * 1;
+        let production = cityProduction(cl);
         const governor = lordsArr.find(l => l.owner === owner && l.governingCity === tileKey);
-        if (governor) gold = Math.floor(gold * getLordGovernanceMultiplier(governor));
+        if (governor) {
+            const govMult = getLordGovernanceMultiplier(governor);
+            gold = Math.floor(gold * govMult);
+            production = Math.floor(production * govMult);
+        }
         add('gold', 'city', gold);
-        add('production', 'city', cityProduction(cl));
+        add('production', 'city', production);
         const influence = cityRadius(tile);
         add('food', 'city', 1 + cl);
         add('wood', 'city', 2 + Math.ceil(influence / 2));
