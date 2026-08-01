@@ -353,8 +353,8 @@ export const TYPE_ADVANTAGE = {
     RAILGUN:     { strongAgainst: ['CANNON', 'SIEGE_CANNON', 'INFANTRY'], multiplier: 1.5 },
     FIELD_GUN:   { strongAgainst: ['CAVALRY', 'INFANTRY', 'TANK', 'SIEGE'], multiplier: 1.4 },
     HORSE_ARTILLERY: { strongAgainst: ['CAVALRY', 'INFANTRY', 'SIEGE'], multiplier: 1.4 },
-    SUBMARINE:   { strongAgainst: 'MAN_OF_WAR', multiplier: 1.5 },
-    TORPEDO_BOAT: { strongAgainst: 'IRONCLAD', multiplier: 1.8 },
+    SUBMARINE:   { strongAgainst: ['MAN_OF_WAR','IRONCLAD','MONITOR'], multiplier: 2.5 },
+    TORPEDO_BOAT: { strongAgainst: ['IRONCLAD','SUBMARINE'], multiplier: 1.8 },
     // Anti-cavalry specialists: very strong vs all mounted units (cavalry,
     // cataphract, chariot, hussar, dragoon, tank, armored car). Their whole
     // role is to break cavalry charges.
@@ -384,7 +384,7 @@ export const TYPE_ADVANTAGE = {
     DESTROYER:   { strongAgainst: ['SUBMARINE', 'SUBMARINE_II', 'TORPEDO_BOAT'], multiplier: 1.7 },
     BATTLESHIP:  { strongAgainst: ['IRONCLAD_FRIGATE', 'MONITOR', 'DESTROYER'], multiplier: 1.5 },
     AIRCRAFT_CARRIER: { strongAgainst: ['BATTLESHIP', 'IRONCLAD'], multiplier: 1.4 },
-    SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 1.8 },
+    SUBMARINE_II: { strongAgainst: ['BATTLESHIP', 'AIRCRAFT_CARRIER', 'IRONCLAD_FRIGATE'], multiplier: 3.0 },
     // Artillery has a slight advantage vs ships (shore bombardment).
     ARTILLERY:   { strongAgainst: ['CAVALRY', 'GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'], multiplier: 1.2 },
     CANNON:      { strongAgainst: ['MUSKETEER', 'SIEGE', 'GALLEY', 'TRANSPORT', 'FRIGATE'], multiplier: 1.2 }

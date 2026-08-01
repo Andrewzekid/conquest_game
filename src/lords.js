@@ -44,7 +44,7 @@ export function createLord(owner, x, z, name, classKey) {
 
 /** A lord's max HP: base 26 + 6/level, kings are much sturdier (they are the
  *  faction leader and their death is catastrophic). Kings get a large HP bonus
- *  (+42) so they can survive longer in battle and lead from the front (68 HP at level 1).
+ *  (+24) so they can survive longer in battle and lead from the front (50 HP at level 1).
  *  Kings are guaranteed at least 55 max HP regardless of level. Lords also gain
  *  bonus HP from researched technologies. */
 export function lordMaxHp(lord) {
@@ -64,7 +64,7 @@ export function lordAttack(lord) {
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.attack || 0) : 0;
     const lordBonus = (lord.lordTechBonuses?.combat || 0);
     const abilityBonus = (!lord.isKing && lord.abilities && lord.abilities.includes('GRAND_STRATEGIST')) ? 1 : 0;
-    const result = (lord.stats?.combat || 0) + (cb.attack || 0) + (lord.isKing ? 3 : 1) + kingBonus + lordBonus + abilityBonus;
+    const result = (lord.stats?.combat || 0) + (cb.attack || 0) + (lord.isKing ? 2 : 1) + kingBonus + lordBonus + abilityBonus;
     return Number.isFinite(result) ? result : 0;
 }
 
