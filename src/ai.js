@@ -1,7 +1,7 @@
 /** AI decision logic (pure, no engine dependencies) */
 import { UNIT_TYPE, CAPTURE_COST, AI_MAX_UNITS, BUILDING_TYPE, TERRAIN, NAVAL_UNITS,
          SIEGE_ENGINES, SIEGE_ENGINE_BUILD_COST, PILLAGEABLE_BUILDINGS, DIPLOMACY_STATES, SIEGE_TOWER_COST, SIEGE_TOWER_BUILD_RADIUS,
-         GRID_SIZE, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
+         GRID_SIZE, GRID_WIDTH, GRID_HEIGHT, TYPE_ADVANTAGE, CONCEAL_TERRAINS, CONCEAL_MAX_PER_TILE, CHARGE_UNITS,
          CHARIOT_CHARGE_UNITS, CHARIOT_CHARGE_RANGE, CHARIOT_CHARGE_VULN_TYPES,
           EXTRA_UNITS, STRUCTURE_COST, LORD_RECRUIT_COST, LORD_CLASSES, BRIDGE_COST, FACTION_UNIQUE_UNITS,
           AI_SETTLER_TARGET, AI_SETTLER_CAP_FACTOR, AI_SETTLER_CAP_BASE, AI_SETTLERS_PER_TURN, AI_SETTLER_HARD_CAP,
@@ -1272,17 +1272,85 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
             return false;
         };
-        const harborCity = owned.find(t => t.terrain === 'CITY' && hasHarborInInfluence(t) && isCoastalCity(t, tiles));
+        const needsExpansionFleet = isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands';
+        // Also build a fleet when conquest target is across water.
+        const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
+            topGoal.targetFaction && topGoal.targetTileKey && homeAnchor &&
+            ((topGoal.meta && topGoal.meta.requiresNaval) ||
+             pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
+                ...topGoal.targetTileKey.split(',').map(Number)));
+        const waitingSettlers = myUnits.filter(u => u.type === 'SETTLER' &&
+            !findFoundSpot(u, tiles, owner, land, land.idOf.get(`${u.x},${u.z}`), units)).length;
+        // Transport demand, sized by cargo capacity — NOT a flat count
+        // of 2 (the old rule stranded 20-unit armies with ~4 cargo
+        // slots). Sources: settlers waiting for a found spot, army
+        // units tagged for cross-theater ferry (_ferryTo — set in step
+        // 5a3, visible here from previous turns), and a slice of the
+        // conquest army when its target is across water.
+        const waitingFerryArmy = myUnits.filter(u => u._ferryTo).length;
+
+        // Choose the best harbor for launching ships: open-water connectivity
+        // dominates, then proximity to the naval target or waiting ferry cargo,
+        // then closeness to the faction capital/home anchor.
+        function waterBodyInfo(tiles, startKey) {
+            const start = tiles.get(startKey);
+            if (!start || (start.terrain !== 'WATER' && start.terrain !== 'RIVER')) return { size: 0, open: false };
+            const visited = new Set([startKey]);
+            const queue = [start];
+            let size = 0;
+            let open = false;
+            const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+            while (queue.length) {
+                const cur = queue.pop();
+                size++;
+                if (cur.x === 0 || cur.z === 0 || cur.x === GRID_WIDTH - 1 || cur.z === GRID_HEIGHT - 1) open = true;
+                for (const [dx, dz] of dirs) {
+                    const nk = `${cur.x + dx},${cur.z + dz}`;
+                    if (visited.has(nk)) continue;
+                    const nt = tiles.get(nk);
+                    if (!nt || (nt.terrain !== 'WATER' && nt.terrain !== 'RIVER')) continue;
+                    visited.add(nk);
+                    queue.push(nt);
+                }
+            }
+            return { size, open };
+        }
+        const harborCandidates = owned.filter(t => t.terrain === 'CITY' && hasHarborInInfluence(t) && isCoastalCity(t, tiles));
+        let harborCity = null;
+        if (harborCandidates.length > 0) {
+            const target = conquestAcrossWater && topGoal && topGoal.targetTileKey
+                ? topGoal.targetTileKey.split(',').map(Number) : null;
+            const ferryUnits = [];
+            if (waitingSettlers > 0 || waitingFerryArmy > 0) {
+                for (const u of myUnits) {
+                    if (u.type === 'SETTLER' || u._ferryTo) ferryUnits.push(u);
+                }
+            }
+            const scoreHarbor = (city) => {
+                let bestConn = 0;
+                for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nt = tiles.get(`${city.x + dx},${city.z + dz}`);
+                    if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER')) {
+                        const info = waterBodyInfo(tiles, `${nt.x},${nt.z}`);
+                        if (info.open) bestConn = Math.max(bestConn, 10000);
+                        else bestConn = Math.max(bestConn, Math.min(500, info.size));
+                    }
+                }
+                let score = bestConn * 10;
+                if (target) score -= manhattan(city.x, city.z, target[0], target[1]) * 20;
+                if (ferryUnits.length > 0) {
+                    let minFerryDist = Infinity;
+                    for (const u of ferryUnits) minFerryDist = Math.min(minFerryDist, manhattan(city.x, city.z, u.x, u.z));
+                    score -= minFerryDist * 5;
+                }
+                if (homeAnchor) score -= manhattan(city.x, city.z, homeAnchor.x, homeAnchor.z);
+                return score;
+            };
+            harborCity = harborCandidates.sort((a, b) => scoreHarbor(b) - scoreHarbor(a))[0];
+        }
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
-                const needsExpansionFleet = isIslandFaction || needsNavalExpansion || goalKind === 'expand-islands';
-                // Also build a fleet when conquest target is across water.
-                const conquestAcrossWater = goalKind === 'conquest' && topGoal &&
-                    topGoal.targetFaction && topGoal.targetTileKey && homeAnchor &&
-                    ((topGoal.meta && topGoal.meta.requiresNaval) ||
-                     pathCrossesWater(tiles, homeAnchor.x, homeAnchor.z,
-                        ...topGoal.targetTileKey.split(',').map(Number)));
                 // Prefer the modern STEAM_TRANSPORT when STEAM_ENGINE is
                 // researched (TRANSPORT is obsolete once STEAM_TRANSPORT is
                 // available). Fall back to TRANSPORT for pre-steam factions.
@@ -1290,15 +1358,6 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 // Count transports including the modern STEAM_TRANSPORT.
                 const transportCount = myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length +
                     actions.filter(a => a.type === 'train' && (a.unitType === 'TRANSPORT' || a.unitType === 'STEAM_TRANSPORT')).length;
-                const waitingSettlers = myUnits.filter(u => u.type === 'SETTLER' &&
-                    !findFoundSpot(u, tiles, owner, land, land.idOf.get(`${u.x},${u.z}`), units)).length;
-                // Transport demand, sized by cargo capacity — NOT a flat count
-                // of 2 (the old rule stranded 20-unit armies with ~4 cargo
-                // slots). Sources: settlers waiting for a found spot, army
-                // units tagged for cross-theater ferry (_ferryTo — set in step
-                // 5a3, visible here from previous turns), and a slice of the
-                // conquest army when its target is across water.
-                const waitingFerryArmy = myUnits.filter(u => u._ferryTo).length;
                 const transportCapacity = (UNIT_TYPE[modernTransport] && UNIT_TYPE[modernTransport].capacity) || 2;
                 const ferryDemand = waitingSettlers + waitingFerryArmy +
                     (conquestAcrossWater ? 6 : 0);
@@ -2238,7 +2297,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 acted.add(unit.id);
                 continue;
             }
-            // All other roles (strike, besiege, amphibious): attack in range…
+            // Besiege-role fleets support nearby armies that lack siege: shell
+            // fortified coastal cities with the ship's free attack action before
+            // spending it on lesser targets.
+            if (navalRole === 'besiege' && atWar && !unit.hasAttackedThisTurn) {
+                const ec = findNavalSiegeTarget(unit, tiles, owner, isAtWar);
+                if (ec) {
+                    actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
+                    acted.add(unit.id);
+                    continue;
+                }
+            }
+            // All other roles (strike, amphibious, besiege fallback): attack enemy units in range.
             if (atWar && !unit.hasAttackedThisTurn) {
                 const tgt = findAttackTarget(unit, units, isAtWar);
                 if (tgt) {
@@ -2247,16 +2317,12 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
-            // …besiege a fortified enemy coastal city from range (GALLEON/BATTLESHIP can).
+            // Fallback naval siege for fortified enemy coastal cities (GALLEON/BATTLESHIP can).
             // Naval siege units stay at their attack range from the city, not adjacent,
             // to avoid being reached by enemy melee on the shore.
             if (UNIT_TYPE[unit.type].besiege && !unit.hasAttackedThisTurn) {
-                const range = UNIT_TYPE[unit.type].attackRange || 1;
-                const found = range > 1
-                    ? findTargetCityWithin(unit, tiles, owner, isAtWar, range)
-                    : null;
-                const ec = found ? found.city : findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
-                if (ec && (ec.fortification || 0) > 0) {
+                const ec = findNavalSiegeTarget(unit, tiles, owner, isAtWar);
+                if (ec) {
                     actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
                     acted.add(unit.id);
                     continue;
@@ -4710,6 +4776,18 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
     return groups;
 }
 
+/** Pick a fortified enemy coastal city a naval siege unit can shell this turn.
+ *  Returns the city tile or null. */
+function findNavalSiegeTarget(unit, tiles, owner, isAtWar) {
+    if (!UNIT_TYPE[unit.type].besiege) return null;
+    const range = UNIT_TYPE[unit.type].attackRange || 1;
+    const found = range > 1
+        ? findTargetCityWithin(unit, tiles, owner, isAtWar, range)
+        : null;
+    const ec = found ? found.city : findAdjacentEnemyCity(unit, tiles, owner, isAtWar);
+    return (ec && (ec.fortification || 0) > 0) ? ec : null;
+}
+
 /** Group naval units into fleet groups: transport + escort pairs form
  *  'amphibious' groups; remaining warships cluster spatially (Chebyshev ≤ 3)
  *  into strike/besiege/defend groups. Rebuilt every turn — no persistent
@@ -4754,17 +4832,18 @@ function buildNavalGroups(myUnits, owner, tilesMap, isAtWarFn) {
         assigned.add(ws.id);
     }
 
-    // Pass 3: Assign roles based on composition and position.
+    // Pass 3: Assign roles based on composition, position, nearby enemy/friendly
+    // cities, and whether a nearby friendly land army lacks siege support.
     for (const g of groups) {
-        g.role = classifyNavalGroup(g, owner, tilesMap, isAtWarFn);
+        g.role = classifyNavalGroup(g, owner, tilesMap, isAtWarFn, myUnits);
     }
 
     return groups;
 }
 
 /** Classify a naval fleet group's tactical role based on composition,
- *  proximity to enemy/friendly cities, and power. */
-export function classifyNavalGroup(group, owner, tilesMap, isAtWarFn) {
+ *  proximity to enemy/friendly cities, power, and nearby army siege support. */
+export function classifyNavalGroup(group, owner, tilesMap, isAtWarFn, units = null) {
     const hasTransport = group.units.some(u => isTransport(u));
     const hasWarship = group.units.some(u => !isTransport(u));
     if (hasTransport && hasWarship) return 'amphibious';
@@ -4787,7 +4866,27 @@ export function classifyNavalGroup(group, owner, tilesMap, isAtWarFn) {
     });
     const power = group.units.reduce((s, u) => s + calculateAdjustedPower(u), 0);
 
-    if (nearEnemyCoast && power >= 20) return 'besiege';
+    // If a friendly land army is nearby and lacks siege support, prioritize
+    // besiege so the fleet supplies the artillery the army is missing.
+    let nearFriendlyArmyWithoutSiege = false;
+    if (units) {
+        const c = groupCentroid(group);
+        const radius = 8;
+        let hasArmy = false;
+        let hasSiege = false;
+        for (const u of units) {
+            if (u.owner !== owner) continue;
+            if (isNaval(u)) continue;
+            if (u.type === 'SETTLER' || u.type === 'WORKER' || u.type === 'SCOUT') continue;
+            if (Math.abs(u.x - c.x) + Math.abs(u.z - c.z) > radius) continue;
+            hasArmy = true;
+            const ut = UNIT_TYPE[u.type];
+            if (ut && ut.besiege) { hasSiege = true; break; }
+        }
+        nearFriendlyArmyWithoutSiege = hasArmy && !hasSiege;
+    }
+
+    if (nearEnemyCoast && (nearFriendlyArmyWithoutSiege || power >= 20)) return 'besiege';
     if (nearFriendlyCoast && !nearEnemyCoast) return 'defend';
     return 'strike';
 }
