@@ -86,7 +86,10 @@ export class GameRenderer {
         this.scene.add(this.labelGroup);
         this._effects = [];   // active transient effects: { obj, born, life, kind }
         this._flames = [];     // active fire-ailment flame markers (for flicker)
-        this._cityLabelCache = {}; // cityName -> SpriteMaterial (reused across renders)
+        this._iconMatCache = {};   // iconName -> SpriteMaterial
+        this._textMatCache = {};   // text+color -> SpriteMaterial
+        this._unitPaletteCache = {}; // colorHex -> palette materials
+        this._matCacheSet = new Set(); // all cached materials that must not be disposed
 
         this.tileMeshes = new Map(); // `${x},${z}` -> base tile Mesh
         this.tileHeights = new Map();
@@ -388,8 +391,40 @@ export class GameRenderer {
         return g;
     }
 
+    /** Dispose an object and its descendants' geometries and materials. Cached
+     *  materials are skipped so they can be reused. */
+    _disposeObject(obj) {
+        if (!obj) return;
+        obj.traverse(o => {
+            if (o.geometry) {
+                o.geometry.dispose();
+                o.geometry = null;
+            }
+            if (o.material) {
+                const mats = Array.isArray(o.material) ? o.material : [o.material];
+                for (const mat of mats) {
+                    if (this._matCacheSet && this._matCacheSet.has(mat)) continue;
+                    if (mat.map) mat.map.dispose();
+                    mat.dispose();
+                }
+                o.material = null;
+            }
+        });
+    }
+
+    /** Dispose every child of a group so geometries and materials are freed from
+     *  GPU memory. Cached materials (icons, text labels, unit palettes) are
+     *  skipped so they can be reused. This is called before rebuilding dynamic
+     *  groups in renderAll to prevent the WebGL context from being exhausted
+     *  after many turns. */
+    _disposeGroup(group) {
+        if (!group) return;
+        this._disposeObject(group);
+        group.clear();
+    }
+
     createMapMesh(tilesData) {
-        this.mapGroup.clear();
+        this._disposeGroup(this.mapGroup);
         this.tileMeshes.clear();
         this.tileHeights.clear();
         this.cityProps.clear();
@@ -434,7 +469,10 @@ export class GameRenderer {
         const mesh = this.tileMeshes.get(key);
         if (!mesh) return;
         // Drop existing scenery / wonder children (base mesh stays).
-        for (const child of [...mesh.children]) mesh.remove(child);
+        for (const child of [...mesh.children]) {
+            this._disposeObject(child);
+            mesh.remove(child);
+        }
         const terrain = tile.terrain;
         // Rebuild the column geometry so the tile keeps a solid base down to
         // TILE_COLUMN_BOTTOM after a runtime terrain change (e.g. a Settler
@@ -465,7 +503,11 @@ export class GameRenderer {
             const alive = [];
             for (const fx of this._effects) {
                 const t = (now - fx.born) / fx.life; // 0..1
-                if (t >= 1) { this.effectsGroup.remove(fx.obj); continue; }
+                if (t >= 1) {
+                    this.effectsGroup.remove(fx.obj);
+                    this._disposeObject(fx.obj);
+                    continue;
+                }
                 if (fx.kind === 'ring') {
                     const s = 0.4 + t * 1.6;
                     fx.obj.scale.set(s, s, s);
@@ -1344,7 +1386,7 @@ export class GameRenderer {
     }
 
     clearInfluence() {
-        if (this.influenceGroup) this.influenceGroup.clear();
+        if (this.influenceGroup) this._disposeGroup(this.influenceGroup);
     }
 
     highlightMoveTargets(keys) {
@@ -1406,18 +1448,24 @@ export class GameRenderer {
     // every faction's units readable detail (skin, wood, metal, cloth) while
     // the body color carries the faction identity.
     _unitPalette(color) {
-        return {
-            body:   new THREE.MeshPhongMaterial({ color, shininess: 30 }),
-            armor:  new THREE.MeshPhongMaterial({ color, shininess: 80 }),
-            skin:   new THREE.MeshPhongMaterial({ color: 0xe0b080 }),
-            wood:   new THREE.MeshPhongMaterial({ color: 0x6a4220 }),
-            darkWood: new THREE.MeshPhongMaterial({ color: 0x4a3015 }),
-            metal:  new THREE.MeshPhongMaterial({ color: 0xc0c4cc, shininess: 90 }),
-            dark:   new THREE.MeshPhongMaterial({ color: 0x23232a }),
-            cloth:  new THREE.MeshPhongMaterial({ color: 0x8a3b2a }),
-            white:  new THREE.MeshPhongMaterial({ color: 0xf2f2f0 }),
-            sail:   new THREE.MeshPhongMaterial({ color: 0xeae4d2, side: THREE.DoubleSide })
-        };
+        const key = color;
+        if (!this._unitPaletteCache[key]) {
+            const palette = {
+                body:   new THREE.MeshPhongMaterial({ color, shininess: 30 }),
+                armor:  new THREE.MeshPhongMaterial({ color, shininess: 80 }),
+                skin:   new THREE.MeshPhongMaterial({ color: 0xe0b080 }),
+                wood:   new THREE.MeshPhongMaterial({ color: 0x6a4220 }),
+                darkWood: new THREE.MeshPhongMaterial({ color: 0x4a3015 }),
+                metal:  new THREE.MeshPhongMaterial({ color: 0xc0c4cc, shininess: 90 }),
+                dark:   new THREE.MeshPhongMaterial({ color: 0x23232a }),
+                cloth:  new THREE.MeshPhongMaterial({ color: 0x8a3b2a }),
+                white:  new THREE.MeshPhongMaterial({ color: 0xf2f2f0 }),
+                sail:   new THREE.MeshPhongMaterial({ color: 0xeae4d2, side: THREE.DoubleSide })
+            };
+            for (const mat of Object.values(palette)) this._matCacheSet.add(mat);
+            this._unitPaletteCache[key] = palette;
+        }
+        return this._unitPaletteCache[key];
     }
 
     _addHumanoid(g, P, opts = {}) {
@@ -2728,6 +2776,7 @@ export class GameRenderer {
             const tex = new THREE.CanvasTexture(canvas);
             tex.anisotropy = 4;
             const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+            this._matCacheSet.add(mat);
             this._iconMatCache[key] = mat;
             if (iconName) {
                 const img = new Image();
@@ -2779,7 +2828,9 @@ export class GameRenderer {
             ctx.fillText(text, canvas.width / 2, canvas.height / 2);
             const tex = new THREE.CanvasTexture(canvas);
             tex.anisotropy = 4;
-            this._textMatCache[key] = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+            const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+            this._matCacheSet.add(mat);
+            this._textMatCache[key] = mat;
         }
         const sprite = new THREE.Sprite(this._textMatCache[key]);
         const scale = opts.scale || 1.6;
@@ -2881,7 +2932,7 @@ export class GameRenderer {
     }
 
     renderBuildings(gameState) {
-        this.buildingGroup.clear();
+        this._disposeGroup(this.buildingGroup);
         const visible = gameState.visible || null;
         const bState = gameState.buildingState || null;
         for (const [tileKey, list] of gameState.buildings) {
@@ -2930,7 +2981,7 @@ export class GameRenderer {
 
     // --- Goal markers for player units with an auto-navigation goal ---
     renderGoalMarkers(gameState) {
-        this.markerGroup.clear();
+        this._disposeGroup(this.markerGroup);
         for (const unit of gameState.units.values()) {
             if (unit.owner !== PLAYER_FACTION || !unit.goal) continue;
             const sprite = this.makeIconSprite('target', 0.7, 0.8);
@@ -2968,7 +3019,7 @@ export class GameRenderer {
     // --- Bridges across river tiles (built by Siege/Engineer units). ---
     renderBridges(gameState) {
         if (!this.bridgeGroup) return;
-        this.bridgeGroup.clear();
+        this._disposeGroup(this.bridgeGroup);
         const explored = gameState.explored || null;
         for (const [key, tile] of gameState.tiles) {
             if (!tile.bridge || tile.terrain !== 'RIVER') continue;
@@ -3089,7 +3140,7 @@ export class GameRenderer {
     // in spectate mode everything is shown.
     renderStructures(gameState) {
         if (!this.structureGroup) return;
-        this.structureGroup.clear();
+        this._disposeGroup(this.structureGroup);
         const structures = gameState.structures;
         if (!structures || !structures.size) return;
         const visible = gameState.visible || null;
@@ -3111,7 +3162,7 @@ export class GameRenderer {
         }
     }
     renderAuras(gameState) {
-        this.auraGroup.clear();
+        this._disposeGroup(this.auraGroup);
         this._auraRings = [];
         const visible = gameState.visible || null;
         for (const lord of gameState.lords) {
@@ -3216,7 +3267,7 @@ export class GameRenderer {
         // Rebuilt each render (cheap — sprites reuse cached materials). The
         // label sits above the keep and is tinted by the owner's faction color
         // so ownership is readable at a glance.
-        this.labelGroup.clear();
+        this._disposeGroup(this.labelGroup);
         for (const [key, tile] of gameState.tiles) {
             if (tile.terrain !== 'CITY') continue;
             const isExp = !!(explored && explored.has(key));
@@ -3241,7 +3292,7 @@ export class GameRenderer {
 
         // Rebuild unit markers (distinct shape per unit type) — enemy units
         // only render on tiles the player can currently see.
-        this.unitGroup.clear();
+        this._disposeGroup(this.unitGroup);
         this._flames = []; // repopulated below with live flame meshes for flicker
         for (const unit of gameState.units.values()) {
             // Units embarked aboard a Transport are hidden (rendered as cargo pips on the ship).
@@ -3298,7 +3349,7 @@ export class GameRenderer {
         // Rebuild lord markers — each lord is a humanoid figure with
         // faction-specific weapons, mounts, and decorations. Kings get a crown
         // sprite, gold base ring, cape, and 1.25× scale.
-        this.lordGroup.clear();
+        this._disposeGroup(this.lordGroup);
         for (const lord of gameState.lords) {
             const isPlayer = lord.owner === PLAYER_FACTION;
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;
