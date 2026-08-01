@@ -1,5 +1,5 @@
 /** Combat system: full battle resolution with HP, death, XP, siege, lords. */
-import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN, RANGED_CITY_ATTACK_BONUS, SIEGE_TYPES } from './config.js';
+import { UNIT_TYPE, TERRAIN_BONUS, TYPE_ADVANTAGE, LORD_XP_PER_KILL, UNIT_XP_PER_KILL, CHARGE_EXHAUST_RANGED_VULN, ENCIRCLEMENT_DEFENSE_PENALTY, STRUCTURE_TYPE, COUNTER_ATTACK_MULTIPLIER, RIVER_CROSSING_DEFENSE_PENALTY, SIEGE_TOWER_CITY_DEFENSE_REDUCTION, RANGED_DISTANCE_FALLOFF, RANGED_FALLOFF_MIN, RANGED_CITY_ATTACK_BONUS, SIEGE_TYPES, MODERN_UNIT_TYPES, MEDIEVAL_UNIT_TYPES } from './config.js';
 import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLordBonuses, awardXP, syncLordHp } from './lords.js';
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
@@ -102,11 +102,8 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         return { messages: [`${combatName(attackerUnit)} can only attack cities!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
     }
 
-    // Only ranged/artillery units can attack ships; melee units (infantry,
-    // cavalry, lords) cannot engage naval units.
-    if (defStats.naval && !atkStats.ranged) {
-        return { messages: [`${combatName(attackerUnit)} cannot attack ships!`], defenderDied: false, attackerDied: false, damageToDefender: 0 };
-    }
+    // Land non-ranged units can attack ships, but only at a severe damage
+    // penalty. Ranged/artillery units attack ships normally.
 
     // Corrupted hp (NaN/undefined -- e.g. units from pre-HP saves leveled up
     // or burned into NaN) would make a combatant unkillable, since NaN <= 0
@@ -414,6 +411,16 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         damageToDefender = Math.max(1, Math.floor(damageToDefender * 1.5));
         messages.push(`${combatName(attackerUnit)} shore bombardment: ×1.5 vs naval`);
     }
+    // Land non-ranged/non-artillery units deal only 10% damage to ships.
+    if (defStats.naval && !atkStats.naval && !atkStats.ranged) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * 0.1));
+        messages.push(`${combatName(attackerUnit)} struggles against the ship: ×0.1 damage`);
+    }
+    // Era advantage: modern units are super-effective against medieval units.
+    if (MODERN_UNIT_TYPES.has(attackerUnit.type) && MEDIEVAL_UNIT_TYPES.has(defenderUnit.type)) {
+        damageToDefender = Math.max(1, Math.floor(damageToDefender * 1.5));
+        messages.push(`${combatName(attackerUnit)} modern weapons overwhelm medieval foe: ×1.5 damage`);
+    }
     // Exhausted cavalry (charged last turn) is extra vulnerable to ranged fire
     // — archers and artillery exploit the spent, immobile mount.
     if (defenderUnit.chargeExhausted && defenderUnit.chargeExhausted > 0 && atkStats.ranged) {
@@ -493,7 +500,17 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         // River-crossing penalty also applies to the attacker on the counter.
         const atkRiverPenalty = riverCrossingDefensePenalty(attackerUnit);
         if (atkRiverPenalty > 0) effectiveDefenseAtk -= atkRiverPenalty;
-        const damageToAttacker = Math.max(1, Math.floor((effectiveAttackDef - effectiveDefenseAtk * 0.3) * COUNTER_ATTACK_MULTIPLIER));
+        let damageToAttacker = Math.max(1, Math.floor((effectiveAttackDef - effectiveDefenseAtk * 0.3) * COUNTER_ATTACK_MULTIPLIER));
+        // Land non-ranged/non-artillery counter-attacks against ships are also penalized.
+        if (atkStats.naval && !defStats.naval && !defStats.ranged) {
+            damageToAttacker = Math.max(1, Math.floor(damageToAttacker * 0.1));
+            messages.push(`${combatName(defenderUnit)} struggles against the ship: ×0.1 damage`);
+        }
+        // Era advantage on counter-attack: modern defender vs medieval attacker.
+        if (MODERN_UNIT_TYPES.has(defenderUnit.type) && MEDIEVAL_UNIT_TYPES.has(attackerUnit.type)) {
+            damageToAttacker = Math.max(1, Math.floor(damageToAttacker * 1.5));
+            messages.push(`${combatName(defenderUnit)} modern weapons overwhelm medieval foe: ×1.5 damage`);
+        }
         attackerUnit.hp -= damageToAttacker;
         messages.push(`${combatName(defenderUnit)} counter-attacks for ${damageToAttacker} damage (HP: ${Math.max(0, attackerUnit.hp)}/${attackerUnit.maxHp})`);
 

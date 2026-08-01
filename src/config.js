@@ -139,8 +139,8 @@ export const UNIT_TYPE = {
 
     // --- MOBILIZED UNITS (Atomic Era, 1880-1940) ---
     MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 40, attack: 26, defense: 12, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
-    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 24, attack: 30, defense: 10, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
-    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 30, attack: 32, defense: 12, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
+    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 24, attack: 30, defense: 14, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
+    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 30, attack: 32, defense: 15, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
     TANK:        { name: 'Tank',         hp: 45, attack: 30, defense: 18, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
     HEAVY_TANK:  { name: 'Heavy Tank',   hp: 58, attack: 35, defense: 22, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
     ARMORED_CAR: { name: 'Armored Car',  hp: 28, attack: 22, defense: 10, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
@@ -399,6 +399,25 @@ export const LAND_VS_NAVAL_PENALTY = 0.35;
 export const LAND_NAVAL_TYPES = new Set(['INFANTRY', 'CAVALRY', 'PIKEMAN', 'CATAPHRACT', 'CHARIOT',
     'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'HALBERDIER', 'PIKE_MASTER',
     'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER']);
+
+/** Era classification for blanket modern-vs-medieval combat advantage.
+ *  Modern units deal bonus damage to all medieval units. */
+export const MEDIEVAL_UNIT_TYPES = new Set([
+    'INFANTRY', 'ARCHER', 'ARTILLERY', 'CAVALRY', 'PIKEMAN', 'SCOUT', 'SIEGE', 'LONGBOWMAN',
+    'CATAPHRACT', 'CHARIOT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER',
+    'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'CATAPULT', 'TREBUCHET',
+    'GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'
+]);
+
+export const MODERN_UNIT_TYPES = new Set([
+    'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'CANNON', 'MORTAR',
+    'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'FIELD_GUN', 'HORSE_ARTILLERY',
+    'DEMOLITION_SQUAD', 'COMBAT_ENGINEER', 'SIEGE_CANNON',
+    'GUNBOAT', 'FRIGATE_2', 'IRONCLAD', 'STEAM_TRANSPORT', 'IRONCLAD_FRIGATE', 'MONITOR',
+    'SUBMARINE', 'TORPEDO_BOAT',
+    'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM',
+    'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR'
+]);
 
 /** Siege/artillery unit types used for special combat and city-besiege rules. */
 export const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR',

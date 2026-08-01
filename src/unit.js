@@ -195,8 +195,9 @@ export function getAttackTargets(unit, units) {
         if (other.owner === unit.owner) continue;
         if (other.boarded) continue; // can't attack units stowed aboard a transport
         const otherDef = UNIT_TYPE[other.type];
-        // Melee units cannot attack ships; only ranged/artillery can.
-        if (otherDef && otherDef.naval && !(def && def.ranged)) continue;
+        // Ships are valid attack targets for all units. Land non-ranged units
+        // deal only 10% damage to them (handled in resolveCombat); ranged,
+        // artillery, and naval units attack ships normally.
         const dist = Math.abs(other.x - unit.x) + Math.abs(other.z - unit.z);
         if (dist <= range) targets.push(other);
     }

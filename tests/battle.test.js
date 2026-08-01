@@ -95,20 +95,20 @@ describe('battle', () => {
       expect(result.messages.some(m => m.includes('type advantage'))).toBe(true);
     });
 
-    it('melee units cannot attack naval units', () => {
+    it('melee units deal 10% damage to naval units', () => {
       const atk = makeUnit('INFANTRY', 'a', 0, 0);
       const def = makeUnit('GALLEY', 'b', 1, 0);
       const result = resolveCombat(atk, def, 'WATER');
-      expect(result.damageToDefender).toBe(0);
-      expect(result.messages.some(m => m.includes('cannot attack ships'))).toBe(true);
+      expect(result.damageToDefender).toBeGreaterThan(0);
+      expect(result.messages.some(m => m.includes('struggles against the ship: ×0.1 damage'))).toBe(true);
     });
 
-    it('cavalry cannot attack naval units', () => {
+    it('cavalry deals 10% damage to naval units', () => {
       const atk = makeUnit('CAVALRY', 'a', 0, 0);
       const def = makeUnit('GALLEY', 'b', 1, 0);
       const result = resolveCombat(atk, def, 'WATER');
-      expect(result.damageToDefender).toBe(0);
-      expect(result.messages.some(m => m.includes('cannot attack ships'))).toBe(true);
+      expect(result.damageToDefender).toBeGreaterThan(0);
+      expect(result.messages.some(m => m.includes('struggles against the ship: ×0.1 damage'))).toBe(true);
     });
 
     it('ranged units can attack naval units', () => {
@@ -116,6 +116,21 @@ describe('battle', () => {
       const def = makeUnit('GALLEY', 'b', 1, 0, { hp: 50, maxHp: 50 });
       const result = resolveCombat(atk, def, 'WATER');
       expect(result.damageToDefender).toBeGreaterThan(0);
+    });
+
+    it('modern units get ×1.5 damage against medieval units', () => {
+      const atk = makeUnit('ARCHER', 'a', 0, 0, { type: 'RIFLEMAN', attack: 22, defense: 10, ranged: true, attackRange: 3, hp: 34, maxHp: 34 });
+      const def = makeUnit('INFANTRY', 'b', 1, 0, { hp: 50, maxHp: 50 });
+      const result = resolveCombat(atk, def, 'PLAINS');
+      expect(result.messages.some(m => m.includes('modern weapons overwhelm medieval foe: ×1.5 damage'))).toBe(true);
+      expect(result.damageToDefender).toBeGreaterThan(0);
+    });
+
+    it('medieval units do not get modern-era damage bonus', () => {
+      const atk = makeUnit('INFANTRY', 'a', 0, 0);
+      const def = makeUnit('ARCHER', 'b', 1, 0, { type: 'RIFLEMAN', attack: 22, defense: 10, ranged: true, attackRange: 3, hp: 34, maxHp: 34 });
+      const result = resolveCombat(atk, def, 'PLAINS');
+      expect(result.messages.some(m => m.includes('modern weapons overwhelm medieval foe'))).toBe(false);
     });
   });
 

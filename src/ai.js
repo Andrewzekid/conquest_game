@@ -3720,6 +3720,10 @@ const NAVAL_TYPES = new Set(['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_O
 const FRAGILE_TYPES = new Set(['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'RAILGUN', 'SIEGE_CANNON', 'RIFLEMAN', 'SHARPSHOOTER', 'WORKER', 'SETTLER', 'SCOUT', 'ARMORED_CAR', 'FRONTIERSMAN', 'MOBILIZED_ARTILLERY', 'SUBMARINE_II', 'ANTI_TANK_GUN', 'RPG_TEAM']);
 
 function unitRole(type) {
+    // Anti-cavalry specialists get their own composition role so the AI trains
+    // them reactively against cavalry/tank-heavy enemies, while still treating
+    // them as melee for escort/combat logic via MELEE_TYPES.
+    if (UNIT_TYPE[type] && UNIT_TYPE[type].antiCavalry) return 'antiCavalry';
     if (MELEE_TYPES.has(type)) return 'melee';
     // Cavalry before ranged/siege: DRAGOON, TANK, HEAVY_TANK, ARMORED_CAR and
     // HORSE_ARTILLERY are all mounted/mobile units and should fill the cavalry
@@ -3842,7 +3846,7 @@ function detectActiveObjectives(units, tiles, owner, isAtWar) {
 }
 
 function countByRole(units, actions, owner) {
-    const counts = { melee: 0, ranged: 0, cavalry: 0, siege: 0, support: 0, naval: 0 };
+    const counts = { melee: 0, ranged: 0, cavalry: 0, antiCavalry: 0, siege: 0, support: 0, naval: 0 };
     // `units` may be a Map (keyed by id) or an array of unit objects. Handle
     // both so unit tests passing a Map work the same as the real pipeline
     // (which passes an array from [...units.values()]).
@@ -3888,28 +3892,28 @@ export function factionComposition(def, roster, hasSiegeWorkshop = false) {
     const id = def && def.id;
     let t;
     switch (id) {
-        case 'crimson':  t = { melee: 0.30, ranged: 0.10, cavalry: 0.40, siege: 0.15, support: 0.05, naval: 0.00 }; break;
-        case 'golden':   t = { melee: 0.20, ranged: 0.15, cavalry: 0.45, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.30, siege: 0.20, support: 0.05, naval: 0.00 }; break;
-        case 'verdant':  t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
-        case 'violet':   t = { melee: 0.30, ranged: 0.25, cavalry: 0.00, siege: 0.35, support: 0.10, naval: 0.00 }; break;
-        case 'azure':    t = { melee: 0.40, ranged: 0.25, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
-        case 'iron':     t = { melee: 0.30, ranged: 0.00, cavalry: 0.00, siege: 0.35, support: 0.15, naval: 0.00 }; break;
-        case 'shadow':   t = { melee: 0.35, ranged: 0.45, cavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
-        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.15, siege: 0.10, support: 0.05, naval: 0.35 }; break;
+        case 'crimson':  t = { melee: 0.30, ranged: 0.10, cavalry: 0.40, antiCavalry: 0.00, siege: 0.15, support: 0.05, naval: 0.00 }; break;
+        case 'golden':   t = { melee: 0.20, ranged: 0.15, cavalry: 0.45, antiCavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'obsidian': t = { melee: 0.30, ranged: 0.15, cavalry: 0.30, antiCavalry: 0.00, siege: 0.20, support: 0.05, naval: 0.00 }; break;
+        case 'verdant':  t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, antiCavalry: 0.00, siege: 0.10, support: 0.15, naval: 0.00 }; break;
+        case 'violet':   t = { melee: 0.30, ranged: 0.25, cavalry: 0.00, antiCavalry: 0.00, siege: 0.35, support: 0.10, naval: 0.00 }; break;
+        case 'azure':    t = { melee: 0.40, ranged: 0.25, cavalry: 0.00, antiCavalry: 0.05, siege: 0.20, support: 0.10, naval: 0.00 }; break;
+        case 'iron':     t = { melee: 0.30, ranged: 0.00, cavalry: 0.00, antiCavalry: 0.00, siege: 0.35, support: 0.15, naval: 0.00 }; break;
+        case 'shadow':   t = { melee: 0.35, ranged: 0.45, cavalry: 0.00, antiCavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, antiCavalry: 0.05, siege: 0.05, support: 0.15, naval: 0.00 }; break;
+        case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.15, antiCavalry: 0.00, siege: 0.10, support: 0.05, naval: 0.35 }; break;
         // --- New European factions (Phase G) ---
-        case 'roman':    t = { melee: 0.40, ranged: 0.00, cavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
-        case 'viking':   t = { melee: 0.40, ranged: 0.00, cavalry: 0.40, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        case 'byzantine':t = { melee: 0.35, ranged: 0.25, cavalry: 0.25, siege: 0.10, support: 0.05, naval: 0.00 }; break;
-        case 'spanish':  t = { melee: 0.30, ranged: 0.20, cavalry: 0.40, siege: 0.05, support: 0.05, naval: 0.00 }; break;
-        case 'polish':   t = { melee: 0.30, ranged: 0.00, cavalry: 0.50, siege: 0.10, support: 0.10, naval: 0.00 }; break;
-        default:         t = { melee: 0.35, ranged: 0.25, cavalry: 0.20, siege: 0.15, support: 0.05, naval: 0.00 };
+        case 'roman':    t = { melee: 0.40, ranged: 0.00, cavalry: 0.00, antiCavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
+        case 'viking':   t = { melee: 0.40, ranged: 0.00, cavalry: 0.40, antiCavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        case 'byzantine':t = { melee: 0.35, ranged: 0.25, cavalry: 0.25, antiCavalry: 0.00, siege: 0.10, support: 0.05, naval: 0.00 }; break;
+        case 'spanish':  t = { melee: 0.30, ranged: 0.20, cavalry: 0.40, antiCavalry: 0.00, siege: 0.05, support: 0.05, naval: 0.00 }; break;
+        case 'polish':   t = { melee: 0.30, ranged: 0.00, cavalry: 0.50, antiCavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
+        default:         t = { melee: 0.35, ranged: 0.25, cavalry: 0.20, antiCavalry: 0.00, siege: 0.15, support: 0.05, naval: 0.00 };
     }
     // Zero out (and renormalize) roles the roster can't fill.
     let sum = 0;
     for (const r of Object.keys(t)) {
-        if ((r === 'support') || r === 'naval' || r === 'cavalry' || r === 'ranged' || r === 'siege' || r === 'melee') {
+        if ((r === 'support') || r === 'naval' || r === 'cavalry' || r === 'antiCavalry' || r === 'ranged' || r === 'siege' || r === 'melee') {
             if (!has(r)) t[r] = 0;
         }
         sum += t[r];
@@ -3984,9 +3988,10 @@ function roleDeficit(roster, counts, total, target) {
  *  a faction lacks); the canAfford gate means early/cheap armies still fall
  *  back to cheaper units when the signature is too expensive. */
 const ROLE_ORDER = {
-    melee:   ['HEAVY_TANK', 'TANK', 'MOTOR_ARTILLERY', 'MOBILIZED_INFANTRY', 'RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'PIKEMAN', 'INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER'],
+    melee:   ['HEAVY_TANK', 'TANK', 'MOTOR_ARTILLERY', 'MOBILIZED_INFANTRY', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'LINE_INFANTRY', 'PIKEMAN', 'INFANTRY', 'HOUSEHOLD_GUARD', 'RAIDER'],
     ranged:  ['RIFLEMAN', 'SHARPSHOOTER', 'MUSKETEER', 'CROSSBOWMAN', 'ARQUEBUSIER', 'LONGBOWMAN', 'DRAGOON', 'ARCHER', 'ARMORED_CAR', 'FRONTIERSMAN'],
     cavalry: ['HEAVY_TANK', 'TANK', 'ARMORED_CAR', 'WINGED_HUSSAR', 'CONQUISTADOR', 'CATAPHRACT', 'HORSE_ARTILLERY', 'MERCENARY_KNIGHT', 'CAVALRY', 'CHARIOT'],
+    antiCavalry: ['RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER'],
     siege:   ['MOTOR_ARTILLERY', 'MOBILIZED_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'FIELD_GUN', 'CANNON', 'MORTAR', 'SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'HORSE_ARTILLERY'],
     support: ['COMBAT_ENGINEER', 'DEMOLITION_SQUAD', 'ENGINEER', 'MEDIC'],
     naval:   ['AIRCRAFT_CARRIER', 'BATTLESHIP', 'SUBMARINE_II', 'DESTROYER', 'MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE', 'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE', 'FRIGATE_2', 'GALLEY', 'TRANSPORT_SHIP', 'TRANSPORT', 'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'STEAM_TRANSPORT', 'MERCHANTMAN'],
@@ -3999,12 +4004,16 @@ const ANTI_CAVALRY_TYPES = new Set(['HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE'
  *  when the enemy has many of those and few anti-cavalry specialists. Pull back
  *  when the enemy is bristling with pikes/anti-tank teams. If the enemy's
  *  infantry/artillery outnumber ours, raise the cavalry target more aggressively
- *  (+0.25); otherwise a moderate +0.20 bump. */
+ *  (+0.25); otherwise a moderate +0.20 bump.
+ *  Also boost anti-cavalry when the enemy fields tanks, heavy tanks, armored
+ *  cars, or a lot of mounted units. */
 function adjustTargetForEnemyComposition(target, units, owner, isAtWar, counts = null) {
     if (!isAtWar || !units) return target;
     let enemyInfantry = 0;
     let enemyArtillery = 0;
     let enemyAntiCav = 0;
+    let enemyArmor = 0;
+    let enemyMounted = 0;
     for (const u of (units.values ? units.values() : units)) {
         if (u.owner === owner) continue;
         if (!isAtWar(u.owner)) continue;
@@ -4012,6 +4021,8 @@ function adjustTargetForEnemyComposition(target, units, owner, isAtWar, counts =
         if (role === 'melee') enemyInfantry++;
         else if (role === 'siege') enemyArtillery++;
         if (ANTI_CAVALRY_TYPES.has(u.type)) enemyAntiCav++;
+        if (['TANK', 'HEAVY_TANK', 'ARMORED_CAR'].includes(u.type)) enemyArmor++;
+        if (CAVALRY_TYPES.has(u.type)) enemyMounted++;
     }
     const softTargets = enemyInfantry + enemyArtillery;
     const mySoft = (counts ? (counts.melee || 0) + (counts.siege || 0) : 0);
@@ -4023,6 +4034,13 @@ function adjustTargetForEnemyComposition(target, units, owner, isAtWar, counts =
         target.cavalry = Math.min(0.60, target.cavalry + bump);
     } else if (enemyAntiCav >= 3 && enemyAntiCav >= softTargets * 0.25) {
         target.cavalry = Math.max(0, target.cavalry - 0.10);
+    }
+    // Reactive anti-cavalry: armor/mounted threats trigger anti-cav production.
+    const canTrainAntiCav = target.antiCavalry > 0;
+    if (canTrainAntiCav && (enemyArmor > 0 || enemyMounted >= 3)) {
+        const threat = enemyArmor + Math.floor(enemyMounted / 2);
+        target.antiCavalry = Math.min(0.25, target.antiCavalry + Math.min(0.15, threat * 0.03));
+        target.cavalry = Math.max(0, target.cavalry - 0.05);
     }
     const sum = Object.values(target).reduce((a, b) => a + b, 0);
     if (sum > 0) for (const r of Object.keys(target)) target[r] = target[r] / sum;
@@ -4131,7 +4149,9 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
     if (aiState && total >= 4) {
         const modernUnits = ['RIFLEMAN', 'SHARPSHOOTER', 'LINE_INFANTRY', 'DRAGOON',
             'SIEGE_CANNON', 'FIELD_GUN', 'RAILGUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD',
-            'IRONCLAD', 'STEAM_TRANSPORT', 'IRONCLAD_FRIGATE', 'MONITOR', 'SUBMARINE'];
+            'IRONCLAD', 'STEAM_TRANSPORT', 'IRONCLAD_FRIGATE', 'MONITOR', 'SUBMARINE',
+            'RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY',
+            'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR'];
         for (const mType of modernUnits) {
             if (!roster.includes(mType)) continue;
             const mRole = unitRole(mType);

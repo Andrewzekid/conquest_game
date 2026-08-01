@@ -237,3 +237,26 @@ describe('naval unit recognition', () => {
     expect(pick).toBe('MAN_OF_WAR');
   });
 });
+
+describe('anti-cavalry unit recognition', () => {
+  it('RPG_TEAM is recognized as anti-cavalry', () => {
+    const def = FACTION_DEFS.frost;
+    const roster = [...def.roster, 'RPG_TEAM'];
+    // Over-fill melee and ranged so anti-cavalry has the largest deficit.
+    const units = makeUnits(['INFANTRY', 'INFANTRY', 'INFANTRY', 'INFANTRY',
+      'INFANTRY', 'INFANTRY', 'INFANTRY', 'INFANTRY',
+      'ARCHER', 'ARCHER', 'ARCHER', 'ARCHER'], 'frost');
+    const pick = findAffordableUnit(AMPLE_RES, roster, def, units, [], 'frost', null, false);
+    expect(pick).toBe('RPG_TEAM');
+  });
+
+  it('ANTI_TANK_GUN is recognized as anti-cavalry', () => {
+    const def = FACTION_DEFS.frost;
+    const roster = [...def.roster, 'ANTI_TANK_GUN'];
+    const units = makeUnits(['INFANTRY', 'INFANTRY', 'INFANTRY', 'INFANTRY',
+      'INFANTRY', 'INFANTRY', 'INFANTRY', 'INFANTRY',
+      'ARCHER', 'ARCHER', 'ARCHER', 'ARCHER'], 'frost');
+    const pick = findAffordableUnit(AMPLE_RES, roster, def, units, [], 'frost', null, false);
+    expect(pick).toBe('ANTI_TANK_GUN');
+  });
+});
