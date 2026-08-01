@@ -2960,7 +2960,7 @@ export class Game {
                         const t = this.tiles.get(k);
                         if (!t) continue;
                         if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') continue;
-                        if (!isWaterConnectedToOpenWater(this.tiles, k, 4, 15)) continue;
+                        if (!isWaterConnectedToOpenWater(this.tiles, k, 100,100)) continue;
                         if (occupied.has(k)) continue;
                         return { x: nx, z: nz };
                     }
