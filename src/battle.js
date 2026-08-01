@@ -256,6 +256,16 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             effectiveAttack += romanCityBonus;
             messages.push(`${combatName(attackerUnit)} Roman discipline vs city: +${romanCityBonus}`);
         }
+        // Naval shore bombardment: ships shell land targets from the water.
+        if (atkStats.naval && !defStats.naval) {
+            if (isCity) {
+                effectiveAttack += atkPower * 2;
+                messages.push(`${combatName(attackerUnit)} naval bombardment: ×3 vs city`);
+            } else {
+                effectiveAttack += atkPower * 0.5;
+                messages.push(`${combatName(attackerUnit)} shore bombardment: ×1.5 vs land unit`);
+            }
+        }
     }
 
     // Defender defense: terrain + buildings + structures + lord stats + class + adjacent auras.

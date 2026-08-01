@@ -1,9 +1,11 @@
 import { GRID_WIDTH, GRID_HEIGHT } from './config.js';
 
-/** Flood-fill over WATER/RIVER tiles. Returns true if the water body
- *  contains at least `minSize` tiles OR touches a map edge (open water).
- *  This prevents harbors/ship spawns on enclosed river ponds. */
-export function isWaterConnectedToOpenWater(tiles, startKey, minSize = 4) {
+/** Flood-fill over WATER/RIVER tiles. Returns true if the water body touches
+ *  a map edge (open water) OR, for enclosed bodies, contains at least
+ *  `closedMinSize` tiles. `minSize` is kept for callers that only pass one
+ *  threshold. This prevents harbors/ship spawns on enclosed river ponds and
+ *  small land-locked lakes. */
+export function isWaterConnectedToOpenWater(tiles, startKey, minSize = 100, closedMinSize = minSize) {
     const start = tiles.get(startKey);
     if (!start || (start.terrain !== 'WATER' && start.terrain !== 'RIVER')) return false;
     const visited = new Set([startKey]);
@@ -25,5 +27,5 @@ export function isWaterConnectedToOpenWater(tiles, startKey, minSize = 4) {
             queue.push(nk);
         }
     }
-    return size >= minSize;
+    return size >= closedMinSize;
 }

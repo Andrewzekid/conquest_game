@@ -1272,7 +1272,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             }
             return false;
         };
-        const harborCity = owned.find(t => t.terrain === 'CITY' && hasHarborInInfluence(t));
+        const harborCity = owned.find(t => t.terrain === 'CITY' && hasHarborInInfluence(t) && isCoastalCity(t, tiles));
         if (harborCity && capRoom()) {
             const navalNow = myUnits.filter(u => isNaval(u)).length +
                 actions.filter(a => a.type === 'train' && NAVAL_UNITS.includes(a.unitType)).length;
@@ -5979,12 +5979,14 @@ function computeLandmasses(tiles) {
 }
 
 /** True if a city tile touches water or river that is connected to open
- *  water or a large enough body (can host a Harbor / launch ships). */
+ *  water or a large enough body (can host a Harbor / launch ships).
+ *  Enclosed water bodies must contain at least 15 tiles to count, blocking
+ *  harbors on small ponds/lakes. */
 export function isCoastalCity(tile, tiles) {
     for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
         const nt = tiles.get(`${tile.x + dx},${tile.z + dz}`);
         if (nt && (nt.terrain === 'WATER' || nt.terrain === 'RIVER') &&
-            isWaterConnectedToOpenWater(tiles, `${nt.x},${nt.z}`, 4)) {
+            isWaterConnectedToOpenWater(tiles, `${nt.x},${nt.z}`, 4, 15)) {
             return true;
         }
     }

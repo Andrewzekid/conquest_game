@@ -1605,7 +1605,8 @@ export class Game {
         // City razing: all living factions get grievances against the killer.
         // This models the international backlash against total conquest.
         if (CITY_RAZE_GRIPERANCE > 0) {
-            const killer = king.attacker || null;            if (killer && killer !== f) {
+            const killer = king.attacker || null;
+            if (killer && killer !== f) {
                 for (const of2 of FACTIONS) {
                     if (of2 === f || of2 === killer || (this.gameState.eliminated && this.gameState.eliminated.has(of2))) continue;
                     addGrievance(this.gameState.diplomacy, of2, killer, CITY_RAZE_GRIPERANCE, 'faction eliminated');
@@ -2959,7 +2960,7 @@ export class Game {
                         const t = this.tiles.get(k);
                         if (!t) continue;
                         if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') continue;
-                        if (!isWaterConnectedToOpenWater(this.tiles, k, 4)) continue;
+                        if (!isWaterConnectedToOpenWater(this.tiles, k, 4, 15)) continue;
                         if (occupied.has(k)) continue;
                         return { x: nx, z: nz };
                     }
@@ -2974,7 +2975,7 @@ export class Game {
                     const nx = origin.x + dx, nz = origin.z + dz;
                     const t = this.tiles.get(`${nx},${nz}`);
                     if (t && (t.terrain === 'WATER' || t.terrain === 'RIVER') &&
-                        isWaterConnectedToOpenWater(this.tiles, `${nx},${nz}`, 4)) {
+                        isWaterConnectedToOpenWater(this.tiles, `${nx},${nz}`, 100, 100)) {
                         return { x: nx, z: nz };
                     }
                 }
