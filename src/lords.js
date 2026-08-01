@@ -50,10 +50,10 @@ export function createLord(owner, x, z, name, classKey) {
 export function lordMaxHp(lord) {
     if (!lord) return 1;
     const level = (typeof lord.level === 'number' && Number.isFinite(lord.level)) ? lord.level : 1;
-    const base = 26 + (level - 1) * 6 + (lord.isKing ? 24 : 0);
+    const base = 24 + (level - 1) * 6 + (lord.isKing ? 24 : 0);
     const kingBonus = lord.isKing ? (lord.kingTechBonuses?.hp || 0) : 0;
     const lordBonus = (lord.lordTechBonuses?.hp || 0);
-    const result = lord.isKing ? Math.max(55, base + kingBonus) : (base + lordBonus);
+    const result = lord.isKing ? Math.max(45, base + kingBonus) : (base + lordBonus);
     return Number.isFinite(result) ? result : (lord.isKing ? 55 : 22);
 }
 

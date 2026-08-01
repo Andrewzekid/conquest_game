@@ -560,10 +560,10 @@ export function getLordTechBonuses(state) {
     const researchedCount = techState.researched ? techState.researched.size : 0;
     const extraTechs = Math.max(0, researchedCount - 3);
     return {
-        command: (bonuses.lordCommandBonus || 0) + extraTechs * 0.5,
-        combat: (bonuses.lordCombatBonus || 0) + extraTechs * 0.5,
-        governance: (bonuses.lordGovernanceBonus || 0) + extraTechs * 0.5,
-        hp: (bonuses.lordHpBonus || 0) + extraTechs * 2
+        command: (bonuses.lordCommandBonus || 0) + extraTechs * 0.1,
+        combat: (bonuses.lordCombatBonus || 0) + extraTechs * 0.1,
+        governance: (bonuses.lordGovernanceBonus || 0) + extraTechs * 0.25,
+        hp: (bonuses.lordHpBonus || 0) + extraTechs * 0.5
     };
 }
 
