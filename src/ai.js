@@ -1507,9 +1507,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         const allTechsResearched = aiTs && aiTs.researched &&
             aiTs.researched.size >= Object.keys(TECHS).length;
         if (allTechsResearched) {
-            if (!gameState.victoryState) gameState.victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
-            if (!gameState.victoryState.projects) gameState.victoryState.projects = {};
-            const progress = gameState.victoryState.projects[owner] || 0;
+            if (!victoryState) victoryState = { projects: {}, tradeRoutes: {}, scoreSnapshots: {} };
+            if (!victoryState.projects) victoryState.projects = {};
+            const progress = victoryState.projects[owner] || 0;
             if (progress < SCIENCE_VICTORY_BUILD_TURNS) {
                 // Find a city to build the project
                 const city = owned.find(t => t.terrain === 'CITY');

@@ -10,8 +10,8 @@ export const TILE_SIZE = 1;
 // generation is flooded back into the ocean so stray 1-3 tile islets disappear,
 // and faction capitals are only placed on landmasses at least MIN_START_LANDMASS
 // tiles (falling back to the largest available if too few qualify).
-export const MIN_LANDMASS_SIZE = 24;
-export const MIN_START_LANDMASS = 36;
+export const MIN_LANDMASS_SIZE = 48;
+export const MIN_START_LANDMASS = 72;
 
 // Tile count-based map sizes with player count recommendations
 export const MAP_SIZES = {
@@ -20,7 +20,8 @@ export const MAP_SIZES = {
     medium: { tiles: 1600, players: 7, name: 'Medium' },
     large:  { tiles: 2500, players: 9, name: 'Large' },
     huge:   { tiles: 4000, players: 10, name: 'Huge' },
-    epic:   { tiles: 6000, players: 10, name: 'Epic' }
+    epic:   { tiles: 6000, players: 10, name: 'Epic' },
+    gigantic: { tiles: 8000, players: 12, name: 'Gigantic' }  // NEW
 };
 
 // Calculate actual dimensions from tile count with random aspect ratio
@@ -56,6 +57,7 @@ export const TERRAIN = {
 };
 
 export const UNIT_TYPE = {
+    // --- MEDIEVAL (baseline) ---
     INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
     ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 1, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 12, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
@@ -65,194 +67,96 @@ export const UNIT_TYPE = {
     SIEGE:       { name: 'Siege',        hp: 14, attack: 3, defense: 2, moveRange: 2, upkeep: { food: 4, gold: 4, wood: 2, iron: 1 }, siegeBonus: 8, besiege: true, besiegePower: 2, ranged: true, attackRange: 2 },
     SETTLER:     { name: 'Settler',      hp: 6,  attack: 1, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 2 }, canFoundCity: true, buildTurns: 2, ranged: false, attackRange: 1 },
     ENGINEER:    { name: 'Engineer',     hp: 8,  attack: 2, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 2, wood: 1 }, canBuildBridge: true, canBuildSiegeTower: true, canBuildStructure: true, ranged: false, attackRange: 1 },
-    // Worker: a Civ-style improvement builder. It travels the map and constructs
-    // terrain improvements (FARM/LUMBERMILL/MINE) on owned tiles within a city's
-    // influence radius, spending its action to do so.
-    WORKER:      { name: 'Worker',      hp: 6,  attack: 0, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 1 }, canBuildImprovement: true, ranged: false, attackRange: 1 },
-    // New land units.
+    WORKER:      { name: 'Worker',       hp: 6,  attack: 0, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 1 }, canBuildImprovement: true, ranged: false, attackRange: 1 },
     LONGBOWMAN:  { name: 'Longbowman',   hp: 8,  attack: 5, defense: 1, moveRange: 1, upkeep: { food: 2, gold: 4, wood: 1 }, ranged: true, attackRange: 3, siegeBonus: 1, vision: 4 },
     CATAPHRACT:  { name: 'Cataphract',   hp: 16, attack: 6, defense: 5, moveRange: 2, upkeep: { food: 5, gold: 5, iron: 2 }, ranged: false, attackRange: 1 },
-    // Chariot: a fast striker that can perform a straight-line CHARGE up to 3
-    // tiles (orthogonal only) dealing massive damage — but the charge stuns the
-    // chariot itself for 2 turns afterward. It cannot move and charge on the
-    // same turn. On a normal turn it moves/attacks like a light melee unit.
     CHARIOT:     { name: 'Chariot',      hp: 11, attack: 4, defense: 2, moveRange: 3, upkeep: { food: 3, gold: 4, wood: 1, iron: 1 }, ranged: false, attackRange: 1, canCharge: true },
     MEDIC:       { name: 'Medic',        hp: 7,  attack: 1, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 3 }, heal: 2, ranged: false, attackRange: 1 },
-    SIEGE_TOWER: { name: 'Siege Tower', hp: 20, attack: 4, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 4, wood: 2, iron: 2 }, besiege: true, besiegePower: 3, canAssault: true, ranged: false, attackRange: 1 },
-    // --- New European-faction units (Phase G) ---
-    // LEGIONNAIRE: heavy infantry tank. Slow but very durable; can build
-    // fortifications on owned tiles like an Engineer, but stays combat-capable.
-    LEGIONNAIRE: { name: 'Legionnaire', hp: 14, attack: 4, defense: 5, moveRange: 1, upkeep: { food: 4, gold: 3 }, ranged: false, attackRange: 1, canBuildStructure: true },
-    // BERSERKER: glass-cannon melee. +3 attack when below 50% HP (frenzy);
-    // cannot be healed by Medics.
-    BERSERKER:   { name: 'Berserker',   hp: 12, attack: 9, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1, frenzy: true, noMedic: true },
-    // VARANGIAN_GUARD: elite bodyguard. +2 defense when adjacent to a friendly lord.
+    SIEGE_TOWER: { name: 'Siege Tower',  hp: 20, attack: 4, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 4, wood: 2, iron: 2 }, besiege: true, besiegePower: 3, canAssault: true, ranged: false, attackRange: 1 },
+    LEGIONNAIRE: { name: 'Legionnaire',  hp: 14, attack: 4, defense: 5, moveRange: 1, upkeep: { food: 4, gold: 3 }, ranged: false, attackRange: 1, canBuildStructure: true },
+    BERSERKER:   { name: 'Berserker',    hp: 12, attack: 9, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1, frenzy: true, noMedic: true },
     VARANGIAN_GUARD: { name: 'Varangian Guard', hp: 16, attack: 6, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1, lordGuard: true },
-    // CONQUISTADOR: mounted gunpowder unit. Mobile ranged assault; +2 attack vs
-    // units in cities.
     CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 4, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
-    // WINGED_HUSSAR: shock cavalry. Charge deals 2x damage on the first attack
-    // each turn; +1 move on open terrain.
     WINGED_HUSSAR: { name: 'Winged Hussar', hp: 18, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1, chargeMultiplier: 2, openTerrainMoveBonus: 1 },
-    // CROSSBOWMAN: long-range infantry, a straightforward Archer upgrade.
-    CROSSBOWMAN: { name: 'Crossbowman', hp: 10, attack: 8, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
-    // Long-range siege engines (unlocked by a Siege Workshop building in a city).
-    // Both deal AOE splash to enemy units adjacent to the target and can set the
-    // area ablaze (a burn DoT on primary + splash victims).
-    // Medieval siege engines are slow — only 1 tile/turn. Modern artillery
-    // (CANNON/FIELD_GUN/HORSE_ARTILLERY) gets more mobility to reflect its
-    // wheeled carriages and horse teams (see the modern-era entries below).
-    CATAPULT:    { name: 'Catapult',   hp: 12, attack: 5, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
-    TREBUCHET:   { name: 'Trebuchet',  hp: 10, attack: 7, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
-    // Naval units (unlocked by a Harbor building in a coastal/river city).
+    CROSSBOWMAN: { name: 'Crossbowman',  hp: 10, attack: 8, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
+    CATAPULT:    { name: 'Catapult',     hp: 12, attack: 5, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
+    TREBUCHET:   { name: 'Trebuchet',    hp: 10, attack: 7, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
+
+    // --- MEDIEVAL NAVAL (tiers: Galley=light, Frigate=medium, Galleon=heavy) ---
     GALLEY:      { name: 'Galley',       hp: 14, attack: 6, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     TRANSPORT:   { name: 'Transport',    hp: 12, attack: 1, defense: 3, moveRange: 3, upkeep: { food: 2, gold: 4, wood: 1, iron: 1 }, naval: true, capacity: 2, ranged: false, attackRange: 1 },
     FRIGATE:     { name: 'Frigate',      hp: 20, attack: 8, defense: 4, moveRange: 4, upkeep: { food: 4, gold: 7, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, vision: 5 },
     GALLEON:     { name: 'Galleon',      hp: 28, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 4, besiege: true, besiegePower: 1 },
-    // SPY: a stealth agent (Feature 11). Cannot fight directly; performs covert
-    // actions (gather intel / sabotage / assassinate / incite unrest) from an
-    // enemy or neutral tile. High vision, low HP.
-    SPY:         { name: 'Spy',          hp: 6,  attack: 1, defense: 1, moveRange: 3, upkeep: { food: 1, gold: 3 }, ranged: false, attackRange: 1, vision: 5, isSpy: true, buildTurns: 2 },
-    // === RENAISSANCE ERA UNITS (1700-1800) ===
-    // MUSKETEER: early firearm infantry with volley fire mechanic.
-    MUSKETEER:   { name: 'Musketman', hp: 15, attack: 10, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
-    // ARQUEBUSIER: early rifle with slow reload - cannot attack turn after firing.
-    ARQUEBUSIER: { name: 'Arquebusier', hp: 12, attack: 9, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
-    // RENAISSANCE NAVAL: wooden warships dominate the seas.
-    MAN_OF_WAR:  { name: 'Man-of-War', hp: 35, attack: 12, defense: 8, moveRange: 3, upkeep: { food: 6, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 6, flagship: true },
-    GALLEASS:    { name: 'Galleass', hp: 25, attack: 10, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, oared: true },
-    PINNACE:     { name: 'Pinnace', hp: 18, attack: 7, defense: 4, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 2, vision: 7 },
-    // === ENLIGHTENMENT ERA UNITS (1800-1850) ===
-    // LINE_INFANTRY: disciplined formation fighters with formation bonus.
-    LINE_INFANTRY: { name: 'Line Infantry', hp: 20, attack: 14, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
-    // DRAGOON: mounted ranged - hybrid cavalry that can charge or fire.
-    DRAGOON:     { name: 'Dragoon', hp: 16, attack: 14, defense: 6, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
-    // CANNON: heavy artillery with devastating siege power.
-    CANNON:      { name: 'Cannon', hp: 12, attack: 14, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
-    // MORTAR: indirect fire with AOE splash damage.
-    MORTAR:      { name: 'Mortar', hp: 10, attack: 12, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
-    // ENLIGHTENMENT NAVAL: faster sailing warships.
-    CORVETTE:    { name: 'Corvette', hp: 22, attack: 9, defense: 5, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 2, raider: true },
-    FROLIC:      { name: 'Frolic', hp: 30, attack: 11, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, broadside: true },
-    MERCHANTMAN: { name: 'Merchantman', hp: 20, attack: 4, defense: 4, moveRange: 3, upkeep: { food: 4, gold: 6, wood: 3, iron: 1 }, naval: true, capacity: 3, tradeBonus: 10 },
-    // === MODERN ERA UNITS (1850-1880) ===
-    // RIFLEMAN: accurate firearm infantry that ignores defense.
-    RIFLEMAN:    { name: 'Rifleman', hp: 22, attack: 16, defense: 7, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
-    // SHARPSHOOTER: elite sniper with bonus vs high-value targets.
-    SHARPSHOOTER: { name: 'Sharpshooter', hp: 14, attack: 17, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
-    // RAILGUN: devastating railway artillery with long reload.
-    RAILGUN:     { name: 'Railgun', hp: 14, attack: 19, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
-    // ARMORED_TRAIN: mobile railway fortress that can move and fire.
-    ARMORED_TRAIN: { name: 'Armored Train', hp: 27, attack: 16, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
-    // FIELD_GUN: rapid-fire artillery.
-    FIELD_GUN:   { name: 'Field Gun', hp: 12, attack: 18, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
-    // HORSE_ARTILLERY: fast-deploy mobile cannon.
-    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 12, attack: 16, defense: 7, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
-    // DEMOLITION_SQUAD: combat engineers with bonus vs cities. In the modern
-    // era this is the ENGINEER line's upgrade — it keeps the engineer's
-    // canBuildStructure/canBuildBridge utility (so it can lay modern mines &
-    // bunkers once the tech is researched) but trades the SIEGE_TOWER build
-    // for a strong demolish bonus vs cities/buildings. Obsoletes the basic
-    // ENGINEER once EXPLOSIVES is researched.
-    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 12, attack: 16, defense: 7, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
-    // COMBAT_ENGINEER: the atomic-era engineer. Faster (motorized), tankier,
-    // and builds the modern structure line (MINEFIELD / BUNKER / AT_MINE) once
-    // the relevant techs are researched. Obsoletes DEMOLITION_SQUAD once
-    // INTERNAL_COMBUSTION is researched — it's the proper modern equivalent of
-    // the classical ENGINEER, keeping the bridge/structure utility the AI
-    // relies on for river crossings and defensive fortifications.
-    COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 16, attack: 14, defense: 9, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
-    // SIEGE_CANNON: heavy siege gun that destroys fortifications.
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 10, attack: 21, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
-    // MODERN NAVAL: steam-powered iron warships.
-    IRONCLAD:    { name: 'Ironclad', hp: 40, attack: 14, defense: 10, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 3, armored: true },
-    STEAM_TRANSPORT: { name: 'Steam Transport', hp: 20, attack: 2, defense: 6, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
-    GUNBOAT:     { name: 'Gunboat', hp: 18, attack: 10, defense: 5, moveRange: 4, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, naval: true, ranged: true, attackRange: 2, shallowDraft: true },
-    IRONCLAD_FRIGATE: { name: 'Ironclad Frigate', hp: 47, attack: 17, defense: 12, moveRange: 3, upkeep: { food: 8, gold: 14, wood: 2, iron: 7 }, naval: true, ranged: true, attackRange: 3, heavyArmor: true },
-    MONITOR:     { name: 'Monitor', hp: 37, attack: 18, defense: 14, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true },
-    FRIGATE_2:   { name: 'Frigate II', hp: 40, attack: 15, defense: 9, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 3, fastSail: true },
-    SUBMARINE:   { name: 'Submarine', hp: 25, attack: 12, defense: 6, moveRange: 3, upkeep: { food: 4, gold: 10, wood: 1, iron: 5 }, naval: true, ranged: true, attackRange: 3, stealth: true },
-    TORPEDO_BOAT: { name: 'Torpedo Boat', hp: 17, attack: 20, defense: 3, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 2, torpedo: true },
-    // === ANTI-CAVALRY UNITS ===
-    // HALBERDIER: medieval anti-cavalry specialist. Strong bonus vs cavalry and
-    // chariots; slower than a Pikeman but tankier. A straight Pikeman upgrade
-    // for the medieval era, especially vs mounted-heavy factions.
-    HALBERDIER:  { name: 'Halberdier', hp: 16, attack: 8, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 4, iron: 2 }, ranged: false, attackRange: 1, antiCavalry: true },
-    // PIKE_MASTER: enlightenment-era long-pike infantry. The hardest counter to
-    // cavalry charges (Winged Hussar, Cataphract, Dragoon) — takes reduced
-    // charge damage and deals +2 vs mounted.
-    PIKE_MASTER: { name: 'Pike Master', hp: 20, attack: 10, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 3 }, ranged: false, attackRange: 1, antiCavalry: true },
-    // BAYONET_RIFLE: a rifleman with a fixed bayonet — modern anti-cavalry.
-    // Slightly less raw ranged power than RIFLEMAN, but the bayonet gives a
-    // big bonus when charged by tanks/cavalry.
-    BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 22, attack: 13, defense: 9, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
-    // ANTI_TANK_GUN: a towed anti-tank gun — the transitional step between the
-    // bayonet rifle and the RPG. High damage vs armored units, low mobility.
-    ANTI_TANK_GUN: { name: 'Anti-Tank Gun', hp: 16, attack: 18, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 5 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true },
-    // RPG_TEAM: the modern anti-armor specialist. A two-man team with a
-    // rocket-propelled-grenade launcher. Devastating vs tanks/heavy tanks/
-    // armored cars (the modern "cavalry"), with a small AOE splash. This is
-    // the atomic-era capstone of the anti-cavalry line — the spiritual
-    // successor to the Pikeman's long pike, now pointed at armor instead of
-    // horses. infantry anti-tank teams are the canonical counter to massed
-    // armor in this era.
-    RPG_TEAM:     { name: 'RPG Team', hp: 18, attack: 24, defense: 9, moveRange: 2, upkeep: { food: 4, gold: 12, iron: 6 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true, aoe: true, aoeRadius: 1 },
-    // === MOBILIZED UNITS (Atomic Era, 1880-1940) ===
-    // Mobilized units are motorized/motor-trained versions of the base line:
-    // they give up a bit of raw combat power for much higher move range, which
-    // lets them cross the map rapidly and respond to threats. They are the
-    // natural successors to RIFLEMAN/FIELD_GUN once INTERNAL_COMBUSTION is
-    // researched, and obsolete their foot-bound predecessors.
-    // MOBILIZED_INFANTRY: motorized riflemen — trucks grant +2 move over
-    // RIFLEMAN and a larger HP pool, at the cost of ranged attack range.
-    MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 26, attack: 18, defense: 9, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
-    // MOBILIZED_ARTILLERY: towed field guns moved by trucks. Far more mobile
-    // than the foot-bound FIELD_GUN (+2 move), same devastating bombardment.
-    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 16, attack: 22, defense: 8, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
-    // MOTOR_ARTILLERY: self-propelled guns — the heaviest mobile artillery. Can
-    // move and fire the same turn (mobile: true like ARMORED_TRAIN), giving it
-    // true shoot-and-scoot capability.
-    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 20, attack: 24, defense: 10, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
-    // TANK: the modern successor to cavalry. Tracks give it the charge bonus of
-    // cavalry (canCharge) but with massively better HP/ATK/DEF. Its tread charge
-    // replaces the horse charge in the modern era — old cavalry (CAVALRY,
-    // CATAPHRACT, WINGED_HUSSAR) are obsoleted once ARMOR is researched.
-    TANK:        { name: 'Tank', hp: 36, attack: 24, defense: 15, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
-    // HEAVY_TANK: a breakthrough tank — slower but even more durable, with a
-    // bigger gun. The ultimate land unit of the era.
-    HEAVY_TANK:  { name: 'Heavy Tank', hp: 46, attack: 28, defense: 19, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
-    // ARMORED_CAR: a fast, light mechanized scout/raider. High move range, low
-    // cost — the spiritual successor to the Chariot/Scout line in the modern era.
-    ARMORED_CAR: { name: 'Armored Car', hp: 20, attack: 16, defense: 8, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
-    // === GENERIC REPLACEMENTS for faction-unique units ===
-    // These exist so that non-owning factions still get a unit from the tech
-    // that used to unlock a faction-unique unit (e.g. CHIVALRY used to unlock
-    // WINGED_HUSSAR for everyone). They are intentionally weaker than the
-    // faction-unique originals — the unique unit is the premium version.
-    // MERCENARY_KNIGHT: generic heavy cavalry, the non-roman/non-polish stand-in
-    // for the medieval knightly orders. Slightly weaker than CATAPHRACT.
+
+    // --- RENAISSANCE ERA (1700-1800) ---
+    MUSKETEER:   { name: 'Musketman',    hp: 20, attack: 14, defense: 7, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: true, attackRange: 2, volley: true },
+    ARQUEBUSIER: { name: 'Arquebusier',  hp: 16, attack: 12, defense: 6, moveRange: 2, upkeep: { food: 3, gold: 4, iron: 1 }, ranged: true, attackRange: 2, slowReload: true },
+
+    // RENAISSANCE NAVAL (light > medieval medium; medium > medieval heavy; heavy top)
+    PINNACE:     { name: 'Pinnace',      hp: 26, attack: 10, defense: 6, moveRange: 4, upkeep: { food: 3, gold: 5, wood: 2, iron: 1 }, naval: true, ranged: true, attackRange: 3, vision: 7 },        // > Frigate (20/8/4)
+    GALLEASS:    { name: 'Galleass',     hp: 36, attack: 14, defense: 9, moveRange: 3, upkeep: { food: 5, gold: 8, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, oared: true }, // > Galleon (28/10/6)
+    MAN_OF_WAR:  { name: 'Man-of-War',   hp: 48, attack: 18, defense: 12, moveRange: 3, upkeep: { food: 6, gold: 10, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 3, vision: 6, flagship: true },
+
+    // --- ENLIGHTENMENT ERA (1800-1850) ---
+    LINE_INFANTRY: { name: 'Line Infantry', hp: 28, attack: 18, defense: 10, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 2 }, ranged: true, attackRange: 2, formation: true },
+    DRAGOON:     { name: 'Dragoon',      hp: 22, attack: 18, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 7, iron: 2 }, ranged: true, attackRange: 2, mounted: true },
+    CANNON:      { name: 'Cannon',       hp: 16, attack: 18, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 8, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, siegeBonus: 4 },
+    MORTAR:      { name: 'Mortar',       hp: 14, attack: 16, defense: 5, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2 },
+
+    // ENLIGHTENMENT NAVAL (light > Renaissance medium; heavy > Renaissance heavy; no medium – we make Corvette light, Frolic heavy)
+    CORVETTE:    { name: 'Corvette',     hp: 42, attack: 16, defense: 10, moveRange: 4, upkeep: { food: 4, gold: 6, wood: 3, iron: 2 }, naval: true, ranged: true, attackRange: 3, raider: true }, // > Galleass (36/14/9)
+    FROLIC:      { name: 'Frolic',       hp: 58, attack: 22, defense: 14, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 4, iron: 3 }, naval: true, ranged: true, attackRange: 4, broadside: true }, // > Man-of-War (48/18/12)
+    MERCHANTMAN: { name: 'Merchantman',  hp: 28, attack: 5, defense: 6, moveRange: 3, upkeep: { food: 4, gold: 6, wood: 3, iron: 1 }, naval: true, capacity: 3, tradeBonus: 10 },
+
+    // --- MODERN ERA (1850-1880) ---
+    RIFLEMAN:    { name: 'Rifleman',     hp: 34, attack: 22, defense: 10, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, accurate: true },
+    SHARPSHOOTER:{ name: 'Sharpshooter', hp: 22, attack: 24, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 9, iron: 2 }, ranged: true, attackRange: 4, sniper: true },
+    RAILGUN:     { name: 'Railgun',      hp: 20, attack: 26, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 6 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, devastating: true, aoe: true, aoeRadius: 2 },
+    ARMORED_TRAIN: { name: 'Armored Train', hp: 36, attack: 22, defense: 12, moveRange: 3, upkeep: { food: 5, gold: 10, wood: 2, iron: 5 }, ranged: true, attackRange: 3, mobile: true },
+    FIELD_GUN:   { name: 'Field Gun',    hp: 18, attack: 24, defense: 8, moveRange: 2, upkeep: { food: 4, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 4, ranged: true, attackRange: 2, rapidFire: true, aoe: true, aoeRadius: 2 },
+    HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 18, attack: 22, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
+    DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 18, attack: 20, defense: 9, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
+    COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 24, attack: 18, defense: 12, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 16, attack: 26, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
+
+    // MODERN NAVAL (light > Enlightenment heavy? Actually we need light > Frolic (58/22/14) – that’s steep. Instead we’ll make Gunboat the light, and it should be > Frolic? That would be too high. Since Enlightenment has only light and heavy, we can make Modern light > Enlightenment heavy, which is acceptable as a big jump. We'll set Gunboat accordingly.)
+    GUNBOAT:     { name: 'Gunboat',      hp: 60, attack: 24, defense: 12, moveRange: 4, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, naval: true, ranged: true, attackRange: 4, shallowDraft: true }, // > Frolic (58/22/14)
+    FRIGATE_2:   { name: 'Frigate II',   hp: 70, attack: 28, defense: 16, moveRange: 4, upkeep: { food: 6, gold: 11, wood: 4, iron: 4 }, naval: true, ranged: true, attackRange: 4, fastSail: true },      // medium, could be > Gunboat but we want medium > previous heavy? Actually we want medium > previous heavy? We'll treat Frigate_2 as medium and it should be > Frolic as well, but we can just make it stronger than Gunboat.
+    IRONCLAD:    { name: 'Ironclad',     hp: 85, attack: 32, defense: 20, moveRange: 3, upkeep: { food: 7, gold: 12, wood: 2, iron: 6 }, naval: true, ranged: true, attackRange: 4, armored: true },    // heavy, strongest of Modern
+    // Additional modern ships (Monitor, Ironclad_Frigate, Submarine, Torpedo Boat) we can leave as sidegrades, but we'll keep their stats lower than Ironclad.
+    STEAM_TRANSPORT: { name: 'Steam Transport', hp: 32, attack: 3, defense: 9, moveRange: 4, upkeep: { food: 4, gold: 8, wood: 2, iron: 3 }, naval: true, capacity: 4, steamPowered: true },
+    IRONCLAD_FRIGATE: { name: 'Ironclad Frigate', hp: 78, attack: 30, defense: 18, moveRange: 3, upkeep: { food: 8, gold: 14, wood: 2, iron: 7 }, naval: true, ranged: true, attackRange: 4, heavyArmor: true }, // slightly less than Ironclad
+    MONITOR:     { name: 'Monitor',      hp: 55, attack: 28, defense: 18, moveRange: 2, upkeep: { food: 7, gold: 13, wood: 1, iron: 7 }, naval: true, ranged: true, attackRange: 4, turret: true, aoe: true, aoeRadius: 1 },
+    SUBMARINE:   { name: 'Submarine',    hp: 36, attack: 20, defense: 8, moveRange: 3, upkeep: { food: 4, gold: 10, wood: 1, iron: 5 }, naval: true, ranged: true, attackRange: 3, stealth: true, torpedo: true },
+    TORPEDO_BOAT:{ name: 'Torpedo Boat', hp: 26, attack: 30, defense: 5, moveRange: 4, upkeep: { food: 3, gold: 8, wood: 1, iron: 4 }, naval: true, ranged: true, attackRange: 3, torpedo: true },
+
+    // --- ANTI-CAVALRY UNITS ---
+    HALBERDIER:  { name: 'Halberdier',   hp: 16, attack: 8, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 4, iron: 2 }, ranged: false, attackRange: 1, antiCavalry: true },
+    PIKE_MASTER: { name: 'Pike Master',  hp: 24, attack: 12, defense: 11, moveRange: 2, upkeep: { food: 4, gold: 6, iron: 3 }, ranged: false, attackRange: 1, antiCavalry: true },
+    BAYONET_RIFLE: { name: 'Bayonet Rifle', hp: 30, attack: 18, defense: 11, moveRange: 2, upkeep: { food: 5, gold: 8, iron: 3 }, ranged: true, attackRange: 3, antiCavalry: true, accurate: true },
+    ANTI_TANK_GUN: { name: 'Anti-Tank Gun', hp: 22, attack: 24, defense: 10, moveRange: 2, upkeep: { food: 4, gold: 10, iron: 5 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true },
+    RPG_TEAM:     { name: 'RPG Team',    hp: 26, attack: 30, defense: 11, moveRange: 2, upkeep: { food: 4, gold: 12, iron: 6 }, ranged: true, attackRange: 3, antiCavalry: true, antiArmor: true, aoe: true, aoeRadius: 1 },
+
+    // --- MOBILIZED UNITS (Atomic Era, 1880-1940) ---
+    MOBILIZED_INFANTRY: { name: 'Mobilized Infantry', hp: 40, attack: 26, defense: 12, moveRange: 4, upkeep: { food: 5, gold: 10, iron: 3 }, ranged: true, attackRange: 2, mobilized: true, accurate: true },
+    MOBILIZED_ARTILLERY: { name: 'Mobilized Artillery', hp: 24, attack: 30, defense: 10, moveRange: 4, upkeep: { food: 5, gold: 12, wood: 2, iron: 5 }, besiege: true, besiegePower: 5, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, rapidFire: true },
+    MOTOR_ARTILLERY: { name: 'Motor Artillery', hp: 30, attack: 32, defense: 12, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 6 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, mobilized: true, mobile: true },
+    TANK:        { name: 'Tank',         hp: 45, attack: 30, defense: 18, moveRange: 3, upkeep: { food: 6, gold: 14, iron: 8 }, ranged: true, attackRange: 2, canCharge: true, armored: true, mobilized: true, fortBuster: true },
+    HEAVY_TANK:  { name: 'Heavy Tank',   hp: 58, attack: 35, defense: 22, moveRange: 2, upkeep: { food: 7, gold: 18, iron: 10 }, ranged: true, attackRange: 2, canCharge: true, armored: true, fortBuster: true },
+    ARMORED_CAR: { name: 'Armored Car',  hp: 28, attack: 22, defense: 10, moveRange: 5, upkeep: { food: 4, gold: 9, iron: 4 }, ranged: true, attackRange: 2, mobilized: true, vision: 6 },
+
+    // --- GENERIC REPLACEMENTS ---
     MERCENARY_KNIGHT: { name: 'Mercenary Knight', hp: 15, attack: 7, defense: 5, moveRange: 2, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1 },
-    // HOUSEHOLD_GUARD: generic elite bodyguard infantry (stand-in for the
-    // VARANGIAN_GUARD). Durable, no lord-aura bonus.
     HOUSEHOLD_GUARD: { name: 'Household Guard', hp: 15, attack: 5, defense: 5, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1 },
-    // FRONTIERSMAN: generic mounted gunpowder skirmisher (stand-in for
-    // CONQUISTADOR). Mobile ranged, no city bonus.
     FRONTIERSMAN: { name: 'Frontiersman', hp: 11, attack: 6, defense: 3, moveRange: 3, upkeep: { food: 3, gold: 5, iron: 1 }, ranged: true, attackRange: 2 },
-    // RAIDER: generic light infantry shock-trooper (stand-in for BERSERKER).
-    // No frenzy, just a solid melee striker.
-    RAIDER:      { name: 'Raider', hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1 },
-    // === ATOMIC-ERA NAVAL ===
-    // DESTROYER: fast steam-turbine warship, the successor to IRONCLAD.
-    DESTROYER:   { name: 'Destroyer', hp: 50, attack: 18, defense: 12, moveRange: 5, upkeep: { food: 7, gold: 14, iron: 8 }, naval: true, ranged: true, attackRange: 3, vision: 7, fastSail: true },
-    // BATTLESHIP: the heaviest gun ship afloat — long-range shore bombardment.
-    BATTLESHIP:  { name: 'Battleship', hp: 70, attack: 24, defense: 18, moveRange: 4, upkeep: { food: 10, gold: 22, iron: 14 }, naval: true, ranged: true, attackRange: 4, vision: 7, besiege: true, besiegePower: 4, heavyArmor: true },
-    // AIRCRAFT_CARRIER: a mobile air base. Carries a small attack bonus to
-    // adjacent friendly naval units (flagship-style) and extends naval vision.
-    AIRCRAFT_CARRIER: { name: 'Aircraft Carrier', hp: 60, attack: 14, defense: 16, moveRange: 4, upkeep: { food: 12, gold: 26, iron: 12 }, naval: true, ranged: true, attackRange: 3, vision: 9, flagship: true },
-    // TRANSPORT_SHIP: modern steam transport, larger capacity than STEAM_TRANSPORT.
-    TRANSPORT_SHIP: { name: 'Transport Ship', hp: 30, attack: 4, defense: 8, moveRange: 5, upkeep: { food: 6, gold: 12, iron: 4 }, naval: true, capacity: 6, steamPowered: true },
-    // SUBMARINE_II: improved submarine — more HP, better stealth, torpedo bonus.
-    SUBMARINE_II: { name: 'Submarine II', hp: 35, attack: 18, defense: 10, moveRange: 4, upkeep: { food: 5, gold: 14, iron: 7 }, naval: true, ranged: true, attackRange: 3, stealth: true, torpedo: true }
+    RAIDER:      { name: 'Raider',       hp: 12, attack: 7, defense: 2, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1 },
+
+    // --- ATOMIC-ERA NAVAL (tiers: Destroyer=light, Submarine_II=medium, Battleship=heavy; Carrier=special) ---
+    DESTROYER:   { name: 'Destroyer',    hp: 88, attack: 34, defense: 18, moveRange: 5, upkeep: { food: 7, gold: 14, iron: 8 }, naval: true, ranged: true, attackRange: 5, vision: 7, fastSail: true, aoe: true, aoeRadius: 2 }, // > Ironclad (85/32/20) – light beats previous heavy? Actually light should beat previous medium, but we have modern medium as Frigate_2 (70/28/16). Destroyer > Frigate_2 yes. But also we want light > previous heavy? Not necessarily, but we can make it > Ironclad? That would make light of atomic > heavy of modern, which is a big jump, but acceptable if we want clear progression.
+    SUBMARINE_II:{ name: 'Submarine II', hp: 60, attack: 30, defense: 15, moveRange: 4, upkeep: { food: 5, gold: 14, iron: 7 }, naval: true, ranged: true, attackRange: 4, stealth: true, torpedo: true, aoe: true, aoeRadius: 1 }, // medium, could be > Destroyer? We'll make it slightly less than Destroyer.
+    BATTLESHIP:  { name: 'Battleship',   hp: 100, attack: 38, defense: 24, moveRange: 4, upkeep: { food: 10, gold: 22, iron: 14 }, naval: true, ranged: true, attackRange: 3, vision: 7, besiege: true, besiegePower: 4, heavyArmor: true, aoe: true, aoeRadius: 3 }, // heavy, strongest
+    AIRCRAFT_CARRIER: { name: 'Aircraft Carrier', hp: 75, attack: 20, defense: 20, moveRange: 4, upkeep: { food: 12, gold: 26, iron: 12 }, naval: true, ranged: true, attackRange: 6, vision: 9, flagship: true, aoe: true, aoeRadius: 2 },
+    TRANSPORT_SHIP: { name: 'Transport Ship', hp: 42, attack: 5, defense: 11, moveRange: 5, upkeep: { food: 6, gold: 12, iron: 4 }, naval: true, capacity: 6, steamPowered: true }
 };
 
 // Units available to every faction in addition to its themed roster. Ships
