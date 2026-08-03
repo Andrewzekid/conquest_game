@@ -435,7 +435,7 @@ export class GameRenderer {
                 new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.6 }));
             top.position.set(sx, 0.64, 0); g.add(top);
         }
-        const emoji = (wonder && wonder.emoji) || '✨';
+        const emoji = (wonder && wonder.emoji) || '\u2728';
         g.add(this.makeIconSprite(emoji, 0.6, 1.25));
         return g;
     }
