@@ -16,7 +16,7 @@ import { getUnitCostFor, getFactionDef } from './faction.js';
 import { getUnitCap, unitCapForCity, grossYields, upkeepTotals } from './economy.js';
 import { svgIcon, hasIcon } from './icons.js';
 import { getArmyComposition } from './ui_data.js';
-import { getUnlockedUnits, getUnlockedStructures, isUnitUnlocked, TECHS } from './tech.js';
+import { getUnlockedUnits, getUnlockedStructures, isUnitUnlocked, TECHS, ERA_ORDER, ERA_NAMES } from './tech.js';
 import { applyObsolescence } from './unit_obsolescence.js';
 
 // Map building types to their icon names in src/icons.js.
@@ -1579,9 +1579,9 @@ export function bindUI(gameState, callbacks) {
         const ts = gameState.techState;
         if (!ts) { els.techPanel.innerHTML = '<p>No tech state available.</p>'; return; }
 
-        const eraOrder = ['ancient', 'classical', 'medieval', 'industrial', 'renaissance', 'enlightenment', 'modern'];
-        const eraNames = { ancient: 'Ancient', classical: 'Classical', medieval: 'Medieval', industrial: 'Industrial', renaissance: 'Renaissance', enlightenment: 'Enlightenment', modern: 'Modern' };
-        const eraColor = { ancient: '#c8a06e', classical: '#d4af37', medieval: '#8b5cf6', industrial: '#6b7280', renaissance: '#3b82f6', enlightenment: '#f59e0b', modern: '#ef4444' };
+        const eraOrder = ERA_ORDER;
+        const eraNames = ERA_NAMES;
+        const eraColor = { ancient: '#c8a06e', classical: '#d4af37', medieval: '#8b5cf6', industrial: '#6b7280', renaissance: '#3b82f6', enlightenment: '#f59e0b', modern: '#ef4444', atomic: '#ff00ff' };
 
         let html = '<h3>Research</h3>';
         if (ts.current) {

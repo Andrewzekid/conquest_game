@@ -151,3 +151,29 @@ describe('spectate-ui', () => {
       expect(uiSrc).not.toContain("buildings.get(cityKey) || []).includes('BARRACKS')");
     });
   });
+
+  // The tech-tree panel must render the atomic era (TANK/BATTLESHIP/
+  // AIRCRAFT_CARRIER/RPG_TEAM live there). Previously ui.js had its own
+  // hardcoded eraOrder that ended at 'modern', so the 7 atomic techs never
+  // showed up in the panel — reported as "battleship / aircraft carrier /
+  // RPG team not in the tech tree". It now imports the canonical
+  // ERA_ORDER/ERA_NAMES from tech.js.
+  describe('tech tree shows the atomic era', () => {
+    it('ui.js imports ERA_ORDER and ERA_NAMES from tech.js', () => {
+      expect(uiSrc).toMatch(/import \{[^}]*ERA_ORDER[^}]*\} from '\.\/tech\.js'/);
+      expect(uiSrc).toMatch(/import \{[^}]*ERA_NAMES[^}]*\} from '\.\/tech\.js'/);
+    });
+
+    it('ui.js does not carry its own hardcoded eraOrder missing atomic', () => {
+      expect(uiSrc).not.toContain("const eraOrder = ['ancient'");
+    });
+
+    it('ui.js has an atomic era color', () => {
+      expect(uiSrc).toMatch(/atomic: '#[0-9a-f]{6}'/);
+    });
+
+    it('tech.js ERA_ORDER includes atomic as the final era', () => {
+      const techSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'tech.js'), 'utf-8');
+      expect(techSrc).toMatch(/ERA_ORDER = \[[^\]]*'atomic'\]/);
+    });
+  });

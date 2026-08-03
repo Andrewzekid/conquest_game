@@ -1335,7 +1335,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 // was researched, so no warships were ever built past
                 // CARTOGRAPHY. Now it takes the strongest modern warship the
                 // faction can afford, falling back down the era ladder.
-                const WARSHIP_ORDER = ['MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE',
+                const WARSHIP_ORDER = ['AIRCRAFT_CARRIER', 'BATTLESHIP', 'SUBMARINE_II',
+                    'DESTROYER', 'MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE',
                     'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE_2', 'FRIGATE',
                     'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'GALLEY'];
                 const warshipOptions = applyObsolescence(
