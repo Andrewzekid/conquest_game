@@ -1739,27 +1739,64 @@ export class GameRenderer {
             const plane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.03, 0.18), P.white);
             plane.position.set(0.05, 0.25, 0.18); g.add(plane);
         } else if (isIronclad) {
-            const funnelCount = (type === 'BATTLESHIP' || type === 'DESTROYER') ? 2 : 1;
-            for (let i = 0; i < funnelCount; i++) {
-                const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.22, 8), P.dark);
-                funnel.position.set(0, 0.32, -0.15 + i * 0.3); g.add(funnel);
-            }
-            if (type === 'MONITOR') {
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 10), P.dark);
+            // Ironclads share a hull but get distinct tall superstructures so
+            // each steamship reads at a glance:
+            //  - IRONCLAD / IRONCLAD_FRIGATE: low casemate + tumblehome hull,
+            //    single funnel, broadside gunports.
+            //  - MONITOR: flat low profile, single rotating turret, no masts.
+            //  - BATTLESHIP: tall two-funnel silhouette, two big turrets with
+            //    long barrels, raised bridge.
+            //  - DESTROYER: long slim hull, raked twin funnels, small guns fwd/aft.
+            const isBattle = type === 'BATTLESHIP';
+            const isDestroyer = type === 'DESTROYER';
+            const isMonitor = type === 'MONITOR';
+            if (isMonitor) {
+                const casemate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.34), P.metal);
+                casemate.position.y = 0.24; g.add(casemate);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.16, 12), P.dark);
                 turret.rotation.x = Math.PI / 2;
-                turret.position.set(0, 0.24, 0.08); g.add(turret);
-                const shield = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.3), P.metal);
-                shield.position.y = 0.24; g.add(shield);
+                turret.position.set(0, 0.3, 0.02); g.add(turret);
+                const gb = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.026, 0.34, 8), P.dark);
+                gb.rotation.x = Math.PI / 2.1; gb.position.set(0, 0.3, 0.18); g.add(gb);
+                const smokebox = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.14, 8), P.dark);
+                smokebox.position.set(-0.1, 0.3, -0.12); g.add(smokebox);
             } else {
-                const barbette = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), P.metal);
-                barbette.position.set(0, 0.25, -0.08); g.add(barbette);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
-                turret.rotation.x = Math.PI / 2;
-                turret.position.set(0, 0.25, 0.12); g.add(turret);
-                if (type === 'BATTLESHIP' || type === 'DESTROYER') {
-                    const turret2 = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
-                    turret2.rotation.x = Math.PI / 2;
-                    turret2.position.set(0, 0.25, -0.28); g.add(turret2);
+                // Funnels: raked for destroyers, straight for battleships.
+                const funnelCount = isBattle || isDestroyer ? 2 : 1;
+                for (let i = 0; i < funnelCount; i++) {
+                    const fr = i === 0 ? -0.08 : 0.02;
+                    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, isDestroyer ? 0.3 : 0.26, 8), P.dark);
+                    funnel.position.set(fr, 0.36, -0.12 - i * 0.22);
+                    if (isDestroyer) funnel.rotation.z = 0.35 - i * 0.18;
+                    g.add(funnel);
+                }
+                // Raised bridge superstructure amidships.
+                const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, isDestroyer ? 0.16 : 0.2), P.metal);
+                bridge.position.set(0, 0.3, -0.02); g.add(bridge);
+                if (isDestroyer) {
+                    for (const sz of [0.2, -0.24]) {
+                        const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.2, 8), P.dark);
+                        gun.rotation.x = Math.PI / 2; gun.position.set(0, 0.32, sz); g.add(gun);
+                    }
+                } else {
+                    // Turrets with barrels forward and aft.
+                    for (const sz of [0.22, -0.28]) {
+                        const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.13, 12), P.dark);
+                        turret.rotation.x = Math.PI / 2;
+                        turret.position.set(0, 0.27, sz); g.add(turret);
+                        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.3, 8), P.dark);
+                        barrel.rotation.x = Math.PI / 2;
+                        barrel.position.set(0, 0.27, sz + 0.2); g.add(barrel);
+                    }
+                    if (isBattle) {
+                        // Extra main turret amidships for the big-gun silhouette.
+                        const mt = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.16, 12), P.dark);
+                        mt.rotation.x = Math.PI / 2;
+                        mt.position.set(0, 0.28, 0.12); g.add(mt);
+                        const mb = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.36, 8), P.dark);
+                        mb.rotation.x = Math.PI / 2;
+                        mb.position.set(0, 0.28, 0.32); g.add(mb);
+                    }
                 }
             }
         } else if (isTorpedo) {
@@ -2622,44 +2659,79 @@ export class GameRenderer {
                 break;
             }
             case 'MOTOR_ARTILLERY': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.32), P.dark);
-                hull.position.y = 0.16; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.26, 0.02); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.52, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.28, 0.18); g.add(barrel);
-                for (const sx of [-0.2, 0.2]) {
+                // Self-propelled howitzer: boxy fighting compartment with a
+                // heavy short howitzer, shelter door, and big truck wheels.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.34), P.dark);
+                hull.position.y = 0.18; g.add(hull);
+                const battery = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.26), P.metal);
+                battery.position.y = 0.3; g.add(battery);
+                const howitzer = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.062, 0.46, 12), P.dark);
+                howitzer.rotation.x = Math.PI / 2.15; howitzer.position.set(0, 0.32, 0.2); g.add(howitzer);
+                // Open ammunition tray on the back.
+                const tray = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.05, 0.12), P.metal);
+                tray.position.set(0, 0.28, -0.14); g.add(tray);
+                for (const sx of [-0.21, 0.21]) {
                     for (const sz of [-0.12, 0.12]) {
-                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 8), P.dark);
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 8), P.dark);
                         w.rotation.z = Math.PI / 2;
-                        w.position.set(sx, 0.08, sz); g.add(w);
+                        w.position.set(sx, 0.09, sz); g.add(w);
                     }
                 }
                 break;
             }
             case 'TANK': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.6), P.dark);
+                // Medium tank: sloped front hull, road wheels + track skirt, a
+                // compact turret with a short high-velocity gun and antenna.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.56), P.dark);
                 hull.position.y = 0.18; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.2, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.3, 0.04); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.55, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.32, 0.24); g.add(barrel);
-                for (const sx of [-0.22, 0.22]) {
-                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.56), P.dark);
-                    track.position.set(sx, 0.1, 0); g.add(track);
+                const glacis = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 0.12), P.dark);
+                glacis.rotation.x = 0.5; glacis.position.set(0, 0.22, 0.24); g.add(glacis);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.18, 10), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.28, 0.04); g.add(turret);
+                const hatch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.08), P.dark);
+                hatch.position.set(-0.04, 0.3, 0); g.add(hatch);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.5, 8), P.dark);
+                barrel.rotation.x = Math.PI / 2.1; barrel.position.set(0, 0.28, 0.22); g.add(barrel);
+                const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.05, 8), P.metal);
+                muzzle.rotation.x = Math.PI / 2.1; muzzle.position.set(0, 0.28, 0.44); g.add(muzzle);
+                for (const sx of [-0.16, 0.16]) {
+                    // Track skirt + 3 road wheels for that recognizable tank look.
+                    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.54), P.dark);
+                    skirt.position.set(sx, 0.09, 0); g.add(skirt);
+                    for (let i = -1; i <= 1; i++) {
+                        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 10), P.metal);
+                        wheel.rotation.x = Math.PI / 2;
+                        wheel.position.set(sx, 0.085, i * 0.17); g.add(wheel);
+                    }
                 }
+                const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.14, 5), P.metal);
+                whip.position.set(0.14, 0.34, -0.2); g.add(whip);
                 break;
             }
             case 'HEAVY_TANK': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 0.7), P.dark);
+                // Heavy tank: noticeably larger and taller with a slab front,
+                // big rounded turret, thick-barreled main gun and dual road wheels.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.68), P.dark);
                 hull.position.y = 0.2; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.36, 0.04); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.65, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.38, 0.28); g.add(barrel);
-                for (const sx of [-0.26, 0.26]) {
-                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.66), P.dark);
-                    track.position.set(sx, 0.11, 0); g.add(track);
+                const pike = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.14), P.dark);
+                pike.rotation.x = 0.5; pike.position.set(0, 0.25, 0.26); g.add(pike);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.2, 12), P.dark);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.34, 0.03); g.add(turret);
+                const turretdome = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.06, 10), P.metal);
+                turretdome.position.set(0, 0.4, -0.02); g.add(turretdome);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.038, 0.62, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.1; barrel.position.set(0, 0.34, 0.28); g.add(barrel);
+                const muzzleBrake = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.08, 8), P.metal);
+                muzzleBrake.rotation.x = Math.PI / 2.1; muzzleBrake.position.set(0, 0.34, 0.44); g.add(muzzleBrake);
+                for (const sx of [-0.22, 0.22]) {
+                    for (let i = -1; i <= 1; i++) {
+                        // Dual road wheels under a wide track skirt.
+                        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.06, 10), P.metal);
+                        wheel.rotation.x = Math.PI / 2;
+                        wheel.position.set(sx, 0.09, -0.15 + i * 0.15); g.add(wheel);
+                    }
+                    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.09, 0.52), P.dark);
+                    skirt.position.set(sx, 0.12, 0.02); g.add(skirt);
                 }
                 break;
             }
