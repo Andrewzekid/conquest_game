@@ -91,15 +91,40 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
         return messages;
     }
 
+    // Per-city cap: all buildings are limited per city (across all influence
+    // tiles). FARM/LUMBERMILL/MINE keep maxPerCity: 2 (the existing economic
+    // design — two of each per city). All other buildings (BARRACKS, HARBOR,
+    // SIEGE_WORKSHOP, MARKET, WALLS, CITADEL, UNIVERSITY, BANK, COMMAND_POST,
+    // POWER_PLANT, RESEARCH_INSTITUTE, LIBRARY) are capped at 1 per city —
+    // extras give no benefit, so block them and tell the player to upgrade.
+    // Skipped when tiles is null (legacy callers without a tile map).
+    const maxPer = bData.maxPerCity || 1;
+    if (tiles) {
+        const pc = findParentCity(tiles, tile);
+        if (pc) {
+            const cr = cityRadius(pc);
+            let countInCity = 0;
+            for (let dx = -cr; dx <= cr; dx++) {
+                for (let dz = -cr; dz <= cr; dz++) {
+                    const list = buildings.get(`${pc.x + dx},${pc.z + dz}`) || [];
+                    if (list.includes(buildingType)) countInCity++;
+                }
+            }
+            if (countInCity >= maxPer) {
+                messages.push(maxPer === 1
+                    ? `${bData.name} already exists in this city's influence (one per city). Upgrade it instead.`
+                    : `${bData.name} already at max (${maxPer}) per city.`);
+                return messages;
+            }
+        }
+    }
+
     // One of each type per tile
     const existing = buildings.get(tileKey) || [];
     if (existing.length > 0 && !(buildingType === 'CITADEL' && existing.includes('WALLS'))) {
         messages.push(`${bData.name} cannot be built here — a building already occupies this tile.`);
         return messages;
     }
-
-    // One of each type per city (across all influence tiles) — removed in
-    // favour of the 1-building-per-tile rule above.
 
     // CITADEL requires WALLS to be present (it upgrades Walls)
     if (buildingType === 'CITADEL' && !existing.includes('WALLS')) {
@@ -272,6 +297,28 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
             if (!(type === 'CITADEL' && existing.includes('WALLS'))) {
                 canBuild = false;
                 reason = 'Tile occupied';
+            }
+        }
+        // Per-city cap: FARM/LUMBERMILL/MINE keep maxPerCity: 2; everything
+        // else is 1 per city. Mirror constructBuilding's check so the UI
+        // disables the button with the right reason. Skipped when tiles is
+        // null (caller is doing a pure affordability check).
+        if (canBuild && tiles) {
+            const maxPer = bData.maxPerCity || 1;
+            const pc = findParentCity(tiles, tile);
+            if (pc) {
+                const cr = cityRadius(pc);
+                let countInCity = 0;
+                for (let dx = -cr; dx <= cr; dx++) {
+                    for (let dz = -cr; dz <= cr; dz++) {
+                        const list = buildings.get(`${pc.x + dx},${pc.z + dz}`) || [];
+                        if (list.includes(type)) countInCity++;
+                    }
+                }
+                if (countInCity >= maxPer) {
+                    canBuild = false;
+                    reason = maxPer === 1 ? 'One per city' : `Max ${maxPer} per city`;
+                }
             }
         }
         // Tech gate: building requires a tech that hasn't been researched yet.

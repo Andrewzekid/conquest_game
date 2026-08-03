@@ -123,3 +123,31 @@ describe('spectate-ui', () => {
       expect(gameSrc).not.toContain('bestTechs');
     });
   });
+
+  // Barracks bonus must be read from ANY influence tile (not just the city
+  // tile), and must reflect the building's upgrade level via
+  // MILITARY_BUILDING_LEVELS.BARRACKS. The old code checked only
+  // `buildings.get(cityKey)` and hardcoded Lv.2 / 25% — so a Barracks on an
+  // influence tile appeared to grant nothing (reported as "barracks doesn't
+  // give XP or discount").
+  describe('barracks influence + level display', () => {
+    it('ui.js has bestBarracksInInfluence scanning the city influence', () => {
+      expect(uiSrc).toMatch(/export function bestBarracksInInfluence/);
+      expect(uiSrc).toMatch(/getBuildingState\(gameState\.buildingState, k, 'BARRACKS'\)/);
+      expect(uiSrc).toMatch(/MILITARY_BUILDING_LEVELS\.BARRACKS/);
+    });
+
+    it('train menu uses barracksInfo.goldMult (not hardcoded 0.75)', () => {
+      expect(uiSrc).not.toContain("effCost.gold || 0) * 0.75");
+      expect(uiSrc).toMatch(/effCost\.gold \|\| 0\) \* barracksInfo\.goldMult/);
+    });
+
+    it('train menu shows the actual veteran level (not hardcoded Lv.2)', () => {
+      expect(uiSrc).toMatch(/label \+= ` ★Lv\.\$\{bLvl\}`/);
+      expect(uiSrc).not.toContain("★'");
+    });
+
+    it('train menu no longer checks only the city tile', () => {
+      expect(uiSrc).not.toContain("buildings.get(cityKey) || []).includes('BARRACKS')");
+    });
+  });

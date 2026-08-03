@@ -149,16 +149,17 @@ describe('building', () => {
       expect(msgs.some(m => m.includes('Built'))).toBe(true);
     });
 
-    it('allows building on empty tile even if city tile has same type (1 per tile)', () => {
+    it('rejects second BARRACKS in same city (one per city cap)', () => {
       const tiles = new Map([
         ['0,0', makeTile(0, 0, 'CITY')],
         ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
       ]);
       const buildings = new Map([['0,0', ['BARRACKS']]]);
       const resources = { gold: 200, wood: 200, iron: 200 };
-      // Same type on a different, empty tile is now allowed (1 per tile rule)
+      // Same type on a different (empty) tile in the SAME city's influence
+      // is now blocked by the one-per-city cap.
       const msgs = constructBuilding('BARRACKS', makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
-      expect(msgs.some(m => m.includes('Built'))).toBe(true);
+      expect(msgs.some(m => m.includes('one per city'))).toBe(true);
     });
   });
 
@@ -189,7 +190,7 @@ describe('building', () => {
       expect(market.reason).toBe('Tile occupied');
     });
 
-    it('allows building on empty tile even if another tile has same type', () => {
+    it('rejects second BARRACKS in same city (one per city)', () => {
       const tiles = new Map([
         ['0,0', makeTile(0, 0, 'CITY')],
         ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
@@ -198,7 +199,40 @@ describe('building', () => {
       const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
       const result = getBuildableBuildings(makeTile(1, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
       const barracks = result.find(b => b.type === 'BARRACKS');
-      expect(barracks.canBuild).toBe(true);
+      expect(barracks.canBuild).toBe(false);
+      expect(barracks.reason).toBe('One per city');
+    });
+
+    it('allows second FARM in same city (maxPerCity: 2)', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+        ['2,0', makeTile(2, 0, 'PLAINS', 'player')],
+      ]);
+      // City level 4 → influence radius 2 (covers both farm tiles).
+      tiles.get('0,0').cityLevel = 4;
+      const buildings = new Map([['1,0', ['FARM']]]);
+      const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
+      const result = getBuildableBuildings(makeTile(2, 0, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      const farm = result.find(b => b.type === 'FARM');
+      expect(farm.canBuild).toBe(true);
+    });
+
+    it('rejects third FARM in same city (maxPerCity: 2)', () => {
+      const tiles = new Map([
+        ['0,0', makeTile(0, 0, 'CITY')],
+        ['1,0', makeTile(1, 0, 'PLAINS', 'player')],
+        ['2,0', makeTile(2, 0, 'PLAINS', 'player')],
+        ['0,1', makeTile(0, 1, 'PLAINS', 'player')],
+      ]);
+      // City level 4 → influence radius 2 (covers all three farm tiles).
+      tiles.get('0,0').cityLevel = 4;
+      const buildings = new Map([['1,0', ['FARM']], ['2,0', ['FARM']]]);
+      const resources = { gold: 200, wood: 200, iron: 200, food: 100, production: 100 };
+      const result = getBuildableBuildings(makeTile(0, 1, 'PLAINS', 'player'), resources, buildings, null, tiles);
+      const farm = result.find(b => b.type === 'FARM');
+      expect(farm.canBuild).toBe(false);
+      expect(farm.reason).toBe('Max 2 per city');
     });
 
     it('allows building in different city', () => {

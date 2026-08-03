@@ -41,6 +41,33 @@ function hasBuildingInInfluence(gameState, cityTile, buildingType) {
     return false;
 }
 
+/** Best Barracks bonus serving a city: scans the city's influence (Chebyshev)
+ *  for BARRACKS and returns the highest veteran level + gold discount from
+ *  MILITARY_BUILDING_LEVELS based on the building's upgrade level. Returns
+ *  null when no Barracks is present. Mirrors bestMilitaryLevel in game.js so
+ *  the UI shows the same veteran/discount the engine applies. */
+export function bestBarracksInInfluence(gameState, cityTile) {
+    if (!cityTile || !gameState || !gameState.buildings) return null;
+    const levels = MILITARY_BUILDING_LEVELS.BARRACKS;
+    if (!levels) return null;
+    const radius = cityRadius(cityTile);
+    let best = null;
+    for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+            const k = `${cityTile.x + dx},${cityTile.z + dz}`;
+            const list = gameState.buildings.get(k) || [];
+            if (!list.includes('BARRACKS')) continue;
+            const st = getBuildingState(gameState.buildingState, k, 'BARRACKS');
+            const lvl = levels[st.level - 1];
+            if (!lvl) continue;
+            if (!best || lvl.goldMult < best.goldMult) {
+                best = { veteranLevel: lvl.veteranLevel, goldMult: lvl.goldMult, level: st.level };
+            }
+        }
+    }
+    return best;
+}
+
 // Renders a cost object as small colored chips (green if affordable, red if not).
 function costChips(cost, res) {
     const parts = [];
@@ -870,7 +897,10 @@ export function bindUI(gameState, callbacks) {
                 const cityKey = `${tile.x},${tile.z}`;
                 const alreadyTrained = trainedSet.has(cityKey);
                 const cityLevel = tile.cityLevel || 1;
-                const hasBarracks = (gameState.buildings.get(cityKey) || []).includes('BARRACKS');
+                // Barracks bonus is per-city across the influence radius (a
+                // Barracks on an influence tile still grants veteran + discount).
+                const barracksInfo = bestBarracksInInfluence(gameState, tile);
+                const hasBarracks = !!barracksInfo;
                 const def = defOf(PLAYER_FACTION);
                 const roster = (def && def.roster) || Object.keys(UNIT_TYPE);
                 const fullRoster = [...roster, ...EXTRA_UNITS.filter(u => !roster.includes(u))];
@@ -1087,23 +1117,25 @@ export function bindUI(gameState, callbacks) {
                 }
 
                 for (const unitType of fullRoster) {
-                    // Faction unit cost (costGoldMult) + Barracks 25% gold discount + veteran.
+                    // Faction unit cost (costGoldMult) + Barracks gold discount + veteran.
+                    const bPct = hasBarracks && barracksInfo ? Math.round((1 - barracksInfo.goldMult) * 100) : 0;
+                    const bLvl = hasBarracks && barracksInfo ? barracksInfo.veteranLevel : 0;
                     let effCost = getUnitCostFor(unitType, def);
-                    if (hasBarracks) effCost = { ...effCost, gold: Math.floor((effCost.gold || 0) * 0.75) };
+                    if (hasBarracks && barracksInfo) effCost = { ...effCost, gold: Math.floor((effCost.gold || 0) * barracksInfo.goldMult) };
                     const buildTurns = (UNIT_TYPE[unitType].buildTurns || 1);
                     const btn = document.createElement('button');
                     const canTrain = !alreadyTrained && !producing && checkAffordable(effCost, gameState.resources.player);
                     let label = `${UNIT_TYPE[unitType].name} (${formatCost(effCost)})`;
-                    if (hasBarracks) label += ' ★';
+                    if (hasBarracks) label += ` ★Lv.${bLvl}`;
                     if (buildTurns > 1) label += ` ⟳${buildTurns}t`;
                     btn.innerHTML = `${svgIcon(unitType, { size: 14 })} ${label}`;
                     btn.disabled = !canTrain;
-                    btn.title = hasBarracks
-                        ? 'Barracks: trains as veteran (Lv.2) for 25% less gold.'
+                    btn.title = hasBarracks && barracksInfo
+                        ? `Barracks Lv.${barracksInfo.level}: trains as veteran (Lv.${bLvl}) for ${bPct}% less gold.`
                         : 'Train this unit here.';
                     btn.style.cssText = 'display:block; margin:2px; padding:4px; width:100%;';
                     let uDesc = describeUnit(unitType, def);
-                    if (hasBarracks) uDesc += ' <span style="color:#9cf;">Barracks: trains as veteran (Lv.2) for 25% less gold.</span>';
+                    if (hasBarracks && barracksInfo) uDesc += ` <span style="color:#9cf;">Barracks Lv.${barracksInfo.level}: trains as veteran (Lv.${bLvl}) for ${bPct}% less gold.</span>`;
                     if (buildTurns > 1) uDesc += ` <span style="color:#ffd700;">Takes ${buildTurns} turns to build (queued; produced over multiple turns).</span>`;
                     btn.onmouseenter = () => setDesc(uDesc);
                     btn.onmouseleave = () => setDesc('');
