@@ -3552,8 +3552,8 @@ export class Game {
 
         switch (id) {
             case 'bloodlust':
-                this.gameState.tempBonuses[faction] = { attack: 3, defense: 0 };
-                this.log(`${name}: King ${king.name} unleashes Bloodlust! +3 attack this turn.`);
+                this.gameState.tempBonuses[faction] = { attack: 5, defense: 0 };
+                this.log(`${name}: King ${king.name} unleashes Bloodlust! +5 attack this turn.`);
                 break;
             case 'bulwark':
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
@@ -3578,7 +3578,8 @@ export class Game {
                     }
                     this.updateFog(); // union scryRevealed into visible for the render
                 }
-                this.log(`${name}: King ${king.name} Scries enemy cities �?revealed for this turn!`);
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0, rangedAttack: 2, siegeAttack: 2 };
+                this.log(`${name}: King ${king.name} unleashes an Arcane Surge! Ranged/siege +2 attack.`);
                 break;
             case 'raise': {
                 const fallen = this.gameState.graveyard.filter(g => g.owner === faction);
@@ -3613,7 +3614,7 @@ export class Game {
                 this.log(`${name}: King ${king.name} Vanishes into shadow! +2 defense this turn.`);
                 break;
             case 'tempest': {
-                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                this.gameState.tempBonuses[faction] = { attack: 1, defense: 0 };
                 let struck = 0;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner === faction) continue;
@@ -5094,7 +5095,9 @@ export class Game {
             case 'raise':
                 return this.gameState.graveyard.some(g => g.owner === faction);
             case 'scry':
-                return false; // AI already has full map knowledge; don't pollute player fog
+                // Arcane Surge now grants +2 ranged/siege attack, so the AI
+                // should fire it when pushing a city (siege/ranged units benefit).
+                return enemyCityNear || enemyUnits.length >= 3;
             case 'discipline':
             case 'berserker_rage':
                 return enemyCityNear || enemyUnits.length >= 3;

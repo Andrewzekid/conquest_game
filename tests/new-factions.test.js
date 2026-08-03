@@ -65,10 +65,10 @@ describe('new factions — passive helpers', () => {
     expect(getDiplomacyBonus(null)).toBe(0);
   });
 
-  it('viking: healOnKill 3 + raidingGoldBonus 10', () => {
+  it('viking: healOnKill 3 + raidingGoldBonus 15', () => {
     const v = getFactionDef('viking');
     expect(getHealOnKill(v)).toBe(3);
-    expect(getRaidingGoldBonus(v)).toBe(10);
+    expect(getRaidingGoldBonus(v)).toBe(15);
   });
 
   it('byzantine: diplomacyBonus 10 + fortifiedDefenseBonus 2', () => {
