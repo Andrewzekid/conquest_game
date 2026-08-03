@@ -4575,11 +4575,24 @@ function isFavorableAttack(attacker, defender, units, tiles, lords, buildings, t
  *  `radius` of (x,z). Used to gauge local strength for stance + retreat. */
 function localPowerBalance(units, x, z, owner, atWar, isAtWar, radius = 2) {
     let friend = 0, foe = 0;
+    // Gather foe types present so friend power is weighted by type advantage
+    // (relative strengths vs opponent). Only foes within the radius count.
+    const foeTypes = new Set();
     for (const u of units.values()) {
         if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
-        const power = (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0));
-        if (u.owner === owner) friend += power;
-        else if (atWar && (!isAtWar || isAtWar(u.owner))) foe += power;
+        if (u.owner === owner) continue;
+        if (atWar && (!isAtWar || isAtWar(u.owner))) foeTypes.add(u.type);
+    }
+    for (const u of units.values()) {
+        if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
+        const base = (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0));
+        if (u.owner === owner) {
+            // Multiply friendly power by the best advantage we hold over the
+            // nearby foe roster — a pike group truly outvalues a cavalry stack.
+            friend += base * bestAdvantageMultiplier(u.type, foeTypes);
+        } else if (atWar && (!isAtWar || isAtWar(u.owner))) {
+            foe += base;
+        }
     }
     return { friend, foe };
 }
@@ -4667,6 +4680,19 @@ function nearestFriendlyCity(unit, tiles, owner, enemyUnits) {
 /** Does `attackerType` have a type advantage vs `defenderType`? */
 function typeMatch(attackerType, defenderType) {
     return !!(TYPE_ADVANTAGE[attackerType] && (Array.isArray(TYPE_ADVANTAGE[attackerType].strongAgainst) ? TYPE_ADVANTAGE[attackerType].strongAgainst.includes(defenderType) : TYPE_ADVANTAGE[attackerType].strongAgainst === defenderType));
+}
+
+/** Best TYPE_ADVANTAGE multiplier a unit type enjoys against ANY of the enemy
+ *  types. Returns 1.0 when it has no advantage. Used to weight power by
+ *  relative strengths so a counter-comp group is rated stronger vs its prey. */
+function bestAdvantageMultiplier(unitType, enemyTypes) {
+    if (!enemyTypes || enemyTypes.size === 0) return 1.0;
+    const adv = TYPE_ADVANTAGE[unitType];
+    if (!adv) return 1.0;
+    const strong = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+    let best = 1.0;
+    for (const t of strong) if (enemyTypes.has(t) && adv.multiplier > best) best = adv.multiplier;
+    return best;
 }
 
 /** Rough proxy for _isInEnemyVision (ai.js can't call the engine method):

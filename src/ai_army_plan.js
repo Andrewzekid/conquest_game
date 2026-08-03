@@ -8,7 +8,7 @@
  *  converge on shared objectives instead of each picking their own target.
  */
 
-import { UNIT_TYPE } from './config.js';
+import { UNIT_TYPE, TYPE_ADVANTAGE } from './config.js';
 
 function manhattan(x1, z1, x2, z2) {
     return Math.abs(x2 - x1) + Math.abs(z2 - z1);
@@ -28,6 +28,62 @@ function groupPower(group) {
         const atk = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0);
         return s + (u.hp || 1) + atk * 2;
     }, 0);
+}
+
+/** Best TYPE_ADVANTAGE multiplier a unit enjoys against ANY of the enemy types
+ *  present. Returns 1.0 if the unit has no advantage against any of them. */
+function bestAdvantageMultiplier(unitType, enemyTypes) {
+    const adv = TYPE_ADVANTAGE[unitType];
+    if (!adv || !enemyTypes || enemyTypes.size === 0) return 1.0;
+    const strong = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+    let best = 1.0;
+    for (const t of strong) if (enemyTypes.has(t) && adv.multiplier > best) best = adv.multiplier;
+    return best;
+}
+
+/** Combat power of a group adjusted for type advantage against a known set of
+ *  enemy unit types. Each member's raw power (hp + attack*2) is multiplied by
+ *  its best TYPE_ADVANTAGE multiplier vs the enemy roster, so a pike-heavy
+ *  group reads as far stronger against a cavalry army than against archers.
+ *  Exported for tests. */
+export function groupPowerVs(group, enemyTypes) {
+    if (!group || !group.units) return 0;
+    const types = enemyTypes instanceof Set ? enemyTypes : new Set(enemyTypes || []);
+    return group.units.reduce((s, u) => {
+        const atk = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0);
+        const mult = bestAdvantageMultiplier(u.type, types);
+        return s + ((u.hp || 1) + atk * 2) * mult;
+    }, 0);
+}
+
+/** Collect the set of enemy unit types within Manhattan `radius` of a tile.
+ *  Used to weight group power by the actual opposition nearby (relative
+ *  strengths vs opponent unit types). Exported for tests. */
+export function enemyTypesNear(tiles, units, owner, isAtWar, cx, cz, radius = 5) {
+    const types = new Set();
+    for (const u of units.values()) {
+        if (u.owner === owner) continue;
+        if (!isAtWar || !isAtWar(u.owner)) continue;
+        if (u.boarded) continue;
+        if (Math.abs(u.x - cx) + Math.abs(u.z - cz) > radius) continue;
+        types.add(u.type);
+    }
+    return types;
+}
+
+/** Sum of hostile military power within `radius` of a tile — the "enemy is
+ *  here" signal for weak-spot targeting. Exported for tests. */
+export function hostilePowerNear(units, owner, isAtWar, cx, cz, radius = 5) {
+    let power = 0;
+    for (const u of units.values()) {
+        if (u.owner === owner) continue;
+        if (!isAtWar || !isAtWar(u.owner)) continue;
+        if (u.boarded) continue;
+        if (Math.abs(u.x - cx) + Math.abs(u.z - cz) > radius) continue;
+        const atk = (UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0);
+        power += (u.hp || 1) + atk * 2;
+    }
+    return power;
 }
 
 /** Count of military units in a group (excludes settlers/workers/scouts). */
@@ -86,8 +142,13 @@ export function computeStrategicTarget(groups, tiles, units, owner, isAtWar, aiS
     for (const city of enemyCities) {
         const fort = city.fortification || 0;
         const garrison = cityGarrison(city, units);
-        // We don't have units directly; approximate garrison from tile owner.
-        // A better approach passes units, but for now use fortification as proxy.
+        // Weak-spot targeting: penalize cities where a large enemy army is
+        // massed nearby ("attack where the enemy is NOT"). A city sitting
+        // under a stack is a bad target even if lightly fortified.
+        const nearbyEnemy = hostilePowerNear(units, owner, isAtWar, city.x, city.z, 5);
+        // Enemy unit types near the city — used to weight our reachable
+        // power by type advantage (relative strengths vs opponent).
+        const enemyTypes = enemyTypesNear(tiles, units, owner, isAtWar, city.x, city.z, 5);
 
         // Sum of distances from each group centroid to this city.
         let totalDist = 0;
@@ -97,12 +158,15 @@ export function computeStrategicTarget(groups, tiles, units, owner, isAtWar, aiS
             const d = manhattan(c.x, c.z, city.x, city.z);
             totalDist += d;
             // Groups within 15 tiles are "reachable" this turn sequence.
-            if (d <= 15) reachablePower += groupPower(g);
+            // Power is weighted by type advantage vs the defenders nearby so
+            // a counter-comp group rates higher against its favoured prey.
+            if (d <= 15) reachablePower += groupPowerVs(g, enemyTypes);
         }
         const avgDist = totalDist / groups.length;
 
         // Score components:
-        // 1. Reachable power: prefer cities our armies can actually reach.
+        // 1. Reachable power: prefer cities our armies can actually reach,
+        //    weighted by type advantage over the defending roster.
         const powerScore = reachablePower * 2;
         // 2. Weakness: low fortification and garrison are easier targets.
         const weaknessScore = (5 - Math.min(5, fort)) * 40 + (10 - Math.min(10, garrison)) * 10;
@@ -115,8 +179,11 @@ export function computeStrategicTarget(groups, tiles, units, owner, isAtWar, aiS
         const goalBonus = goalTargetKey === goalKey ? 300 : 0;
         // 6. Already committed: if our armies are already near, prefer finishing.
         const committedBonus = reachablePower > totalPower * 0.5 ? 150 : 0;
+        // 7. Weak-spot: subtract nearby enemy concentration so the AI avoids
+        //    well-defended stacks and hits the soft targets first.
+        const enemyConcentrationPenalty = nearbyEnemy * 3;
 
-        const score = powerScore + weaknessScore - distPenalty + capitalBonus + goalBonus + committedBonus;
+        const score = powerScore + weaknessScore - distPenalty + capitalBonus + goalBonus + committedBonus - enemyConcentrationPenalty;
 
         if (score > bestScore) { bestScore = score; best = city; }
     }
@@ -183,6 +250,17 @@ export function assignReserve(groups, tiles, owner) {
 export function detectFlankingOpportunity(groups, target, units, owner) {
     if (!groups.length || !target) return [];
 
+    // Enemy unit types defending near the target. The target is always hostile
+    // (we're attacking it), so every non-owner unit nearby counts as defense.
+    // Used to weight assault-vs-flank assignment by type advantage: the group
+    // that counters the defenders better leads the assault.
+    const enemyTypes = new Set();
+    for (const u of units.values()) {
+        if (u.owner === owner || u.boarded) continue;
+        if (Math.abs(u.x - target.x) + Math.abs(u.z - target.z) > 5) continue;
+        enemyTypes.add(u.type);
+    }
+
     // Compute each group's approach angle to the target.
     const groupAngles = [];
     for (const g of groups) {
@@ -191,7 +269,8 @@ export function detectFlankingOpportunity(groups, target, units, owner) {
         const dz = c.z - target.z;
         const angle = Math.atan2(dz, dx); // radians, -PI to PI
         const dist = manhattan(c.x, c.z, target.x, target.z);
-        groupAngles.push({ group: g, angle, dist, power: groupPower(g) });
+        // Power weighted by type advantage vs the defenders.
+        groupAngles.push({ group: g, angle, dist, power: groupPowerVs(g, enemyTypes) });
     }
 
     // Sort by distance (closest first).
@@ -213,7 +292,9 @@ export function detectFlankingOpportunity(groups, target, units, owner) {
             const angleDiff = Math.abs(closeGroups[i].angle - closeGroups[j].angle);
             const normalizedDiff = angleDiff > Math.PI ? 2 * Math.PI - angleDiff : angleDiff;
             if (normalizedDiff >= Math.PI / 2) {
-                // Found a flanking pair. Assign the stronger group as assault.
+                // Found a flanking pair. The group that is stronger against the
+                // defenders (relative type advantage) leads the assault; the
+                // other circles around for the flank.
                 const [a, b] = closeGroups[i].power >= closeGroups[j].power
                     ? [closeGroups[i], closeGroups[j]]
                     : [closeGroups[j], closeGroups[i]];

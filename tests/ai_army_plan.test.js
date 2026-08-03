@@ -191,3 +191,62 @@ describe('computeFlankObjective', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('relative-strength power (type advantage)', () => {
+  it('exported groupPowerVs applies advantage vs matching enemy types', async () => {
+    const { groupPowerVs } = await import('../src/ai_army_plan.js');
+    // One pike unit (hp 12, atk 4 vs a cavalry-heavy enemy set).
+    const group = makeGroup('g', [makeUnit(1, 'PIKEMAN', 'golden', 0, 0, { hp: 12, atk: 4, attack: 4 })]);
+    const noAdv = groupPowerVs(group, new Set(['ARCHER']));
+    const withAdv = groupPowerVs(group, new Set(['CAVALRY']));
+    // PIKEMAN has 1.6x vs CAVALRY, so withAdv > noAdv.
+    expect(noAdv).toBe(12 + 4 * 2);
+    expect(withAdv).toBeGreaterThan(noAdv);
+    // 1.6 multiplier applied.
+    expect(withAdv).toBeCloseTo((12 + 4 * 2) * 1.6);
+  });
+
+  it('groupPowerVs with no enemy types equals raw power (multiplier 1)', async () => {
+    const { groupPowerVs } = await import('../src/ai_army_plan.js');
+    const group = makeGroup('g', [makeUnit(1, 'INFANTRY', 'golden', 0, 0, { hp: 10, attack: 3 })]);
+    expect(groupPowerVs(group, null)).toBe(10 + 3 * 2);
+    expect(groupPowerVs(group, new Set())).toBe(10 + 3 * 2);
+  });
+
+  it('enemyTypesNear collects only at-war enemy types within radius', async () => {
+    const { enemyTypesNear } = await import('../src/ai_army_plan.js');
+    const units = new Map();
+    units.set(1, makeUnit(1, 'CAVALRY', 'azure', 2, 2)); // within radius 5 of (0,0)
+    units.set(2, makeUnit(2, 'ARCHER', 'azure', 10, 10)); // out of range
+    units.set(3, makeUnit(3, 'PIKEMAN', 'golden', 1, 1)); // friend, ignored
+    const isAtWar = (o) => o === 'azure';
+    const types = enemyTypesNear(new Map(), units, 'golden', isAtWar, 0, 0, 5);
+    expect(types.has('CAVALRY')).toBe(true);
+    expect(types.has('ARCHER')).toBe(false); // outside radius
+    expect(types.has('PIKEMAN')).toBe(false); // friendly
+  });
+});
+
+describe('weak-spot targeting (attack where the enemy is NOT)', () => {
+  it('prefers a lightly-defended city over one under a massed stack', () => {
+    // Two enemy cities equidistant from our group. One sits under a large
+    // enemy stack; the other is lightly guarded.
+    const tiles = makeTiles([
+      ['0,0', makeCity(0, 0, 'golden')],
+      ['10,10', makeCity(10, 10, 'azure', { fortification: 1 })],
+      ['10,8', makeCity(10, 8, 'azure', { fortification: 1 })],
+    ]);
+    // Our group is close to both (near (9,9)).
+    const unit = makeUnit(1, 'INFANTRY', 'golden', 9, 9);
+    const units = new Map();
+    units.set(1, unit);
+    // Mass a stack under city (10,8).
+    for (let i = 0; i < 6; i++) units.set(100 + i, makeUnit(2 + i, 'INFANTRY', 'azure', 10 + i % 2, 8));
+    const isAtWar = (o) => o === 'azure';
+    const groupsArr = [makeGroup('g1', [unit])];
+    const result = computeStrategicTarget(groupsArr, tiles, units, 'golden', isAtWar, {});
+    // The weak-spot penalty should steer the AI to the unstacked city (10,10).
+    expect(result).toBeTruthy();
+    expect(`${result.x},${result.z}`).toBe('10,10');
+  });
+});
