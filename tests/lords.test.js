@@ -127,9 +127,9 @@ describe('lords', () => {
       const before = { ...lord.stats };
       awardXP(lord, 50);
       expect(lord.level).toBe(2);
-      expect(lord.stats.command).toBe(before.command + 5);
-      expect(lord.stats.combat).toBe(before.combat + 5);
-      expect(lord.stats.governance).toBe(before.governance + 5);
+      expect(lord.stats.command).toBe(before.command + 3);
+      expect(lord.stats.combat).toBe(before.combat + 3);
+      expect(lord.stats.governance).toBe(before.governance + 3);
     });
 
     it('ability unlocks at correct level', () => {

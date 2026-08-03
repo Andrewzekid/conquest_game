@@ -1188,10 +1188,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const conquestSettlerScale = conquestCampaigning && !navalConquest ? 0.5 : 1.0;
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
+    // Early-game army gating: the AI used to prioritize settlers so heavily
+    // that it fielded almost no military for the first ~15 turns, then got
+    // rolled by neighbors. Now, until the faction has a small standing army
+    // (≥3 military units per city), settler production is suppressed so the
+    // first wave of production goes into defense. The boost is preserved for
+    // the very first settler (a 1-city faction MUST expand), but additional
+    // settlers wait until the army floor is met. Scarcity overrides this —
+    // expansion is the durable fix for a bleeding economy.
+    const militaryForGating = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u)).length;
+    const armyFloor = Math.max(2, myCityCount * 2);
+    const armyMet = militaryForGating >= armyFloor;
+    const earlyGameArmyGate = (!scarcityTriggered && !armyMet && myCityCount >= 1);
     // The turns-1-50 long-term boost scales settler target/cap/per-turn with the
     // quality of the land available (see evaluateSettleDesirability above).
     let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1));
     let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1))) + hardCapBonus + settleGoalBoost;
+    // When the army is below floor, collapse the cap to 1 (the first settler
+    // only) so production flows to military instead of sprawl.
+    if (earlyGameArmyGate) settlerCapEff = 1;
     const settlerCap = settlerCapEff;
     // Stop training settlers entirely when no valid found spot exists on our
     // home landmass — the AI cannot found a city, so training more settlers
@@ -1219,10 +1234,34 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         (conquestCampaigning && !navalConquest && !scarcityTriggered ? 0.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
+    // Stuck-settler check: count live settlers that have no reachable found
+    // spot on their own landmass AND no adjacent transport to board. If any are
+    // already stuck, training more just wastes resources — they'll mill about
+    // indefinitely (the mid-game settler-spam bug: 70-100 turns in, the AI
+    // keeps pumping settlers even though every accessible spot is taken).
+    // Settlers waiting at shore for a ferry are NOT counted as stuck (the
+    // transport just hasn't arrived yet); only truly stranded ones block
+    // further production. Scarcity overrides — expansion is still the fix.
+    let stuckSettlers = 0;
+    if (!scarcityTriggered) {
+        for (const u of myUnits) {
+            if (u.type !== 'SETTLER' || u.boarded) continue;
+            const uMass = land.idOf.get(`${u.x},${u.z}`);
+            if (homeMassHasFoundSpot(tiles, owner, land, uMass)) continue;
+            const hasTransport = adjacentTransport(u, units, owner) ||
+                myUnits.some(t => (t.type === 'TRANSPORT' || t.type === 'STEAM_TRANSPORT') &&
+                    t.owner === owner && !t.boarded &&
+                    Math.abs(t.x - u.x) + Math.abs(t.z - u.z) <= 6);
+            if (!hasTransport) stuckSettlers++;
+        }
+    }
     while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTargetEff + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
         // If there's no valid found spot on our landmass and we have no
         // transport-based expansion opportunity, stop immediately.
         if (!hasFoundSpot && !expandIslandsExtras) break;
+        // If settlers are already stranded (no spot, no transport), stop
+        // spamming — train military/economy instead.
+        if (stuckSettlers > 0 && !scarcityTriggered) break;
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         // Cap settlers: allow extra slots when transports are available for
         // expand-islands — those settlers will board transports and found overseas.
@@ -2504,12 +2543,33 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // rest of the army is freed for offense.
     const king = (lords || []).find(l => l.owner === owner && l.isKing);
     let kingGuardGroup = null;
+    // The king's own group (if it leads one) — eligible to join conquest when
+    // the king is healthy, well-guarded, and the faction is at war. Previously
+    // the king was ALWAYS kept at home, so the strongest combatant on the map
+    // (high HP, big attack/defense, army bonuses) sat idle while the army
+    // campaigned without its bonuses. Now the king rides out when it's safe.
+    let kingGroup = null;
+    if (king) {
+        for (const g of groups) {
+            if (g.lords && g.lords.some(l => l.isKing && l.owner === owner)) { kingGroup = g; break; }
+        }
+    }
+    // King campaign eligibility: at war, king healthy, enough bodyguards in the
+    // king's group, and the home front isn't under immediate threat (the king
+    // defends home first). Mid-to-late game (turn > 25 or 3+ cities) — early
+    // game the king stays put since one bad engagement loses the game.
+    const kingHpRatio = king ? (king.hp || 0) / (king.maxHp || 1) : 0;
+    const kingArmySize = kingGroup ? kingGroup.units.length : 0;
+    const homeUnderThreat = king ? hasNearbyThreats(owner, tiles, units, isAtWar, 8) : false;
+    const kingCampaignEligible = !!(king && kingGroup && atWar && !homeUnderThreat &&
+        kingHpRatio >= 0.7 && kingArmySize >= 3 &&
+        (currentTurn > 25 || myCityCount >= 3));
     if (king) {
         const nearbyThreat = hasNearbyThreats(owner, tiles, units, isAtWar, 10);
         const guardsNear = militaryPool.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' &&
             Math.abs(u.x - king.x) + Math.abs(u.z - king.z) <= 2).length;
         const guardNeed = nearbyThreat ? 3 : 2;
-        if (guardsNear < guardNeed) {
+        if (guardsNear < guardNeed && !kingCampaignEligible) {
             // Find the nearest patrol group to assign as king's guard
             let bestDist = Infinity;
             for (const g of groups) {
@@ -2522,6 +2582,27 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     const assignedFronts = new Set();
+    // King campaigns: when the king is healthy, well-guarded, and at war with
+    // no immediate home threat, the king's own group joins the conquest force.
+    // The king's combat bonuses (army attack/defense aura, high HP, strong
+    // personal attack) make it the most effective army leader, and keeping it
+    // idle wastes that power. Added BEFORE the front round-robin so the king's
+    // group takes a front slot like any other conquest group.
+    if (kingCampaignEligible && kingGroup && !conquest.has(kingGroup) && hasConquestTargets) {
+        conquest.add(kingGroup);
+        // Assign the king's group to the nearest front so it has a target.
+        if (fronts.length > 0) {
+            const kc = groupCentroid(kingGroup);
+            let bestFi = -1, bestFd = Infinity;
+            for (let fi = 0; fi < fronts.length; fi++) {
+                if (assignedFronts.has(fi)) continue;
+                const rep = fronts[fi].cities[0];
+                const d = Math.abs(rep.x - kc.x) + Math.abs(rep.z - kc.z);
+                if (d < bestFd) { bestFd = d; bestFi = fi; }
+            }
+            if (bestFi >= 0) assignedFronts.add(bestFi);
+        }
+    }
     // Pass 1: assign one group to each front (round-robin by power) so every
     // front is covered before any front gets a second group. The old power-
     // based fallback could stack 2 groups on front A while front B stayed empty.
@@ -6056,9 +6137,28 @@ function findNearestEnemyTileForScout(unit, tiles, owner, isAtWar) {
  *  can found a new city. */
 function homeMassHasFoundSpot(tiles, owner, land, massId) {
     if (massId == null) return false;
+    // Collect anchor origins: owned cities plus any live settlers already in
+    // the field. A found spot reachable from ANY of these is "accessible"; a
+    // spot on a reachable sub-continent but cut off by water/mountains is NOT
+    // (settlers would train and then mill about with nowhere to go — the
+    // mid-game settler-spam bug).
+    const origins = [];
+    for (const t of tiles.values()) {
+        if (t.owner === owner && t.terrain === 'CITY') {
+            if (land.idOf.get(`${t.x},${t.z}`) === massId) origins.push([t.x, t.z]);
+        }
+    }
+    if (origins.length === 0) return false;
     for (const t of tiles.values()) {
         if (land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
-        if (canFoundOn(t, owner, tiles)) return true;
+        if (!canFoundOn(t, owner, tiles)) continue;
+        // Reachability check: at least one owned city can path to this tile by
+        // land (rivers are passable — engineers bridge them). This filters out
+        // valid-but-unreachable spots that previously caused the AI to keep
+        // training settlers it could never use.
+        for (const [ox, oz] of origins) {
+            if (isReachableByLand(tiles, ox, oz, t.x, t.z)) return true;
+        }
     }
     return false;
 }

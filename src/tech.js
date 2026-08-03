@@ -540,11 +540,18 @@ export function getKingTechBonuses(state) {
     const techState = state || { researched: new Set() };
     const bonuses = getTechBonuses(techState);
     const researchedCount = techState.researched ? techState.researched.size : 0;
+    // Nerfed scaling: previously +1 HP / +0.25 atk / +0.25 def PER tech beyond
+    // 3 (linear), which gave +39 HP / +9.75 atk / +9.75 def at 42 techs — making
+    // late-game kings nearly unkillable and one-shotting most units. Now uses
+    // a square-root curve so tech progression still rewards the king but stays
+    // bounded: at 42 techs → +6 HP / +4.37 atk / +4.37 def (roughly half the
+    // linear atk/def, and HP capped at +6).
     const extraTechs = Math.max(0, researchedCount - 3);
+    const sqrtTechs = Math.sqrt(extraTechs);
     return {
-        hp: (bonuses.kingHpBonus || 0) + extraTechs,
-        attack: (bonuses.kingAttackBonus || 0) + extraTechs * 0.25,
-        defense: (bonuses.kingDefenseBonus || 0) + extraTechs * 0.25
+        hp: (bonuses.kingHpBonus || 0) + Math.min(6, Math.floor(sqrtTechs * 1.0)),
+        attack: (bonuses.kingAttackBonus || 0) + Math.min(5, sqrtTechs * 0.7),
+        defense: (bonuses.kingDefenseBonus || 0) + Math.min(5, sqrtTechs * 0.7)
     };
 }
 

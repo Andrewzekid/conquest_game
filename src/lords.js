@@ -138,16 +138,18 @@ export function awardXP(lord, amount) {
     while (lord.xp >= LORD_XP_PER_LEVEL * lord.level) {
         lord.xp -= LORD_XP_PER_LEVEL * lord.level;
         lord.level++;
-        // Stat increase: +5 to all base stats each level (lords scale more
-        // noticeably with experience).
-        lord.stats.command += 5;
-        lord.stats.combat += 5;
-        lord.stats.governance += 5;
+        // Stat increase: +3 to all base stats each level. Was +5, which made
+        // high-level lords trivially overwhelming (a level-10 lord gained +45
+        // to every stat — more than most units' total attack/defense). +3 keeps
+        // leveling meaningful without breaking late-game balance.
+        lord.stats.command += 3;
+        lord.stats.combat += 3;
+        lord.stats.governance += 3;
         // Lords grow sturdier with level (and heal on level-up).
         const newMax = lordMaxHp(lord);
-        lord.hp = Math.min(newMax, (lord.hp || 0) + 10);
+        lord.hp = Math.min(newMax, (lord.hp || 0) + 6);
         lord.maxHp = newMax;
-        messages.push(`${lord.name} reached level ${lord.level}! command +5, combat +5, governance +5, hp +10`);
+        messages.push(`${lord.name} reached level ${lord.level}! command +3, combat +3, governance +3, hp +6`);
         // Feature 4: each level grants a skill-tree point to spend.
         lord.skillPoints = (lord.skillPoints || 0) + 1;
         messages.push(`${lord.name} gained a skill point!`);

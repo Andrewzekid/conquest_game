@@ -15,7 +15,7 @@ const BREACH_COLOR = 0xff3322;
 const TILE_COLUMN_BOTTOM = -0.1;
 
 // Top-surface Y for a terrain type. Shared by createMapMesh and updateTileTerrain
-// (the old inline ladder in updateTileTerrain drifted from this one — the bug).
+// (the old inline ladder in updateTileTerrain drifted from this one �?the bug).
 export function heightFor(terrain) {
     if (terrain === 'MOUNTAIN') return 0.5;
     if (terrain === 'CITY') return 0.55;
@@ -93,6 +93,58 @@ export class GameRenderer {
         this.cityProps = new Map(); // `${x},${z}` -> keep mesh (for breach tint)
 
         window.addEventListener('resize', () => this.onWindowResize());
+    }
+
+    /** True if a material is a shared cached sprite material (icon/text) that
+     *  must NOT be disposed when its sprite is removed �?it's reused across
+     *  renders. Disposing it would corrupt every subsequent icon/label. */
+    _isCachedMaterial(mat) {
+        if (!mat) return false;
+        if (this._iconMatCache) { for (const k in this._iconMatCache) if (this._iconMatCache[k] === mat) return true; }
+        if (this._textMatCache) { for (const k in this._textMatCache) if (this._textMatCache[k] === mat) return true; }
+        return false;
+    }
+
+    /** Dispose geometries and non-cached materials of all children of a Group,
+     *  then clear it. group.clear() alone detaches children but leaves their
+     *  GPU resources alive �?over ~200 turns this leaked enough WebGL memory
+     *  to crash the context (white screen, vanished icons/city names). Cached
+     *  sprite materials (_iconMatCache / _textMatCache) are shared across
+     *  renders and are intentionally preserved. */
+    _disposeGroupChildren(group) {
+        if (!group) return;
+        group.traverse(obj => {
+            if (obj.isMesh) {
+                if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
+                if (obj.material) {
+                    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                    for (const m of mats) {
+                        if (!this._isCachedMaterial(m) && typeof m.dispose === 'function') m.dispose();
+                    }
+                }
+            }
+        });
+        group.clear();
+    }
+
+    /** Remove a single object from its parent, disposing its geometry and
+     *  non-cached materials. Used for transient VFX in effectsGroup (which is
+     *  NOT bulk-cleared each render, so its children must be cleaned up
+     *  individually when their lifetime ends). */
+    _disposeAndRemove(obj) {
+        if (!obj) return;
+        if (obj.parent) obj.parent.remove(obj);
+        obj.traverse(child => {
+            if (child.isMesh) {
+                if (child.geometry && typeof child.geometry.dispose === 'function') child.geometry.dispose();
+                if (child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    for (const m of mats) {
+                        if (!this._isCachedMaterial(m) && typeof m.dispose === 'function') m.dispose();
+                    }
+                }
+            }
+        });
     }
 
     onWindowResize() {
@@ -232,7 +284,7 @@ export class GameRenderer {
             } else if (style === 4) {
                 // Industrial town: a squat main building with two chimneys
                 // belching smoke (a faint dark cone). Reads as a 19th-c factory
-                // town — distinct from the medieval castles.
+                // town �?distinct from the medieval castles.
                 keep = new THREE.Mesh(new THREE.BoxGeometry(0.46, keepH * 0.55, 0.36), stone);
                 keep.position.y = keepH * 0.275 + 0.1;
                 group.add(keep);
@@ -297,7 +349,7 @@ export class GameRenderer {
                 group.add(lamp);
             } else {
                 // Hillfort / steppe camp: a terraced ring of small huts with a
-                // central banner pole. Reads as a tribal/regional capital —
+                // central banner pole. Reads as a tribal/regional capital �?
                 // distinct from the masonry of the other styles.
                 const earthMat = new THREE.MeshPhongMaterial({ color: 0x9a7a5a });
                 keep = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, keepH * 0.4, 8), earthMat);
@@ -328,7 +380,7 @@ export class GameRenderer {
                 wall.position.y = 0.12;
                 group.add(wall);
             }
-            // Level-6+ cities get a third outer ring + corner markers — they
+            // Level-6+ cities get a third outer ring + corner markers �?they
             // read as major capitals at a glance.
             if (level >= 6) {
                 const outer = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.04, 6, 20),
@@ -383,7 +435,7 @@ export class GameRenderer {
                 new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.6 }));
             top.position.set(sx, 0.64, 0); g.add(top);
         }
-        const emoji = (wonder && wonder.emoji) || '✨';
+        const emoji = (wonder && wonder.emoji) || '�?;
         g.add(this.makeIconSprite(emoji, 0.6, 1.25));
         return g;
     }
@@ -401,7 +453,7 @@ export class GameRenderer {
             // sits at the mesh origin (world Y = y) and it hangs downward to the
             // base. Raised tiles (mountain/city) thus read as solid columns
             // reaching down to the base instead of floating slabs, while the
-            // mesh.position.y stays at the top surface y — so all scenery
+            // mesh.position.y stays at the top surface y �?so all scenery
             // children (parented to the mesh) and all tileHeights consumers keep
             // their existing offsets unchanged.
             const y = heightFor(t.terrain);
@@ -465,7 +517,7 @@ export class GameRenderer {
             const alive = [];
             for (const fx of this._effects) {
                 const t = (now - fx.born) / fx.life; // 0..1
-                if (t >= 1) { this.effectsGroup.remove(fx.obj); continue; }
+                if (t >= 1) { this._disposeAndRemove(fx.obj); continue; }
                 if (fx.kind === 'ring') {
                     const s = 0.4 + t * 1.6;
                     fx.obj.scale.set(s, s, s);
@@ -543,7 +595,7 @@ export class GameRenderer {
         const life = 320;
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
-            if (t >= 1 || !arrow.parent) { if (arrow.parent) this.effectsGroup.remove(arrow); return; }
+            if (t >= 1 || !arrow.parent) { if (arrow.parent) this._disposeAndRemove(arrow); return; }
             arrow.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
             requestAnimationFrame(step);
         };
@@ -602,7 +654,7 @@ export class GameRenderer {
         this.effectsGroup.add(rock);
         const step = () => {
             const tt = (performance.now() - t0) / rockLife;
-            if (tt >= 1 || !rock.parent) { if (rock.parent) this.effectsGroup.remove(rock); return; }
+            if (tt >= 1 || !rock.parent) { if (rock.parent) this._disposeAndRemove(rock); return; }
             rock.position.x = fx0 + (cx - fx0) * tt;
             rock.position.z = fz0 + (cz - fz0) * tt;
             rock.position.y = y + 1.0 + Math.sin(tt * Math.PI) * 1.2;
@@ -646,7 +698,7 @@ export class GameRenderer {
     }
 
     // ===================================================================
-    //  NEW ATTACK ANIMATIONS — added for all unit ages and types
+    //  NEW ATTACK ANIMATIONS �?added for all unit ages and types
     // ===================================================================
 
     /** Gunfire: small fast bullet + muzzle flash + smoke (MUSKETEER, RIFLEMAN, etc.) */
@@ -675,9 +727,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !bullet.parent) {
-                if (bullet.parent) this.effectsGroup.remove(bullet);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (smoke.parent) this.effectsGroup.remove(smoke);
+                if (bullet.parent) this._disposeAndRemove(bullet);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (smoke.parent) this._disposeAndRemove(smoke);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcccccc, 300);
                 return;
             }
@@ -716,8 +768,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !ball.parent) {
-                if (ball.parent) this.effectsGroup.remove(ball);
-                if (flash.parent) this.effectsGroup.remove(flash);
+                if (ball.parent) this._disposeAndRemove(ball);
+                if (flash.parent) this._disposeAndRemove(flash);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 500);
                 return;
             }
@@ -751,7 +803,7 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !shell.parent) {
-                if (shell.parent) this.effectsGroup.remove(shell);
+                if (shell.parent) this._disposeAndRemove(shell);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
                 return;
             }
@@ -782,8 +834,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !bolt.parent) {
-                if (bolt.parent) this.effectsGroup.remove(bolt);
-                if (glow.parent) this.effectsGroup.remove(glow);
+                if (bolt.parent) this._disposeAndRemove(bolt);
+                if (glow.parent) this._disposeAndRemove(glow);
                 if (t >= 1) {
                     const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8),
                         new THREE.MeshBasicMaterial({ color: 0xaaddff, transparent: true, opacity: 0.8 }));
@@ -827,8 +879,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !torp.parent) {
-                if (torp.parent) this.effectsGroup.remove(torp);
-                for (const b of bubbles) if (b.parent) this.effectsGroup.remove(b);
+                if (torp.parent) this._disposeAndRemove(torp);
+                for (const b of bubbles) if (b.parent) this._disposeAndRemove(b);
                 if (t >= 1) {
                     const burst = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8),
                         new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6 }));
@@ -869,7 +921,7 @@ export class GameRenderer {
             const bStep = () => {
                 const t = Math.min(1, (performance.now() - bStart) / 350);
                 if (t >= 1 || !ball.parent) {
-                    if (ball.parent) this.effectsGroup.remove(ball);
+                    if (ball.parent) this._disposeAndRemove(ball);
                     if (t >= 1) this._addImpactBurst(bx1, y1, bz1, 0xff8844, 300);
                     return;
                 }
@@ -922,7 +974,7 @@ export class GameRenderer {
         const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
         const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;
         if (type === 'SPIKES') {
-            // Wooden-splinter burst — brown debris rising from the tile.
+            // Wooden-splinter burst �?brown debris rising from the tile.
             const colors = [0x8b5e3c, 0xa0724b, 0x6b4226];
             for (let i = 0; i < 6; i++) {
                 const d = new THREE.Mesh(
@@ -935,7 +987,7 @@ export class GameRenderer {
             }
             this._addImpactBurst(cx, y, cz, 0xc8a06e, 400);
         } else if (type === 'FALL_TRAP') {
-            // Dust cloud — gray particles rising + ground ring.
+            // Dust cloud �?gray particles rising + ground ring.
             const dust = new THREE.Mesh(
                 new THREE.SphereGeometry(0.15, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0x888877, transparent: true, opacity: 0.6 }));
@@ -966,7 +1018,7 @@ export class GameRenderer {
                 this._effects.push({ obj: d, born: performance.now(), life: 600, kind: 'debris' });
             }
         } else if (type === 'AT_MINE') {
-            // Shaped charge — bright white flash + large fireball + sparks.
+            // Shaped charge �?bright white flash + large fireball + sparks.
             const flash = new THREE.Mesh(
                 new THREE.SphereGeometry(0.22, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }));
@@ -1004,7 +1056,7 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !fire.parent) {
-                if (fire.parent) this.effectsGroup.remove(fire);
+                if (fire.parent) this._disposeAndRemove(fire);
                 return;
             }
             const dx = targetX - cx, dz = targetZ - cz;
@@ -1048,9 +1100,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !shell.parent) {
-                if (shell.parent) this.effectsGroup.remove(shell);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (smokeTrail.parent) this.effectsGroup.remove(smokeTrail);
+                if (shell.parent) this._disposeAndRemove(shell);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (smokeTrail.parent) this._disposeAndRemove(smokeTrail);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
                 return;
             }
@@ -1098,9 +1150,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !rocket.parent) {
-                if (rocket.parent) this.effectsGroup.remove(rocket);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (trail.parent) this.effectsGroup.remove(trail);
+                if (rocket.parent) this._disposeAndRemove(rocket);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (trail.parent) this._disposeAndRemove(trail);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 450);
                 return;
             }
@@ -1128,7 +1180,7 @@ export class GameRenderer {
         this._animateModel(attackerId, (m, t, p, r) => {
             const dx = toX - fromX, dz = toZ - fromZ;
             const len = Math.sqrt(dx * dx + dz * dz) || 1;
-            // Long forward thrust, no rotation — the pike stays level
+            // Long forward thrust, no rotation �?the pike stays level
             const forward = Math.sin(t * Math.PI) * 0.6;
             m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
         }, 280);
@@ -1175,8 +1227,8 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / l0);
                 if (t >= 1 || !bolt.parent) {
-                    if (bolt.parent) this.effectsGroup.remove(bolt);
-                    if (glow.parent) this.effectsGroup.remove(glow);
+                    if (bolt.parent) this._disposeAndRemove(bolt);
+                    if (glow.parent) this._disposeAndRemove(glow);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0x88ddff, 300);
                     return;
                 }
@@ -1198,7 +1250,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / l0);
                 if (t >= 1 || !shard.parent) {
-                    if (shard.parent) this.effectsGroup.remove(shard);
+                    if (shard.parent) this._disposeAndRemove(shard);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xaaddff, 350);
                     return;
                 }
@@ -1208,11 +1260,11 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'iron') {
-            // Heavy hammer smash — big impact ring at target, no projectile
+            // Heavy hammer smash �?big impact ring at target, no projectile
             const t0 = performance.now();
             setTimeout(() => this._addImpactBurst(x1, y1, z1, 0x888899, 500), 200);
         } else if (fid === 'shadow') {
-            // Dagger toss — small fast projectile
+            // Dagger toss �?small fast projectile
             const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1),
                 new THREE.MeshBasicMaterial({ color: 0x6633aa }));
             dagger.position.set(x0, y0, z0);
@@ -1222,7 +1274,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 200);
                 if (t >= 1 || !dagger.parent) {
-                    if (dagger.parent) this.effectsGroup.remove(dagger);
+                    if (dagger.parent) this._disposeAndRemove(dagger);
                     return;
                 }
                 dagger.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
@@ -1230,7 +1282,7 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'crimson' || fid === 'obsidian' || fid === 'roman') {
-            // Melee slash/stab — colored blade arc model animation only
+            // Melee slash/stab �?colored blade arc model animation only
             // (no projectile, just the lunge)
         } else if (fid === 'violet') {
             // Magic orb
@@ -1242,7 +1294,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 280);
                 if (t >= 1 || !orb.parent) {
-                    if (orb.parent) this.effectsGroup.remove(orb);
+                    if (orb.parent) this._disposeAndRemove(orb);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcc66ff, 350);
                     return;
                 }
@@ -1261,7 +1313,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 250);
                 if (t >= 1 || !bolt.parent) {
-                    if (bolt.parent) this.effectsGroup.remove(bolt);
+                    if (bolt.parent) this._disposeAndRemove(bolt);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, color, 300);
                     return;
                 }
@@ -1344,7 +1396,7 @@ export class GameRenderer {
     }
 
     clearInfluence() {
-        if (this.influenceGroup) this.influenceGroup.clear();
+        if (this.influenceGroup) this._disposeGroupChildren(this.influenceGroup);
     }
 
     highlightMoveTargets(keys) {
@@ -2953,7 +3005,7 @@ export class GameRenderer {
     }
 
     renderBuildings(gameState) {
-        this.buildingGroup.clear();
+        this._disposeGroupChildren(this.buildingGroup);
         const visible = gameState.visible || null;
         const bState = gameState.buildingState || null;
         for (const [tileKey, list] of gameState.buildings) {
@@ -3002,7 +3054,7 @@ export class GameRenderer {
 
     // --- Goal markers for player units with an auto-navigation goal ---
     renderGoalMarkers(gameState) {
-        this.markerGroup.clear();
+        this._disposeGroupChildren(this.markerGroup);
         for (const unit of gameState.units.values()) {
             if (unit.owner !== PLAYER_FACTION || !unit.goal) continue;
             const sprite = this.makeIconSprite('target', 0.7, 0.8);
@@ -3040,7 +3092,7 @@ export class GameRenderer {
     // --- Bridges across river tiles (built by Siege/Engineer units). ---
     renderBridges(gameState) {
         if (!this.bridgeGroup) return;
-        this.bridgeGroup.clear();
+        this._disposeGroupChildren(this.bridgeGroup);
         const explored = gameState.explored || null;
         for (const [key, tile] of gameState.tiles) {
             if (!tile.bridge || tile.terrain !== 'RIVER') continue;
@@ -3161,7 +3213,7 @@ export class GameRenderer {
     // in spectate mode everything is shown.
     renderStructures(gameState) {
         if (!this.structureGroup) return;
-        this.structureGroup.clear();
+        this._disposeGroupChildren(this.structureGroup);
         const structures = gameState.structures;
         if (!structures || !structures.size) return;
         const visible = gameState.visible || null;
@@ -3169,7 +3221,7 @@ export class GameRenderer {
             const tile = gameState.tiles.get(key);
             if (!tile) continue;
             // Trap-type structures (FALL_TRAP/MINEFIELD/AT_MINE) are hidden
-            // from other factions — a mine you can see is useless. BUNKER and
+            // from other factions �?a mine you can see is useless. BUNKER and
             // FORTIFICATION are visible to everyone (they're fortifications,
             // not concealed). In spectate mode everything is shown.
             const isTrap = s.type === 'FALL_TRAP' || s.type === 'MINEFIELD' || s.type === 'AT_MINE';
@@ -3183,7 +3235,7 @@ export class GameRenderer {
         }
     }
     renderAuras(gameState) {
-        this.auraGroup.clear();
+        this._disposeGroupChildren(this.auraGroup);
         this._auraRings = [];
         const visible = gameState.visible || null;
         for (const lord of gameState.lords) {
@@ -3285,10 +3337,10 @@ export class GameRenderer {
         this.highlightAttackTargets(gameState.attackTargets || []);
 
         // City name labels: one floating text sprite per visible/explored city.
-        // Rebuilt each render (cheap — sprites reuse cached materials). The
+        // Rebuilt each render (cheap �?sprites reuse cached materials). The
         // label sits above the keep and is tinted by the owner's faction color
         // so ownership is readable at a glance.
-        this.labelGroup.clear();
+        this._disposeGroupChildren(this.labelGroup);
         for (const [key, tile] of gameState.tiles) {
             if (tile.terrain !== 'CITY') continue;
             const isExp = !!(explored && explored.has(key));
@@ -3311,9 +3363,9 @@ export class GameRenderer {
             this.labelGroup.add(label);
         }
 
-        // Rebuild unit markers (distinct shape per unit type) — enemy units
+        // Rebuild unit markers (distinct shape per unit type) �?enemy units
         // only render on tiles the player can currently see.
-        this.unitGroup.clear();
+        this._disposeGroupChildren(this.unitGroup);
         this._flames = []; // repopulated below with live flame meshes for flicker
         for (const unit of gameState.units.values()) {
             // Units embarked aboard a Transport are hidden (rendered as cargo pips on the ship).
@@ -3367,10 +3419,10 @@ export class GameRenderer {
             this.unitGroup.add(mesh);
         }
 
-        // Rebuild lord markers — each lord is a humanoid figure with
+        // Rebuild lord markers �?each lord is a humanoid figure with
         // faction-specific weapons, mounts, and decorations. Kings get a crown
         // sprite, gold base ring, cape, and 1.25× scale.
-        this.lordGroup.clear();
+        this._disposeGroupChildren(this.lordGroup);
         for (const lord of gameState.lords) {
             const isPlayer = lord.owner === PLAYER_FACTION;
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;
