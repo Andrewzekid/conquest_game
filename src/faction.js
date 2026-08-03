@@ -197,7 +197,7 @@ export const FACTION_DEFS = {
                           desc: 'All cities gain +3 fortification. All units heal 50% of missing HP.' } }
     },
     spanish: {
-        id: 'spanish', name: 'Spanish Conquistadors', emoji: '🗡️',
+        id: 'spanish', name: 'Spanish Conquistadors', emoji: '\u{1F5E1}\uFE0F',
         color: { tile: 0xd4581f, unit: 0xff7722, name: 'Spanish Conquistadors' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'CAVALRY', 'ARCHER', 'CONQUISTADOR'],

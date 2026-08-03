@@ -18,8 +18,8 @@
 
 [![Factions](https://img.shields.io/badge/factions-15-8a2be2?style=flat-square)](src/config.js)
 [![Tests](https://img.shields.io/badge/tests-1369-2ea44f?style=flat-square)](tests/)
-[![Coverage](https://img.shields.io/badge/source-28.8k_lines-0366d6?style=flat-square)](src/)
-[![Commits](https://img.shields.io/badge/commits-132-ff6f00?style=flat-square)](https://github.com/Andrewzekid/conquest_game/commits/master)
+[![Coverage](https://img.shields.io/badge/source-29.1k_lines-0366d6?style=flat-square)](src/)
+[![Commits](https://img.shields.io/badge/commits-138-ff6f00?style=flat-square)](https://github.com/Andrewzekid/conquest_game/commits/master)
 [![Engine](https://img.shields.io/badge/engine-Three.js-8e44ad?style=flat-square)](https://threejs.org)
 [![Test Runner](https://img.shields.io/badge/test-vitest-fcc72b?style=flat-square)](https://vitest.dev)
 
@@ -54,7 +54,7 @@ The **Spectate** checkbox lets you watch AI-only games with a live multi-panel d
 <td width="50%">
 
 ### 🏛 Lead a Faction
-Choose from **15 thematic factions**, each with a unique unit roster, passive economic/military bonuses, a king ability, and an AI personality. From the Crimson Legion and Golden Horde to the Roman Legion, Viking Raiders, and Polish Winged Hussars.
+Choose from **15 thematic factions**, each with a unique unit roster, passive bonuses, and a king active ability. Every faction has been tuned for balance — from the Crimson Legion's devastating Bloodlust (+5 attack) to the Verdant Realm's forest healing, the Spanish Conquistadors' early expansion (free settlers until 5 cities, Conquistador unlocked at Chivalry), and the Polish Winged Hussars' devastating cavalry charges.
 
 </td>
 <td width="50%">
@@ -119,8 +119,10 @@ Every game generates **2–4 irregular continents** with meandering rivers, moun
 |---------|--------|
 | Hero lords | Recruitable units with 4 classes, stats, abilities, and skill trees |
 | Skill trees | Warlord / Guardian / Conqueror / Grand Commander — 2 branches, 5 tiers each |
-| King mechanics | Your king leads from the front; losing them is catastrophic |
+| King mechanics | Your king leads from the front; losing them is catastrophic. Some factions (Azure, Frost, Byzantine) have king regen passives |
 | Army command | Lords lead army groups; their bonuses apply to nearby troops |
+| King actives | 15 unique abilities — Bloodlust, Arcane Surge, Iron Will, Tempest, Winged Charge, Manifest Destiny, and more |
+| King tech scaling | Kings gain bonus stats from researched techs (sqrt-scaled, capped) — level-10 king with all techs: ~132 HP, +5 atk/def |
 
 ### 🕵️ Espionage
 | Feature | Detail |
@@ -213,6 +215,8 @@ Individual units execute the group plan with tactical awareness:
 - **Retreat logic** — groups pull back to the nearest friendly city when locally outmatched
 - **Defensive structures** — engineers build forts, bunkers, minefields, and anti-tank mines
 - **Siege tower construction** — engineers build mobile towers to breach city walls
+- **Specialty unit prioritization** — AI preferentially trains faction-unique units (Legionnaire, Berserker, Conquistador, Winged Hussar, Varangian Guard) by boosting them to the front of the role pick order
+- **Anti-cavalry reaction** — when the enemy fields 3+ cavalry, the AI trains anti-cav specialists (Halberdier, Pike Master, Bayonet Rifle, Anti-Tank Gun, RPG Team) to counter
 
 ### 📊 Debug Panels
 
@@ -303,10 +307,10 @@ Save format is versioned (currently v7). Incompatible older saves are rejected w
 | **Modules** | Native ES modules (`"type": "module"`) |
 | **Architecture** | `class Game` integrator backed by pure-logic modules that never import the DOM |
 | **Testing** | Vitest — runs in Node, no DOM/WebGL required |
-| **Distribution** | 32 source files, 28,813 lines, zero dependencies beyond Three.js |
+| **Distribution** | 32 source files, 29,121 lines, zero dependencies beyond Three.js |
 
 ---
 
 <div align="center">
-<sub><strong>Conquest</strong> · Browser-based 4X strategy · 15 factions · 69 test suites · 132 commits</sub>
+<sub><strong>Conquest</strong> · Browser-based 4X strategy · 15 factions · 69 test suites · 138 commits</sub>
 </div>
