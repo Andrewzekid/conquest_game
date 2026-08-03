@@ -683,7 +683,7 @@ export const STARVATION_ATTRITION = 2; // hp lost per starving unit per turn
 export const BUILDING_TYPE = {
     FARM:       { name: 'Farm',       cost: { gold: 40, wood: 20 },              bonus: { food: 2 },   terrain: 'PLAINS', maxPerCity: 2, desc: '+2 food/turn.' },
     LUMBERMILL: { name: 'Lumbermill', cost: { gold: 50, wood: 10 },              bonus: { wood: 6 },   terrain: 'FOREST', maxPerCity: 2, desc: '+6 wood/turn.' },
-    MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', maxPerCity: 2, desc: '+5 iron/turn.' },
+    MINE:       { name: 'Mine',       cost: { gold: 60, wood: 20, iron: 10 },   bonus: { iron: 5 },   terrain: 'MOUNTAIN', terrains: ['MOUNTAIN', 'HILLS'], maxPerCity: 2, desc: '+5 iron/turn.' },
     MARKET:     { name: 'Market',     cost: { gold: 80, wood: 30 },              bonus: { gold: 10 },  terrain: 'CITY', influenceBuildable: true, military: true,
                   desc: '+10 gold/turn. Buildable in the city or its influence; pillageable by enemy units.', techRequired: 'MATHEMATICS' },
     BARRACKS:   { name: 'Barracks',   cost: { gold: 60, wood: 20, iron: 10 },   bonus: { production: 10 }, terrain: 'CITY', influenceBuildable: true, military: true,

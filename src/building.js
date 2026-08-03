@@ -79,9 +79,12 @@ export function constructBuilding(buildingType, tile, resources, buildings, infl
 
     // Terrain restriction. Military buildings flagged influenceBuildable relax
     // the strict city-tile requirement to any passable land tile in influence.
+    // Buildings may accept multiple terrains via `terrains` (e.g. MINE works on
+    // MOUNTAIN and HILLS).
     const useInfluenceTile = bData.influenceBuildable && isInfluenceBuildableTile(buildingType, tile);
-    if (!useInfluenceTile && tile.terrain !== bData.terrain) {
-        messages.push(`Cannot build ${bData.name} here (needs ${bData.terrain} terrain).`);
+    const allowedTerrains = bData.terrains || [bData.terrain];
+    if (!useInfluenceTile && !allowedTerrains.includes(tile.terrain)) {
+        messages.push(`Cannot build ${bData.name} here (needs ${allowedTerrains.join(' or ')} terrain).`);
         return messages;
     }
 
@@ -286,9 +289,9 @@ export function getBuildableBuildings(tile, resources, buildings, influence, til
                 canBuild = false;
                 reason = 'Must be coastal';
             }
-        } else if (tile.terrain !== bData.terrain) {
+        } else if (!(bData.terrains || [bData.terrain]).includes(tile.terrain)) {
             canBuild = false;
-            reason = `Needs ${bData.terrain} terrain`;
+            reason = `Needs ${(bData.terrains || [bData.terrain]).join(' or ')} terrain`;
         } else if (type === 'HARBOR' && !isCoastal(tile, tiles)) {
             canBuild = false;
             reason = 'City not coastal';

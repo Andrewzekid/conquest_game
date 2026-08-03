@@ -23,7 +23,7 @@ import { sellAtMarket, getUnitCap, grossYields } from './economy.js';
 import { cityRadius, findParentCity } from './map.js';
 import { isWaterConnectedToOpenWater } from './map_util.js';
 import { getBuildingState, upgradeBuilding } from './building.js';
-import { canAttack } from './diplomacy.js';
+import { canAttack, isAllied } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
@@ -341,6 +341,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         : scarce >= 1 ? 1.5
         : 1.0;
     const settlerTarget = Math.round(Math.max(AI_SETTLER_TARGET, Math.round(GRID_SIZE / 3)) * SETTLER_AGGRESSION * settlerUrgency);
+
+    // Long-term expansion drive: evaluate how desirable the surrounding land is
+    // for founding new cities (available open spots, scarce resources, allied
+    // proximity, weak enemy presence). Drives a turns-1-50 settler boost that
+    // is stronger when there is good land to grab and fades as the map fills.
+    const settleDesirability = evaluateSettleDesirability(tiles, owner, land, homeMass, resources, diploState, units, factionDef, drainingResource);
+    // Turn-window boost strength: strongest early (also 50), decays linearly to
+    // zero by turn 51, scaled by how good the surrounding spots actually are.
+    const boostActive = currentTurn > 0 && currentTurn <= 50 && settleDesirability.score > 0.25;
+    const boostStrength = boostActive ? Math.max(0, (50 - currentTurn) / 50) * settleDesirability.score : 0;
+    // Settler urgency multiplier from the long-term land-grab boost.
+    const settlerBoostMult = 1 + boostStrength * 1.5;
 
     // Goal-sequence selection (see src/ai_goals.js). Runs before the spending
     // blocks so they can weight themselves on the chosen goals. Goals persist
@@ -1176,8 +1188,10 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const conquestSettlerScale = conquestCampaigning && !navalConquest ? 0.5 : 1.0;
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
-    let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale));
-    let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale))) + hardCapBonus + settleGoalBoost;
+    // The turns-1-50 long-term boost scales settler target/cap/per-turn with the
+    // quality of the land available (see evaluateSettleDesirability above).
+    let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1));
+    let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1))) + hardCapBonus + settleGoalBoost;
     const settlerCap = settlerCapEff;
     // Stop training settlers entirely when no valid found spot exists on our
     // home landmass — the AI cannot found a city, so training more settlers
@@ -1190,11 +1204,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         ? myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length
         : 0;
     const expandIslandsExtras = expandIslandsMode && liveTransports > 0 ? Math.min(3, liveTransports + 1) : 0;
-    const hardCapBonusExtra = hardCapBonus + expandIslandsExtras;
+    // Long-term boost extras: an early-game land grab (many open spots, good
+    // desirability) lifts the hard cap above the default 4 settlers, scaled to
+    // how much land is actually there to claim.
+    const settleBoostExtras = boostActive ? Math.min(4, Math.round(settleDesirability.openSpots / 5)) : 0;
+    const hardCapBonusExtra = hardCapBonus + expandIslandsExtras + settleBoostExtras;
     // Settlers-per-turn is halved under a (non-naval) conquest goal so the AI
-    // doesn't sprawl while campaigning. Scarcity overrides this.
+    // doesn't sprawl while campaigning. Scarcity overrides this. The long-term
+    // boost (turns 1-50, quality-adjusted) can push production to 2/turn early
+    // when there's good land available.
     const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION *
         (scarcityTriggered ? 2 : (settlerUrgency > 1 ? 1.5 : 1)) *
+        (boostActive ? Math.max(1, 1 + boostStrength * 2) : 1) *
         (conquestCampaigning && !navalConquest && !scarcityTriggered ? 0.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
@@ -3381,6 +3402,90 @@ function canFoundOn(tile, owner, tiles) {
     return true;
 }
 
+/** Evaluate how desirable it is to train settlers right now, on a 0..1 scale.
+ *  Used to drive the long-term (turns 1-50) settler production boost. The score
+ *  combines:
+ *  - Open land: fraction of home-landmass tiles that are valid found spots
+ *    (more open space = more to grab, worth a stronger push).
+ *  - Scarcity: current stock/flow shortages of iron/wood/food/gold push the
+ *    score up — founding cities is the durable fix for a bleeding economy.
+ *  - Allied proximity: found spots near allied cities are safe to settle and
+ *    form a connected front, so they add to desirability.
+ *  - Weak enemy presence: spots near undefended enemy cities are valuable
+ *    forward outposts, so they add to desirability.
+ *  Returns { score (0..1), openSpots, openRatio, scarcityFactor, alliedFactor,
+ *  weakEnemyFactor }. Exported for tests. */
+export function evaluateSettleDesirability(tiles, owner, land, homeMass, resources = null, diploState = null, units = null, factionDef = null, drainingResource = null) {
+    let homeLandTiles = 0;
+    let openSpots = 0;
+    const spotTiles = [];
+    for (const t of tiles.values()) {
+        if (t.terrain === 'WATER') continue;
+        if (homeMass != null && land) {
+            if (land.idOf.get(`${t.x},${t.z}`) !== homeMass) continue;
+        }
+        homeLandTiles++;
+        if (canFoundOn(t, owner, tiles)) { openSpots++; spotTiles.push(t); }
+    }
+    const openRatio = homeLandTiles > 0 ? openSpots / homeLandTiles : 0;
+
+    // Scarcity: stock lows and a draining resource both count. Base 0.5 so a
+    // balanced economy still yields a neutral scarcity factor.
+    const res = resources || {};
+    let scarcityScore = 0;
+    if ((res.iron || 0) < 30 || drainingResource === 'iron') scarcityScore += 0.15;
+    if ((res.wood || 0) < 40 || drainingResource === 'wood') scarcityScore += 0.15;
+    if ((res.food || 0) < 50 || drainingResource === 'food') scarcityScore += 0.15;
+    if ((res.gold || 0) < 60 || drainingResource === 'gold') scarcityScore += 0.15;
+    const scarcityFactor = Math.min(1, 0.5 + scarcityScore);
+
+    // Allied proximity: fraction of found spots with an allied city within 10
+    // tiles. Allied neighbours mean a safe, connected frontier.
+    let alliedSpots = 0;
+    if (diploState && openSpots > 0) {
+        for (const spot of spotTiles) {
+            let near = false;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || t.owner === owner) continue;
+                if (isAllied(diploState, owner, t.owner) && manhattan(t.x, t.z, spot.x, spot.z) <= 10) { near = true; break; }
+            }
+            if (near) alliedSpots++;
+        }
+    }
+    const alliedFactor = openSpots > 0 ? alliedSpots / openSpots : 0;
+
+    // Weak enemy presence: fraction of found spots whose nearest enemy city
+    // has a garrison below WEAK_CITY_GARRISON_THRESHOLD. Weak neighbours mean
+    // the new city is a low-risk forward outpost.
+    let weakSpots = 0;
+    if (units && openSpots > 0) {
+        for (const spot of spotTiles) {
+            let nearestGarrison = Infinity;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+                if (diploState && isAllied(diploState, owner, t.owner)) continue;
+                const d = manhattan(t.x, t.z, spot.x, spot.z);
+                if (d <= 8 && d < nearestGarrison) {
+                    let garrison = 0;
+                    for (const u of units.values()) {
+                        if (u.owner === t.owner && !u.boarded && Math.max(Math.abs(u.x - t.x), Math.abs(u.z - t.z)) <= 3) garrison++;
+                    }
+                    nearestGarrison = garrison;
+                }
+            }
+            if (nearestGarrison < WEAK_CITY_GARRISON_THRESHOLD) weakSpots++;
+        }
+    }
+    const weakEnemyFactor = openSpots > 0 ? weakSpots / openSpots : 0;
+
+    // Combine: open land dominates, scarcity amplifies, allied safety and weak
+    // enemies add modest bonuses. Clamped to 0..1.
+    const score = Math.max(0, Math.min(1,
+        openRatio * 1.2 * scarcityFactor + alliedFactor * 0.25 + weakEnemyFactor * 0.2));
+
+    return { score, openSpots, openRatio, scarcityFactor, alliedFactor, weakEnemyFactor };
+}
+
 /** Compute per-terrain settlement weights based on what the faction actually
  *  needs: cavalry/artillery/siege rosters crave iron, archer rosters want wood,
  *  everyone wants food/gold. Low stockpiles amplify the matching terrain. */
@@ -3590,9 +3695,11 @@ function pickEconomyBuilding(tile, existing, resources) {
 }
 
 /** The terrain improvement (FARM/LUMBERMILL/MINE) that fits this terrain, or
- *  null for terrains with no improvement (DESERT/MARSH/TUNDRA/HILLS/WATER/etc). */
-function improvementForTerrain(terrain) {
-    return ({ PLAINS: 'FARM', FOREST: 'LUMBERMILL', MOUNTAIN: 'MINE' })[terrain] || null;
+ *  null for terrains with no improvement (DESERT/MARSH/TUNDRA/WATER/etc).
+ *  MINE works on both MOUNTAIN and HILLS (mirrors BUILDING_TYPE.terrains).
+ *  Exported for tests. */
+export function improvementForTerrain(terrain) {
+    return ({ PLAINS: 'FARM', FOREST: 'LUMBERMILL', MOUNTAIN: 'MINE', HILLS: 'MINE' })[terrain] || null;
 }
 
 /** Does the faction own at least one tile within influence that could still
@@ -3611,8 +3718,12 @@ function hasImprovableTile(tiles, owner, buildings, influence) {
 
 /** Highest-value owned, unimproved, in-influence tile. Uses a scoring system
  *  that prioritises scarce resources so the AI doesn't spam lumbermills alone.
- *  Returns the tile or null. */
-function findImprovementSpot(unit, tiles, owner, buildings, influence, resources) {
+ *  Priority order is MINE > FARM > LUMBERMILL at any stock level (iron is the
+ *  military-critical resource — the user-facing "strong iron" preference),
+ *  with low stockpiles amplifying the matching terrain further. HILLS counts
+ *  as a mine site (mirrors BUILDING_TYPE.terrains). Returns the tile or null.
+ *  Exported for tests. */
+export function findImprovementSpot(unit, tiles, owner, buildings, influence, resources) {
     let best = null, bestScore = -Infinity;
     const wood = (resources && resources.wood) || 0;
     const food = (resources && resources.food) || 0;
@@ -3625,15 +3736,19 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence, resources
         if (influence && !influence.has(`${t.x},${t.z}`)) continue;
         let score = 0;
         if (b === 'MINE') {
-            score = 100 - iron * 1.5;         // high priority when iron is low
-            if (iron < 10) score += 80;
+            // Strong iron preference: always above FARM/LUMBERMILL, huge boost
+            // when iron is low, mild decay when iron is plentiful.
+            score = 100 - iron * 0.6;
+            if (iron < 20) score += 80;
+            if (iron < 40) score += 40;
         } else if (b === 'FARM') {
-            score = 70 - food * 0.8;           // priority when food is low
+            score = 60 - food * 0.6;           // priority when food is low
             if (food < 15) score += 60;
         } else { // LUMBERMILL
-            score = 30 - wood * 0.3;           // low priority unless wood is scarce
-            if (wood < 15) score += 50;
-            if (wood > 40) score = 0;          // don't build more lumbermills when wood is plentiful
+            // Only worth building when wood is scarce; otherwise the AI keeps
+            // mines/farms ahead of lumbermills.
+            if (wood >= 50) score = 0;
+            else { score = 25 - wood * 0.4; if (wood < 15) score += 50; }
         }
         score -= Math.max(Math.abs(t.x - unit.x), Math.abs(t.z - unit.z)) * 3;
         if (score > bestScore) { bestScore = score; best = t; }
