@@ -15,7 +15,7 @@ const BREACH_COLOR = 0xff3322;
 const TILE_COLUMN_BOTTOM = -0.1;
 
 // Top-surface Y for a terrain type. Shared by createMapMesh and updateTileTerrain
-// (the old inline ladder in updateTileTerrain drifted from this one �?the bug).
+// (the old inline ladder in updateTileTerrain drifted from this one —the bug).
 export function heightFor(terrain) {
     if (terrain === 'MOUNTAIN') return 0.5;
     if (terrain === 'CITY') return 0.55;
@@ -96,7 +96,7 @@ export class GameRenderer {
     }
 
     /** True if a material is a shared cached sprite material (icon/text) that
-     *  must NOT be disposed when its sprite is removed �?it's reused across
+     *  must NOT be disposed when its sprite is removed —it's reused across
      *  renders. Disposing it would corrupt every subsequent icon/label. */
     _isCachedMaterial(mat) {
         if (!mat) return false;
@@ -107,7 +107,7 @@ export class GameRenderer {
 
     /** Dispose geometries and non-cached materials of all children of a Group,
      *  then clear it. group.clear() alone detaches children but leaves their
-     *  GPU resources alive �?over ~200 turns this leaked enough WebGL memory
+     *  GPU resources alive —over ~200 turns this leaked enough WebGL memory
      *  to crash the context (white screen, vanished icons/city names). Cached
      *  sprite materials (_iconMatCache / _textMatCache) are shared across
      *  renders and are intentionally preserved. */
@@ -284,7 +284,7 @@ export class GameRenderer {
             } else if (style === 4) {
                 // Industrial town: a squat main building with two chimneys
                 // belching smoke (a faint dark cone). Reads as a 19th-c factory
-                // town �?distinct from the medieval castles.
+                // town —distinct from the medieval castles.
                 keep = new THREE.Mesh(new THREE.BoxGeometry(0.46, keepH * 0.55, 0.36), stone);
                 keep.position.y = keepH * 0.275 + 0.1;
                 group.add(keep);
@@ -349,7 +349,7 @@ export class GameRenderer {
                 group.add(lamp);
             } else {
                 // Hillfort / steppe camp: a terraced ring of small huts with a
-                // central banner pole. Reads as a tribal/regional capital �?
+                // central banner pole. Reads as a tribal/regional capital —
                 // distinct from the masonry of the other styles.
                 const earthMat = new THREE.MeshPhongMaterial({ color: 0x9a7a5a });
                 keep = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, keepH * 0.4, 8), earthMat);
@@ -380,7 +380,7 @@ export class GameRenderer {
                 wall.position.y = 0.12;
                 group.add(wall);
             }
-            // Level-6+ cities get a third outer ring + corner markers �?they
+            // Level-6+ cities get a third outer ring + corner markers —they
             // read as major capitals at a glance.
             if (level >= 6) {
                 const outer = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.04, 6, 20),
@@ -435,7 +435,7 @@ export class GameRenderer {
                 new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.6 }));
             top.position.set(sx, 0.64, 0); g.add(top);
         }
-        const emoji = (wonder && wonder.emoji) || '�?;
+        const emoji = (wonder && wonder.emoji) || '✨';
         g.add(this.makeIconSprite(emoji, 0.6, 1.25));
         return g;
     }
@@ -453,7 +453,7 @@ export class GameRenderer {
             // sits at the mesh origin (world Y = y) and it hangs downward to the
             // base. Raised tiles (mountain/city) thus read as solid columns
             // reaching down to the base instead of floating slabs, while the
-            // mesh.position.y stays at the top surface y �?so all scenery
+            // mesh.position.y stays at the top surface y — so all scenery
             // children (parented to the mesh) and all tileHeights consumers keep
             // their existing offsets unchanged.
             const y = heightFor(t.terrain);
@@ -698,7 +698,7 @@ export class GameRenderer {
     }
 
     // ===================================================================
-    //  NEW ATTACK ANIMATIONS �?added for all unit ages and types
+    //  NEW ATTACK ANIMATIONS —added for all unit ages and types
     // ===================================================================
 
     /** Gunfire: small fast bullet + muzzle flash + smoke (MUSKETEER, RIFLEMAN, etc.) */
@@ -974,7 +974,7 @@ export class GameRenderer {
         const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
         const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;
         if (type === 'SPIKES') {
-            // Wooden-splinter burst �?brown debris rising from the tile.
+            // Wooden-splinter burst —brown debris rising from the tile.
             const colors = [0x8b5e3c, 0xa0724b, 0x6b4226];
             for (let i = 0; i < 6; i++) {
                 const d = new THREE.Mesh(
@@ -987,7 +987,7 @@ export class GameRenderer {
             }
             this._addImpactBurst(cx, y, cz, 0xc8a06e, 400);
         } else if (type === 'FALL_TRAP') {
-            // Dust cloud �?gray particles rising + ground ring.
+            // Dust cloud —gray particles rising + ground ring.
             const dust = new THREE.Mesh(
                 new THREE.SphereGeometry(0.15, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0x888877, transparent: true, opacity: 0.6 }));
@@ -1018,7 +1018,7 @@ export class GameRenderer {
                 this._effects.push({ obj: d, born: performance.now(), life: 600, kind: 'debris' });
             }
         } else if (type === 'AT_MINE') {
-            // Shaped charge �?bright white flash + large fireball + sparks.
+            // Shaped charge —bright white flash + large fireball + sparks.
             const flash = new THREE.Mesh(
                 new THREE.SphereGeometry(0.22, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }));
@@ -1180,7 +1180,7 @@ export class GameRenderer {
         this._animateModel(attackerId, (m, t, p, r) => {
             const dx = toX - fromX, dz = toZ - fromZ;
             const len = Math.sqrt(dx * dx + dz * dz) || 1;
-            // Long forward thrust, no rotation �?the pike stays level
+            // Long forward thrust, no rotation —the pike stays level
             const forward = Math.sin(t * Math.PI) * 0.6;
             m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
         }, 280);
@@ -1260,11 +1260,11 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'iron') {
-            // Heavy hammer smash �?big impact ring at target, no projectile
+            // Heavy hammer smash —big impact ring at target, no projectile
             const t0 = performance.now();
             setTimeout(() => this._addImpactBurst(x1, y1, z1, 0x888899, 500), 200);
         } else if (fid === 'shadow') {
-            // Dagger toss �?small fast projectile
+            // Dagger toss —small fast projectile
             const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1),
                 new THREE.MeshBasicMaterial({ color: 0x6633aa }));
             dagger.position.set(x0, y0, z0);
@@ -1282,7 +1282,7 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'crimson' || fid === 'obsidian' || fid === 'roman') {
-            // Melee slash/stab �?colored blade arc model animation only
+            // Melee slash/stab —colored blade arc model animation only
             // (no projectile, just the lunge)
         } else if (fid === 'violet') {
             // Magic orb
@@ -3221,7 +3221,7 @@ export class GameRenderer {
             const tile = gameState.tiles.get(key);
             if (!tile) continue;
             // Trap-type structures (FALL_TRAP/MINEFIELD/AT_MINE) are hidden
-            // from other factions �?a mine you can see is useless. BUNKER and
+            // from other factions —a mine you can see is useless. BUNKER and
             // FORTIFICATION are visible to everyone (they're fortifications,
             // not concealed). In spectate mode everything is shown.
             const isTrap = s.type === 'FALL_TRAP' || s.type === 'MINEFIELD' || s.type === 'AT_MINE';
@@ -3337,7 +3337,7 @@ export class GameRenderer {
         this.highlightAttackTargets(gameState.attackTargets || []);
 
         // City name labels: one floating text sprite per visible/explored city.
-        // Rebuilt each render (cheap �?sprites reuse cached materials). The
+        // Rebuilt each render (cheap —sprites reuse cached materials). The
         // label sits above the keep and is tinted by the owner's faction color
         // so ownership is readable at a glance.
         this._disposeGroupChildren(this.labelGroup);
@@ -3363,7 +3363,7 @@ export class GameRenderer {
             this.labelGroup.add(label);
         }
 
-        // Rebuild unit markers (distinct shape per unit type) �?enemy units
+        // Rebuild unit markers (distinct shape per unit type) —enemy units
         // only render on tiles the player can currently see.
         this._disposeGroupChildren(this.unitGroup);
         this._flames = []; // repopulated below with live flame meshes for flicker
@@ -3419,7 +3419,7 @@ export class GameRenderer {
             this.unitGroup.add(mesh);
         }
 
-        // Rebuild lord markers �?each lord is a humanoid figure with
+        // Rebuild lord markers —each lord is a humanoid figure with
         // faction-specific weapons, mounts, and decorations. Kings get a crown
         // sprite, gold base ring, cape, and 1.25× scale.
         this._disposeGroupChildren(this.lordGroup);
