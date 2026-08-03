@@ -38,7 +38,7 @@ describe('unit unlock gating', () => {
         ['FRIGATE', 'CARTOGRAPHY'],
         ['GALLEON', 'CARTOGRAPHY'],
         ['ARTILLERY', 'GUNPOWDER'],
-        ['CONQUISTADOR', 'GUNPOWDER'],
+        ['CONQUISTADOR', 'CHIVALRY'],
         ['MUSKETEER', 'MATCHLOCK'],
         ['ARQUEBUSIER', 'MATCHLOCK'],
         ['PINNACE', 'MATCHLOCK'],

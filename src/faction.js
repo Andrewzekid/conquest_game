@@ -7,7 +7,7 @@ import { UNIT_TYPE, UNIT_COST } from './config.js';
 
 export const FACTION_DEFS = {
     crimson: {
-        id: 'crimson', name: 'Crimson Legion', emoji: '🔥',
+        id: 'crimson', name: 'Crimson Legion', emoji: '\u{1F525}',
         color: { tile: 0x9c2a2a, unit: 0xff5544, name: 'Crimson Legion' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'CAVALRY', 'PIKEMAN', 'SIEGE'],
@@ -17,50 +17,50 @@ export const FACTION_DEFS = {
         },
         passive: { attackBonus: 1, desc: '+1 attack to all your units.' },
         king: { name: 'Warlord Kael', class: 'WARLORD',
-                active: { id: 'bloodlust', name: 'Bloodlust', cooldown: 5,
+                active: { id: 'bloodlust', name: 'Bloodlust', cooldown: 4,
                           desc: '+2 attack to all your units for the rest of this turn.' } }
     },
     verdant: {
-        id: 'verdant', name: 'Verdant Realm', emoji: '🌿',
+        id: 'verdant', name: 'Verdant Realm', emoji: '\u{1F33F}',
         color: { tile: 0x2f7a3a, unit: 0x88dd44, name: 'Verdant Realm' },
         aiPersonality: 'ECONOMIC',
         roster: ['INFANTRY', 'ARCHER', 'SCOUT'],
         unitMods: {
             ARCHER: { attack: 1, hp: 2 }
         },
-        passive: { foodPerTurn: 15, desc: '+15 food every turn.' },
+        passive: { foodPerTurn: 8, healInForest: 2, desc: '+8 food every turn. Units heal +2 HP/turn in forest.' },
         king: { name: 'Druid Lyra', class: 'GUARDIAN',
-                active: { id: 'harvest', name: 'Harvest', cooldown: 3,
-                          desc: 'Instantly gain +80 food and +40 gold.' } }
+                active: { id: 'harvest', name: 'Harvest', cooldown: 4,
+                          desc: 'Instantly gain +40 food and +20 gold.' } }
     },
     violet: {
-        id: 'violet', name: 'Violet Order', emoji: '🔮',
+        id: 'violet', name: 'Violet Order', emoji: '\u{1F52E}',
         color: { tile: 0x6a2fa0, unit: 0xcc66ff, name: 'Violet Order' },
         aiPersonality: 'ECONOMIC',
         roster: ['INFANTRY', 'ARCHER', 'ARTILLERY', 'SIEGE'],
         unitMods: {
             ARTILLERY: { attack: 2 }
         },
-        passive: { visionBonus: 2, desc: '+2 vision radius for your units and lords.' },
+        passive: { visionBonus: 2, scoutMoveBonus: 1, desc: '+2 vision radius for your units and lords. Scouts gain +1 move range.' },
         king: { name: 'Archmage Magnus', class: 'CONQUEROR',
                 active: { id: 'scry', name: 'Scry', cooldown: 5,
                           desc: 'Reveal every enemy city on the map for 1 turn.' } }
     },
     azure: {
-        id: 'azure', name: 'Azure Dominion', emoji: '🛡️',
+        id: 'azure', name: 'Azure Dominion', emoji: '\u{1F6E1}\uFE0F',
         color: { tile: 0x234c9c, unit: 0x4488ff, name: 'Azure Dominion' },
         aiPersonality: 'DEFENSIVE',
         roster: ['INFANTRY', 'PIKEMAN', 'ARCHER', 'ARTILLERY'],
         unitMods: {
             INFANTRY: { defense: 2, hp: 4 }
         },
-        passive: { defenseBonus: 1, desc: '+1 defense to all your units.' },
+        passive: { defenseBonus: 1, kingRegen: 3, desc: '+1 defense to all your units. King regenerates +3 HP/turn in any own city (instead of +5 only in capital).' },
         king: { name: 'Marshal Edmund', class: 'GUARDIAN',
-                active: { id: 'bulwark', name: 'Bulwark', cooldown: 5,
+                active: { id: 'bulwark', name: 'Bulwark', cooldown: 4,
                           desc: '+2 defense to all your units for the rest of this turn.' } }
     },
     obsidian: {
-        id: 'obsidian', name: 'Obsidian Pact', emoji: '💀',
+        id: 'obsidian', name: 'Obsidian Pact', emoji: '\u{1F480}',
         color: { tile: 0x101012, unit: 0x5a5a66, name: 'Obsidian Pact' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'CAVALRY', 'SIEGE', 'SCOUT'],
@@ -68,8 +68,8 @@ export const FACTION_DEFS = {
             INFANTRY: { attack: 1 },
             SCOUT: { attack: 0 }
         },
-        passive: { respawnOnKill: true, respawnChance: 0.15,
-                   desc: '15% chance to revive a fallen unit whenever one of your units destroys an enemy.' },
+        passive: { respawnOnKill: true, respawnChance: 0.12, unitCostReduction: 0.1,
+                   desc: '12% chance to revive a fallen unit when one of your units destroys an enemy. All units cost 10% less gold.' },
         king: { name: 'Necromancer Vex', class: 'WARLORD',
                 active: { id: 'raise', name: 'Raise Dead', cooldown: 4,
                           desc: 'Revive your most recently fallen unit at the capital.' } }
@@ -104,7 +104,7 @@ export const FACTION_DEFS = {
                           desc: 'All your cities gain +3 fortification; siege units gain +3 attack this turn.' } }
     },
     shadow: {
-        id: 'shadow', name: 'Shadow Court', emoji: '🌑',
+        id: 'shadow', name: 'Shadow Court', emoji: '\u{1F31D}',
         color: { tile: 0x2a1a3a, unit: 0x6a4a8a, name: 'Shadow Court' },
         aiPersonality: 'ECONOMIC',
         roster: ['INFANTRY', 'ARCHER', 'SCOUT', 'LONGBOWMAN'],
@@ -112,7 +112,7 @@ export const FACTION_DEFS = {
             SCOUT: { attack: 1, hp: 2 },
             LONGBOWMAN: { attack: 1 }
         },
-        passive: { freeConcealTurns: 1, desc: 'Units start with 1 concealment turn already done (faster ambushes).' },
+        passive: { freeConcealTurns: 1, forestMoveBonus: 1, desc: 'Units start with 1 concealment turn done (faster ambushes). Units gain +1 move range in forest.' },
         king: { name: 'Spymaster Nyx', class: 'GUARDIAN',
                 active: { id: 'vanish', name: 'Vanish', cooldown: 4,
                           desc: 'All your units on forest/mountain tiles become immediately concealed.' } }
@@ -132,7 +132,7 @@ export const FACTION_DEFS = {
                           desc: 'Deal 2 damage to all enemy units within 2 tiles of any of your units.' } }
     },
     frost: {
-        id: 'frost', name: 'Frost Clan', emoji: '❄️',
+        id: 'frost', name: 'Frost Clan', emoji: '\u2744\uFE0F',
         color: { tile: 0x5a8aaa, unit: 0xaaddff, name: 'Frost Clan' },
         aiPersonality: 'DEFENSIVE',
         roster: ['INFANTRY', 'PIKEMAN', 'ARCHER', 'SCOUT'],
@@ -140,24 +140,24 @@ export const FACTION_DEFS = {
             PIKEMAN: { defense: 2, hp: 2 },
             ARCHER: { hp: 2 }
         },
-        passive: { terrainDefenseBonus: { FOREST: 2, TUNDRA: 2, MOUNTAIN: 2 },
-                   desc: '+2 defense in forest, tundra, and mountain terrain.' },
+        passive: { terrainDefenseBonus: { FOREST: 2, TUNDRA: 2, MOUNTAIN: 2 }, kingRegen: 4,
+                   desc: '+2 defense in forest, tundra, and mountain terrain. King regenerates +4 HP/turn in any own city.' },
         king: { name: 'Jarl Sigrid', class: 'GUARDIAN',
-                active: { id: 'wintersgrasp', name: "Winter's Grasp", cooldown: 5,
+                active: { id: 'wintersgrasp', name: "Winter's Grasp", cooldown: 4,
                           desc: 'Freeze all enemy units within 3 tiles of your king (they cannot move next turn).' } }
     },
     // --- New European Factions (Phase G) ---
     roman: {
-        id: 'roman', name: 'Roman Legion', emoji: '🏛️',
+        id: 'roman', name: 'Roman Legion', emoji: '\u{1F3DB}\uFE0F',
         color: { tile: 0x6a1b4a, unit: 0x993366, name: 'Roman Legion' },
         aiPersonality: 'AGGRESSIVE',
         roster: ['INFANTRY', 'PIKEMAN', 'SIEGE', 'LEGIONNAIRE'],
         unitMods: {
-            INFANTRY: { defense: 1, hp: 2 },
+            INFANTRY: { defense: 1, hp: 2, moveRange: 1 },
             LEGIONNAIRE: { defense: 1, costGoldMult: 0.75 },
             SIEGE: { costGoldMult: 0.85 }
         },
-        passive: { attackBonus: 1, cityCaptureBonus: 1, desc: '+1 attack to all units. +1 damage when capturing cities.' },
+        passive: { attackBonus: 1, cityCaptureBonus: 1, desc: '+1 attack to all units. +1 damage when capturing cities. Infantry +1 move range.' },
         king: { name: 'Consul Marcus', class: 'WARLORD',
                 active: { id: 'discipline', name: 'Discipline', cooldown: 5,
                           desc: '+2 attack and +1 defense to all units for the rest of this turn.' } }
@@ -189,8 +189,8 @@ export const FACTION_DEFS = {
         },
         passive: { diplomacyBonus: 10, fortifiedDefenseBonus: 2, desc: '+10 starting reputation with all factions. Fortified units gain +2 defense.' },
         king: { name: 'Emperor Constantine', class: 'GUARDIAN',
-                active: { id: 'golden_gate', name: 'Golden Gate', cooldown: 5,
-                          desc: 'All cities gain +5 fortification. All units heal to full HP.' } }
+                active: { id: 'golden_gate', name: 'Golden Gate', cooldown: 6,
+                          desc: 'All cities gain +3 fortification. All units heal 50% of missing HP.' } }
     },
     spanish: {
         id: 'spanish', name: 'Spanish Conquistadors', emoji: '🗡️',
@@ -204,8 +204,8 @@ export const FACTION_DEFS = {
         },
         passive: { settlerCostReduction: 0.3, goldPerConquest: 25, desc: 'Settlers cost 30% less. Gain 25 gold when conquering a city.' },
         king: { name: 'King Ferdinand', class: 'CONQUEROR',
-                active: { id: 'manifest_destiny', name: 'Manifest Destiny', cooldown: 5,
-                          desc: 'All CONQUISTADOR units gain +2 move and double attack range this turn. Cities produce a free Settler if you have fewer than 3 cities.' } }
+                active: { id: 'manifest_destiny', name: 'Manifest Destiny', cooldown: 4,
+                          desc: 'All CONQUISTADOR units gain +2 move and double attack range this turn. Cities produce a free Settler if you have fewer than 5 cities.' } }
     },
     polish: {
         id: 'polish', name: 'Polish Winged Hussars', emoji: '🐎',
@@ -253,6 +253,10 @@ export function getUnitCostFor(unitType, def) {
     if (unitType === 'SETTLER' && def && def.passive && def.passive.settlerCostReduction && base.gold) {
         base.gold = Math.max(0, Math.floor(base.gold * (1 - def.passive.settlerCostReduction)));
     }
+    // Obsidian Pact: all units cost 10% less gold (unitCostReduction passive).
+    if (def && def.passive && def.passive.unitCostReduction && base.gold) {
+        base.gold = Math.max(0, Math.floor(base.gold * (1 - def.passive.unitCostReduction)));
+    }
     return base;
 }
 
@@ -276,6 +280,17 @@ export function getUnitStatsFor(unitType, def) {
     // Storm Kingdom: naval move bonus
     if (def && def.id === 'storm' && def.passive.navalMoveBonus && base.naval) {
         out.moveRange += def.passive.navalMoveBonus;
+    }
+    // Violet Order: scout move bonus (scouts and exploration units)
+    if (def && def.passive && def.passive.scoutMoveBonus &&
+        (unitType === 'SCOUT' || unitType === 'FRONTIERSMAN')) {
+        out.moveRange += def.passive.scoutMoveBonus;
+    }
+    // Shadow Court: forest move bonus (applied as a base stat bump; the
+    // terrain-specific bonus is also checked at move time in game.js)
+    if (def && def.passive && def.passive.forestMoveBonus &&
+        (unitType === 'SCOUT' || unitType === 'ARCHER' || unitType === 'LONGBOWMAN' || unitType === 'INFANTRY')) {
+        out.moveRange += def.passive.forestMoveBonus;
     }
     return out;
 }

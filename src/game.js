@@ -3561,9 +3561,9 @@ export class Game {
                 break;
             case 'harvest': {
                 const r = this.gameState.resources[faction];
-                r.food = (r.food || 0) + 80;
-                r.gold = (r.gold || 0) + 40;
-                this.log(`${name}: King ${king.name} calls a Harvest! +80 food, +40 gold.`);
+                r.food = (r.food || 0) + 40;
+                r.gold = (r.gold || 0) + 20;
+                this.log(`${name}: King ${king.name} calls a Harvest! +40 food, +20 gold.`);
                 break;
             }
             case 'scry':
@@ -3642,33 +3642,34 @@ export class Game {
                 break;
             case 'golden_gate': {
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 0 };
-                // +5 fortification to all owned cities.
+                // +3 fortification to all owned cities (was +5).
                 let citiesUpgraded = 0;
                 for (const t of this.tiles.values()) {
                     if (t.terrain === 'CITY' && t.owner === faction) {
-                        const max = t.fortMax || (t.fortification || 0) + 5;
-                        t.fortification = Math.min(max, (t.fortification || 0) + 5);
+                        const max = t.fortMax || (t.fortification || 0) + 3;
+                        t.fortification = Math.min(max, (t.fortification || 0) + 3);
                         citiesUpgraded++;
                     }
                 }
-                // Heal all friendly units to full HP (the dead stay dead — no resurrection).
+                // Heal all friendly units 50% of missing HP (was full heal).
                 let healed = 0;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner !== faction) continue;
                     if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
-                        u.hp = u.maxHp || 10;
+                        const missing = (u.maxHp || 10) - u.hp;
+                        u.hp = Math.min(u.maxHp || 10, u.hp + Math.ceil(missing * 0.5));
                         healed++;
                     }
                 }
-                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +5 fort, ${healed} units healed to full.`);
+                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +3 fort, ${healed} units healed 50%.`);
                 break;
             }
             case 'manifest_destiny': {
                 this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
-                // Free Settler if fewer than 3 cities.
+                // Free Settler if fewer than 5 cities.
                 const ownedCities = getOwnedCities(this.tiles, faction);
                 let settlerMsg = '';
-                if (ownedCities.length < 3 && ownedCities.length > 0) {
+                if (ownedCities.length < 5 && ownedCities.length > 0) {
                     const cap = ownedCities[0];
                     const settler = createUnit('SETTLER', faction, cap.x, cap.z, { factionDef: def });
                     this.gameState.units.set(settler.id, settler);
@@ -5100,7 +5101,7 @@ export class Game {
             case 'golden_gate':
                 return threatened || enemyNearKing;
             case 'manifest_destiny':
-                return enemyCityNear || ownCities.length < 3;
+                return enemyCityNear || ownCities.length < 5;
             case 'winged_charge':
                 return enemyNearKing || enemyUnits.length >= 2;
         }

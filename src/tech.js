@@ -85,12 +85,15 @@ export const TECHS = {
     CHIVALRY: {
         id: 'CHIVALRY', name: 'Chivalry', era: 'medieval', cost: 35,
         prerequisites: ['MATHEMATICS', 'ANIMAL_HUSBANDRY'],
-        // BERSERKER (viking unique) and WINGED_HUSSAR (polish unique) are
-        // faction-locked at train time; RAIDER and MERCENARY_KNIGHT are the
-        // generic replacements so other factions still get a unit from this tech.
-        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }, { type: 'unit', id: 'RAIDER' }, { type: 'unit', id: 'MERCENARY_KNIGHT' }],
+        // BERSERKER (viking unique), WINGED_HUSSAR (polish unique), and
+        // CONQUISTADOR (spanish unique) are faction-locked at train time;
+        // RAIDER and MERCENARY_KNIGHT are the generic replacements so other
+        // factions still get a unit from this tech. CONQUISTADOR was moved
+        // here from GUNPOWDER so the Spanish unlock their signature unit in
+        // the medieval era instead of waiting for industrial.
+        unlocks: [{ type: 'unit', id: 'CATAPHRACT' }, { type: 'unit', id: 'CHARIOT' }, { type: 'unit', id: 'BERSERKER' }, { type: 'unit', id: 'WINGED_HUSSAR' }, { type: 'unit', id: 'CONQUISTADOR' }, { type: 'unit', id: 'RAIDER' }, { type: 'unit', id: 'MERCENARY_KNIGHT' }],
         bonus: { lordXpBonus: 0.25 },
-        desc: 'Unlocks Cataphract, Chariot, Berserker (viking unique), Winged Hussar (polish unique), Raider, and Mercenary Knight. Lords gain 25% more XP.'
+        desc: 'Unlocks Cataphract, Chariot, Berserker (viking unique), Winged Hussar (polish unique), Conquistador (spanish unique), Raider, and Mercenary Knight. Lords gain 25% more XP.'
     },
     CARTOGRAPHY: {
         id: 'CARTOGRAPHY', name: 'Cartography', era: 'medieval', cost: 35,
@@ -111,11 +114,12 @@ export const TECHS = {
     GUNPOWDER: {
         id: 'GUNPOWDER', name: 'Gunpowder', era: 'industrial', cost: 150,
         prerequisites: ['SIEGE_CRAFT', 'CHIVALRY'],
-        // CONQUISTADOR is the spanish faction-unique; FRONTIERSMAN is the
-        // generic replacement for every other faction.
-        unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'CONQUISTADOR' }, { type: 'unit', id: 'FRONTIERSMAN' }],
+        // CONQUISTADOR was moved to CHIVALRY (medieval) so the Spanish unlock
+        // it earlier; FRONTIERSMAN is the generic replacement for every other
+        // faction.
+        unlocks: [{ type: 'unit', id: 'ARTILLERY' }, { type: 'unit', id: 'FRONTIERSMAN' }],
         bonus: { rangedDamageBonus: 1 },
-        desc: 'Unlocks Artillery, Conquistador (spanish unique), and Frontiersman. Ranged units deal +1 damage.'
+        desc: 'Unlocks Artillery and Frontiersman. Ranged units deal +1 damage.'
     },
     MEDICINE: {
         id: 'MEDICINE', name: 'Medicine', era: 'industrial', cost: 150,

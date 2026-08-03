@@ -278,7 +278,7 @@ describe('healing does not resurrect 0-hp combatants', () => {
 
         g.activateKing('player');
 
-        expect(wounded.hp).toBe(10); // the living are healed to full
+        expect(wounded.hp).toBe(7); // the living are healed 50% of missing (3 + ceil(7*0.5) = 7)
         expect(dead.hp).toBe(0);     // the dead stay dead
     });
 });

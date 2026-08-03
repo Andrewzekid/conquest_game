@@ -4125,6 +4125,35 @@ const ROLE_ORDER = {
 
 const ANTI_CAVALRY_TYPES = new Set(['HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM']);
 
+/** Faction specialty units — each faction's signature/unique unit that the AI
+ *  should prioritize when it's in the roster and affordable. These get boosted
+ *  to the front of the role-order pick so the AI actually fields its unique
+ *  units (LEGIONNAIRE, BERSERKER, CONQUISTADOR, etc.) instead of always
+ *  falling back to generic INFANTRY/CAVALRY. Only faction-unique units are
+ *  listed here — generic units like CAVALRY are already in ROLE_ORDER and
+ *  shouldn't override era-appropriate picks. */
+const FACTION_SPECIALTY_UNITS = {
+    roman:    ['LEGIONNAIRE'],
+    viking:   ['BERSERKER'],
+    byzantine:['VARANGIAN_GUARD'],
+    spanish:  ['CONQUISTADOR'],
+    polish:   ['WINGED_HUSSAR'],
+};
+
+/** Get the specialty unit(s) for a faction that are in the roster and
+ *  currently affordable. Returns an array (possibly empty) in priority order. */
+function affordableSpecialty(factionDef, roster, resources) {
+    if (!factionDef || !factionDef.id) return [];
+    const specs = FACTION_SPECIALTY_UNITS[factionDef.id];
+    if (!specs) return [];
+    const out = [];
+    for (const t of specs) {
+        if (!roster.includes(t)) continue;
+        if (canAfford(t, resources, getUnitCostFor(t, factionDef))) out.push(t);
+    }
+    return out;
+}
+
 /** Adjust composition targets based on what the enemy is fielding.
  *  Cavalry hard-counters infantry and artillery, so increase the cavalry share
  *  when the enemy has many of those and few anti-cavalry specialists. Pull back
@@ -4322,6 +4351,35 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         }
     }
     if (total >= 4) {
+        // Anti-cavalry reactive training: when the enemy is fielding a lot of
+        // cavalry and this faction has anti-cavalry specialists (HALBERDIER,
+        // PIKE_MASTER, BAYONET_RIFLE, ANTI_TANK_GUN, RPG_TEAM) unlocked and
+        // affordable, train one. The AI previously NEVER trained these units
+        // because they're classified as 'melee' and buried deep in the
+        // ROLE_ORDER — the deficit-based pick always chose INFANTRY or
+        // LINE_INFANTRY instead. This check fires when enemy cavalry >= 3 and
+        // the faction's anti-cav count is below ~20% of enemy cavalry.
+        if (isAtWar) {
+            let enemyCav = 0;
+            let myAntiCav = 0;
+            for (const u of (units.values ? units.values() : units)) {
+                if (u.owner === owner) {
+                    if (ANTI_CAVALRY_TYPES.has(u.type)) myAntiCav++;
+                    continue;
+                }
+                if (!isAtWar(u.owner)) continue;
+                const r = unitRole(u.type);
+                if (r === 'cavalry') enemyCav++;
+            }
+            if (enemyCav >= 3 && myAntiCav < Math.ceil(enemyCav * 0.3)) {
+                const antiCavOrder = ['RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER'];
+                for (const t of antiCavOrder) {
+                    if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) {
+                        return t;
+                    }
+                }
+            }
+        }
         // Cavalry floor: factions that can field cavalry should train at least
         // one mounted unit once the initial melee screen is secured, so the army
         // doesn't stay pure infantry. Skip when playing defensively or when the
@@ -4336,7 +4394,13 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
             }
         }
         const role = roleDeficit(roster, counts, total, target);
-        const order = [...(ROLE_ORDER[role] || [])];
+        // Boost faction specialty units to the front of the role order so they
+        // are picked before generic units of the same role (a Roman with a
+        // melee deficit picks LEGIONNAIRE before INFANTRY, a Spanish with a
+        // cavalry deficit picks CONQUISTADOR before CAVALRY, etc.).
+        const roleSpecs = affordableSpecialty(factionDef, roster, resources)
+            .filter(t => unitRole(t) === role);
+        const order = [...roleSpecs, ...(ROLE_ORDER[role] || []).filter(t => !roleSpecs.includes(t))];
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }
