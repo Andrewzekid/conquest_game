@@ -4517,12 +4517,21 @@ function findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units = null, 
     // that breached a city from 2 tiles away capture it on the next turn
     // by moving onto it. The capture action teleports the unit onto the
     // city tile, so we just need to find the capturable city within range.
-    const moveRange = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].moveRange) || 1;
-    if (moveRange > 1) {
-        for (let dx = -moveRange; dx <= moveRange; dx++) {
-            for (let dz = -moveRange; dz <= moveRange; dz++) {
+    const unitDef = UNIT_TYPE[unit.type] || {};
+    const moveRange = unitDef.moveRange || 1;
+    // Ranged siege engines (ARTILLERY moveRange 1 / attackRange 2, CANNON 1/2,
+    // SIEGE_CANNON 1/3, MORTAR 1/3, ...) shell a city from farther than they
+    // can walk in one move. Search up to their attack range so a siege engine
+    // that breached a city from range can claim it — otherwise the artillery
+    // stands at range beside an empty, breached city it can no longer besiege,
+    // and the city sits uncaptured forever (the "breach but never capture"
+    // bug).
+    const searchRange = unitDef.besiege ? Math.max(moveRange, unitDef.attackRange || 1) : moveRange;
+    if (searchRange > 1) {
+        for (let dx = -searchRange; dx <= searchRange; dx++) {
+            for (let dz = -searchRange; dz <= searchRange; dz++) {
                 if (dx === 0 && dz === 0) continue;
-                if (Math.abs(dx) + Math.abs(dz) > moveRange) continue;
+                if (Math.abs(dx) + Math.abs(dz) > searchRange) continue;
                 // Skip tiles already checked in the adjacent pass.
                 if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue;
                 const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);

@@ -209,7 +209,7 @@ export const FACTION_DEFS = {
         passive: { settlerCostReduction: 0.3, goldPerConquest: 25, desc: 'Settlers cost 30% less. Gain 25 gold when conquering a city.' },
         king: { name: 'King Ferdinand', class: 'CONQUEROR',
                 active: { id: 'manifest_destiny', name: 'Manifest Destiny', cooldown: 4,
-                          desc: 'All CONQUISTADOR units gain +2 move and double attack range this turn. Cities produce a free Settler if you have fewer than 5 cities.' } }
+                          desc: 'All CONQUISTADOR units gain +2 move and double attack range this turn. Each city spawns a free Conquistador if you have fewer than 3 cities.' } }
     },
     polish: {
         id: 'polish', name: 'Polish Winged Hussars', emoji: '\u{1F40E}',

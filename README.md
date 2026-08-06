@@ -54,7 +54,7 @@ The **Spectate** checkbox lets you watch AI-only games with a live multi-panel d
 <td width="50%">
 
 ### 🏛 Lead a Faction
-Choose from **15 thematic factions**, each with a unique unit roster, passive bonuses, and a king active ability. Every faction has been tuned for balance — from the Crimson Legion's devastating Bloodlust (+5 attack) to the Verdant Realm's forest healing, the Spanish Conquistadors' early expansion (free settlers until 5 cities, Conquistador unlocked at Chivalry), and the Polish Winged Hussars' devastating cavalry charges.
+Choose from **15 thematic factions**, each with a unique unit roster, passive bonuses, and a king active ability. Every faction has been tuned for balance — from the Crimson Legion's devastating Bloodlust (+5 attack) to the Verdant Realm's forest healing, the Spanish Conquistadors' early expansion (free Conquistador in each city while under 3 cities, Conquistador unlocked at Chivalry), and the Polish Winged Hussars' devastating cavalry charges.
 
 </td>
 <td width="50%">

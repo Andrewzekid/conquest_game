@@ -3667,16 +3667,18 @@ export class Game {
             }
             case 'manifest_destiny': {
                 this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
-                // Free Settler if fewer than 5 cities.
+                // If fewer than 3 cities, each city spawns a free Conquistador.
+                // Spawned directly via createUnit, so no tech-tree requirement.
                 const ownedCities = getOwnedCities(this.tiles, faction);
-                let settlerMsg = '';
-                if (ownedCities.length < 5 && ownedCities.length > 0) {
-                    const cap = ownedCities[0];
-                    const settler = createUnit('SETTLER', faction, cap.x, cap.z, { factionDef: def });
-                    this.gameState.units.set(settler.id, settler);
-                    settlerMsg = ' Free Settler spawned!';
+                let spawned = 0;
+                if (ownedCities.length < 3) {
+                    for (const city of ownedCities) {
+                        const conquistador = createUnit('CONQUISTADOR', faction, city.x, city.z, { factionDef: def });
+                        this.gameState.units.set(conquistador.id, conquistador);
+                        spawned++;
+                    }
                 }
-                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${settlerMsg}`);
+                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${spawned ? ` ${spawned} Conquistador${spawned > 1 ? 's' : ''} spawned!` : ''}`);
                 break;
             }
             case 'winged_charge':
@@ -5104,7 +5106,7 @@ export class Game {
             case 'golden_gate':
                 return threatened || enemyNearKing;
             case 'manifest_destiny':
-                return enemyCityNear || ownCities.length < 5;
+                return enemyCityNear || ownCities.length < 3;
             case 'winged_charge':
                 return enemyNearKing || enemyUnits.length >= 2;
         }
