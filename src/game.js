@@ -5191,6 +5191,13 @@ export class Game {
     }
 
     runAITurn(faction) {
+        // FIRST: capture any breached, empty enemy/neutral cities that are
+        // already adjacent to our military units. This prevents the AI from
+        // clearing a city and then spending the rest of the turn (and future
+        // turns) training or issuing redundant siege orders while the city sits
+        // uncaptured.
+        this._aiAutoCaptureForFaction(faction);
+
         const pool = this.gameState.resources[faction];
         const def = this.factionDefs[faction];
         const influence = getInfluencedTiles(this.tiles, faction);
@@ -5963,6 +5970,22 @@ export class Game {
             if (this.renderer) this.renderer.updateTileTerrain(tile);
             this.checkVictory();
         }
+    }
+
+    /** Faction-level auto-capture: at the start of an AI faction's turn, any
+     *  of its military units adjacent to a breached (fortification 0), empty,
+     *  capturable city immediately walks in and claims it. This is the first
+     *  thing the AI does on its turn, so a city that was breached last turn is
+     *  never left sitting while the faction trains, moves lords, or issues
+     *  redundant siege orders. */
+    _aiAutoCaptureForFaction(faction) {
+        const pool = this.gameState.resources[faction];
+        if (!pool || pool.gold < CAPTURE_COST) return;
+        const factionName = this.factionColors[faction] ? this.factionColors[faction].name : faction;
+        const isAtWar = (other) => !this.gameState.diplomacy || canAttack(this.gameState.diplomacy, faction, other);
+        for (const tile of this.tiles.values()) {            if (tile.terrain !== 'CITY') continue;            if (tile.owner === faction) continue;            if ((tile.fortification || 0) > 0) continue;            if (tile.owner && !isAtWar(tile.owner)) continue;            // City must be empty: no unit or living lord on the tile.            let occupied = false;            for (const u of this.gameState.units.values()) {                if (u.x === tile.x && u.z === tile.z) { occupied = true; break; }            }            if (!occupied && this.gameState.lords) {                for (const l of this.gameState.lords) {                    if (l && l.hp > 0 && l.x === tile.x && l.z === tile.z) { occupied = true; break; }                }            }            if (occupied) continue;            // Find the closest adjacent friendly military land unit that can act.            let bestUnit = null, bestDist = Infinity;            for (const u of this.gameState.units.values()) {                if (u.owner !== faction) continue;                if (u.hasMovedThisTurn || u.hasAttackedThisTurn) continue;                if (u.type === 'SETTLER' || u.type === 'WORKER' || u.type === 'SCOUT') continue;                const ut = UNIT_TYPE[u.type];                if (!ut || ut.naval) continue;                const d = Math.max(Math.abs(u.x - tile.x), Math.abs(u.z - tile.z));                if (d !== 1) continue;                if (d < bestDist) { bestDist = d; bestUnit = u; }            }            if (!bestUnit) continue;            pool.gold -= CAPTURE_COST;            const prevOwner = tile.owner;            const wasNeutral = !prevOwner;            captureCityTerritory(this.tiles, tile, faction, this.gameState.structures, this.gameState.buildings, this.gameState.buildingState)
+                .forEach(m => this.log(`${factionName}: ${m}`));
+            this._awardCaptureGrievances(tile, faction, prevOwner, wasNeutral);            bestUnit.x = tile.x; bestUnit.z = tile.z; bestUnit.hasMovedThisTurn = true;            if (this.renderer) this.renderer.updateTileTerrain(tile);            this.checkVictory();        }
     }
 
     /** End the player's turn (called from the End Turn button in ui.js, which also
