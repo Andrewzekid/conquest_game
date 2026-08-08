@@ -2901,6 +2901,40 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         groupObjectives.set(g, objective);
         groupStances.set(g, stance);
     }
+
+    // Redirect idle siege/artillery groups toward the nearest conquest objective.
+    // Without this, siege engines in patrol/hold groups sit at a home city while
+    // the army campaigns, leaving cities un-besieged and artillery stuck on
+    // "hold" objectives. Once redirected they march to the front under 'siege'
+    // stance so planGroup's advance logic brings them into range.
+    if (atWar && conquest.size > 0) {
+        const targets = [];
+        if (strategicTarget) targets.push(strategicTarget);
+        for (const cg of conquest) {
+            const obj = groupObjectives.get(cg);
+            if (obj) targets.push(obj);
+        }
+        if (targets.length) {
+            for (const g of groups) {
+                if (conquest.has(g)) continue;
+                const stance = groupStances.get(g);
+                if (stance !== 'hold' && stance !== 'patrol') continue;
+                const hasSiege = g.units.some(u => SIEGE_TYPES.has(u.type));
+                if (!hasSiege) continue;
+                const gc = groupCentroid(g);
+                let nearest = null, nearestD = Infinity;
+                for (const t of targets) {
+                    const d = manhattan(gc.x, gc.z, t.x, t.z);
+                    if (d < nearestD) { nearestD = d; nearest = t; }
+                }
+                if (nearest) {
+                    groupObjectives.set(g, { x: nearest.x, z: nearest.z });
+                    groupStances.set(g, 'siege');
+                }
+            }
+        }
+    }
+
     if (atWar) {
         for (const g of groups) {
             if (!groupIsInTrouble(g, units, owner, atWar, isAtWar)) continue;
