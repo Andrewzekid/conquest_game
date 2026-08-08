@@ -2134,7 +2134,8 @@ export class Game {
         if (this.renderer && this.renderer.addImpact) {
             this.renderer.addImpact(primary.x, primary.z, attacker.x, attacker.z);
         }
-        const splash = Math.max(1, Math.floor((primaryDamage || 0) * AOE_SPLASH_FRACTION));
+        const splashFraction = atkDef.splashMult || AOE_SPLASH_FRACTION;
+        const splash = Math.max(1, Math.floor((primaryDamage || 0) * splashFraction));
         const splashVictims = [];
         for (const u of this.gameState.units.values()) {
             if (u.id === primary.id) continue;
