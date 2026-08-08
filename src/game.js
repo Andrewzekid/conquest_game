@@ -2623,8 +2623,8 @@ export class Game {
      *  cargo. The unit is stowed (boarded flag) and stops rendering until
      *  disembarked. Boarding uses the unit's move for the turn. */
     handleBoard(unit, transport) {
-        if (!unit || !transport) return;
-        if (unit.owner !== PLAYER_FACTION || transport.owner !== PLAYER_FACTION) return;
+        if (!unit || !transport) { this.log('Boarding failed: invalid unit or transport.'); return; }
+        if (unit.owner !== PLAYER_FACTION || transport.owner !== PLAYER_FACTION) { this.log('Boarding failed: unit or transport is not owned by you.'); return; }
         const ndef = UNIT_TYPE[unit.type], tdef = UNIT_TYPE[transport.type];
         if (!ndef || ndef.naval) { this.log('Only land units can board a transport.'); return; }
         if (!tdef || !tdef.naval || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) { this.log('Only transports can be boarded.'); return; }
