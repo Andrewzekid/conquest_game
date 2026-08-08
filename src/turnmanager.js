@@ -23,6 +23,16 @@ function researchSpeedMultiplier(faction, gameState) {
     return 1 + techBonus + scholarBonus;
 }
 
+/** Flat research acceleration that is highest at the start of the game and
+ *  tapers off as empires build Universities/Research Institutes. This keeps
+ *  the early eras from dragging while preserving the value of science
+ *  infrastructure in the mid/late game. */
+function earlyResearchAcceleration(turn) {
+    if (!turn || turn <= 40) return 6;
+    if (turn <= 80) return 3;
+    return 1;
+}
+
 /** Medics heal adjacent (Chebyshev-1) friendly non-medic units by their `heal`
  *  amount, capped at maxHp. Applied to every faction at turn start. */
 function processMedicHeal(units) {
@@ -188,7 +198,8 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         // Tech tree: accumulate research for the player each turn.
         if (gameState.techState) {
             const rawPts = calculateResearchOutput(gameState.tiles, PLAYER_FACTION, gameState.buildings);
-            const researchPts = rawPts > 0 ? Math.floor(rawPts * researchSpeedMultiplier(PLAYER_FACTION, gameState)) : 0;
+            const acceleratedPts = rawPts + earlyResearchAcceleration(gameState.turn);
+            const researchPts = acceleratedPts > 0 ? Math.floor(acceleratedPts * researchSpeedMultiplier(PLAYER_FACTION, gameState)) : 0;
             if (researchPts > 0) {
                 const completed = addResearch(gameState.techState, researchPts);
                 if (completed && completed.length > 0) {
@@ -220,12 +231,11 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                     autoSelectResearch(aiTs, personality);
                 }
                 const rawPts = calculateResearchOutput(gameState.tiles, ai, gameState.buildings);
-                // AI research bonus: AI factions get +2 flat research per turn
-                // on top of their university-based research. This ensures AI
-                // tech progresses even when they have few universities, matching
-                // the player's tendency to heavily invest in science.
-                const aiResearchBonus = 2;
-                const totalResearch = rawPts > 0 ? Math.floor((rawPts + aiResearchBonus) * researchSpeedMultiplier(ai, gameState)) : 0;
+                // AI uses the same early-game acceleration as the player so
+                // every faction advances through the early eras at a reasonable
+                // pace regardless of city count.
+                const acceleratedPts = rawPts + earlyResearchAcceleration(gameState.turn);
+                const totalResearch = acceleratedPts > 0 ? Math.floor(acceleratedPts * researchSpeedMultiplier(ai, gameState)) : 0;
                 if (totalResearch > 0) {
                     const completed = addResearch(aiTs, totalResearch);
                     if (completed && completed.length) {
