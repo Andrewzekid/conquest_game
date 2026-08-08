@@ -2368,6 +2368,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                     continue;
                 }
             }
+            // Siege objective: AOE warships (Destroyer, Battleship, etc.) shell
+            // fortified coastal cities before picking off weak units, so naval
+            // firepower actually contributes to breaking the target city.
+            const siegeActive = (activeObjectives && activeObjectives.siege) || goalKind === 'conquest';
+            if (siegeActive && atWar && !unit.hasAttackedThisTurn) {
+                const ec = findNavalSiegeTarget(unit, tiles, owner, isAtWar, true);
+                if (ec) {
+                    actions.push({ type: 'besiege', unitId: unit.id, tileKey: `${ec.x},${ec.z}` });
+                    acted.add(unit.id);
+                    continue;
+                }
+            }
             // All other roles (strike, amphibious, besiege fallback): attack enemy units in range.
             if (atWar && !unit.hasAttackedThisTurn) {
                 const tgt = findAttackTarget(unit, units, isAtWar);
@@ -5131,10 +5143,13 @@ function buildArmyGroups(myUnits, lords, owner, land = null) {
 }
 
 /** Pick a fortified enemy coastal city a naval siege unit can shell this turn.
- *  Returns the city tile or null. */
-function findNavalSiegeTarget(unit, tiles, owner, isAtWar) {
-    if (!UNIT_TYPE[unit.type].besiege) return null;
-    const range = UNIT_TYPE[unit.type].attackRange || 1;
+ *  Returns the city tile or null. If `allowAoeNaval` is true, any ranged naval
+ *  unit with AOE (e.g. Destroyer) may also pick a city target during a siege
+ *  objective. */
+function findNavalSiegeTarget(unit, tiles, owner, isAtWar, allowAoeNaval = false) {
+    const ut = UNIT_TYPE[unit.type];
+    if (!ut.besiege && !(allowAoeNaval && ut.naval && ut.ranged && ut.aoe)) return null;
+    const range = ut.attackRange || 1;
     const found = range > 1
         ? findTargetCityWithin(unit, tiles, owner, isAtWar, range)
         : null;

@@ -2155,6 +2155,27 @@ export class Game {
                 }
             }
         }
+        // Naval AOE (Destroyer, Battleship, etc.): shelling also chips nearby
+        // enemy coastal-city fortifications even when the primary target is a unit.
+        if (atkDef.naval) {
+            const radius = atkDef.aoeRadius || AOE_RADIUS;
+            let chippedCities = 0;
+            for (const t of this.tiles.values()) {
+                if (t.terrain !== 'CITY') continue;
+                if (!t.owner || t.owner === attacker.owner) continue;
+                if ((t.fortification || 0) <= 0) continue;
+                if (!canAttack(this.gameState.diplomacy, attacker.owner, t.owner)) continue;
+                if (Math.max(Math.abs(t.x - primary.x), Math.abs(t.z - primary.z)) <= radius) {
+                    const chip = Math.max(1, Math.floor(splash * 0.5));
+                    t.fortification = Math.max(0, (t.fortification || 0) - chip);
+                    t.siegePressure = Math.min(SIEGE_PRESSURE_MAX, (t.siegePressure || 0) + SIEGE_PRESSURE_PER_HIT);
+                    chippedCities++;
+                }
+            }
+            if (chippedCities > 0) {
+                this.log(`${atkDef.name} shore bombardment chips ${chippedCities} nearby coastal city wall(s) for ${Math.max(1, Math.floor(splash * 0.5))} fort!`);
+            }
+        }
         // Fire ailment: burn the primary target (if it survived) and the splash
         // survivors. Burn ticks once per round in onPhaseChange(PLAYER_FACTION).
         if (atkDef.canSetFire) {

@@ -296,10 +296,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         // Naval shore bombardment: ships shell land targets from the water.
         if (atkStats.naval && !defStats.naval) {
             if (isCity) {
-                // Azure Dominion: extra siege multiplier for naval city bombardment.
+                // Naval shore bombardment vs cities: base ×4, boosted from the
+                // old ×3 so fleets are a serious siege threat. Azure Dominion
+                // stacks an extra +1 multiplier on top.
                 const azureSiegeBonus = getNavalCitySiegeBonus(atkDef);
-                effectiveAttack += atkPower * (2 + azureSiegeBonus);
-                const totalMult = 3 + azureSiegeBonus;
+                effectiveAttack += atkPower * (3 + azureSiegeBonus);
+                const totalMult = 4 + azureSiegeBonus;
                 messages.push(`${combatName(attackerUnit)} naval bombardment: ×${totalMult} vs city`);
             } else {
                 effectiveAttack += atkPower * 0.5;
