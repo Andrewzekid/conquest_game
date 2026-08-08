@@ -60,7 +60,7 @@ export const UNIT_TYPE = {
     // --- MEDIEVAL (baseline) ---
     INFANTRY:    { name: 'Infantry',     hp: 10, attack: 3, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 2 }, ranged: false, attackRange: 1 },
     ARCHER:      { name: 'Archer',       hp: 8,  attack: 4, defense: 1, moveRange: 2, upkeep: { food: 2, gold: 3 }, ranged: true, attackRange: 2 },
-    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 1, moveRange: 1, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 12, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
+    ARTILLERY:   { name: 'Artillery',    hp: 6,  attack: 7, defense: 1, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 2 }, siegeBonus: 12, besiege: true, besiegePower: 2, ranged: true, attackRange: 2, aoe: true, aoeRadius: 1 },
     CAVALRY:     { name: 'Cavalry',      hp: 12, attack: 5, defense: 3, moveRange: 3, upkeep: { food: 4, gold: 4 }, ranged: false, attackRange: 1 },
     PIKEMAN:     { name: 'Pikeman',      hp: 12, attack: 4, defense: 4, moveRange: 2, upkeep: { food: 3, gold: 3 }, ranged: false, attackRange: 1 },
     SCOUT:       { name: 'Scout',        hp: 6,  attack: 2, defense: 1, moveRange: 4, upkeep: { food: 1, gold: 1 }, vision: 5, ranged: false, attackRange: 1 },
@@ -117,7 +117,7 @@ export const UNIT_TYPE = {
     HORSE_ARTILLERY: { name: 'Horse Artillery', hp: 18, attack: 22, defense: 8, moveRange: 3, upkeep: { food: 5, gold: 9, wood: 2, iron: 4 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, fastDeploy: true, aoe: true, aoeRadius: 2 },
     DEMOLITION_SQUAD: { name: 'Demolition Squad', hp: 18, attack: 20, defense: 9, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true },
     COMBAT_ENGINEER: { name: 'Combat Engineer', hp: 24, attack: 18, defense: 12, moveRange: 3, upkeep: { food: 3, gold: 8, iron: 3 }, ranged: false, attackRange: 1, demolish: true, canBuildStructure: true, canBuildBridge: true, mobilized: true },
-    SIEGE_CANNON: { name: 'Siege Cannon', hp: 16, attack: 26, defense: 10, moveRange: 1, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
+    SIEGE_CANNON: { name: 'Siege Cannon', hp: 16, attack: 26, defense: 10, moveRange: 2, upkeep: { food: 3, gold: 10, wood: 2, iron: 5 }, besiege: true, besiegePower: 6, ranged: true, attackRange: 3, fortBuster: true, aoe: true, aoeRadius: 2 },
 
     // MODERN NAVAL (light > Enlightenment heavy? Actually we need light > Frolic (58/22/14) – that’s steep. Instead we’ll make Gunboat the light, and it should be > Frolic? That would be too high. Since Enlightenment has only light and heavy, we can make Modern light > Enlightenment heavy, which is acceptable as a big jump. We'll set Gunboat accordingly.)
     GUNBOAT:     { name: 'Gunboat',      hp: 60, attack: 24, defense: 12, moveRange: 4, upkeep: { food: 3, gold: 7, wood: 2, iron: 3 }, naval: true, ranged: true, attackRange: 4, shallowDraft: true }, // > Frolic (58/22/14)

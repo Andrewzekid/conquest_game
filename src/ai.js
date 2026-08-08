@@ -581,7 +581,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // the faction doesn't bankrupt itself hiring lords.
     const nonKingLords = (lords || []).filter(l => l.owner === owner && !l.isKing);
     const ownedLandTiles = owned.filter(t => t.terrain !== 'WATER' && t.terrain !== 'RIVER').length;
-    const lordCap = Math.min(8, Math.max(2, Math.floor(myCityCount * 0.65) + Math.floor(ownedLandTiles / 25)));
+    const lordCap = Math.min(6, Math.max(2, Math.floor(myCityCount * 0.5) + Math.floor(ownedLandTiles / 30)));
     if (nonKingLords.length < lordCap && res.gold >= LORD_RECRUIT_COST.gold + 50 &&
         res.food >= LORD_RECRUIT_COST.food && myCityCount > 0) {
         actions.push({ type: 'recruitLord' });
