@@ -3636,9 +3636,9 @@ export class Game {
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
                 this.log(`${name}: King ${king.name} casts Winter's Grasp! +2 defense this turn.`);
                 break;
-            case 'discipline':
-                this.gameState.tempBonuses[faction] = { attack: 3, defense: 2 };
-                this.log(`${name}: King ${king.name} invokes Discipline! +3 attack, +2 defense this turn.`);
+            case 'testudo':
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0, legionnaireAttack: 2, legionnaireDefense: 3 };
+                this.log(`${name}: King ${king.name} orders Form Testudo! Legionnaires +2 attack, +3 defense this turn.`);
                 break;
             case 'berserker_rage':
                 this.gameState.tempBonuses[faction] = { attack: 4, lifesteal: 0.5, lifestealTypes: ['BERSERKER', 'INFANTRY'] };
@@ -5121,7 +5121,7 @@ export class Game {
                 // Arcane Surge now grants +2 ranged/siege attack, so the AI
                 // should fire it when pushing a city (siege/ranged units benefit).
                 return enemyCityNear || enemyUnits.length >= 3;
-            case 'discipline':
+            case 'testudo':
             case 'berserker_rage':
                 return enemyCityNear || enemyUnits.length >= 3;
             case 'golden_gate':

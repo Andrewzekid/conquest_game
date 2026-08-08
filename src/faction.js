@@ -161,10 +161,11 @@ export const FACTION_DEFS = {
             LEGIONNAIRE: { defense: 1, costGoldMult: 0.75 },
             SIEGE: { costGoldMult: 0.85 }
         },
-        passive: { attackBonus: 1, cityCaptureBonus: 1, desc: '+1 attack to all units. +1 damage when capturing cities. Infantry +1 move range.' },
+        passive: { attackBonus: 1, cityCaptureBonus: 1, legionBonus: true,
+                   desc: '+1 attack to all units. +1 damage when capturing cities. Legionnaires gain +2 attack/+1 defense per adjacent friendly Legionnaire (max +4/+2).' },
         king: { name: 'Consul Marcus', class: 'WARLORD',
-                active: { id: 'discipline', name: 'Discipline', cooldown: 5,
-                          desc: '+2 attack and +1 defense to all units for the rest of this turn.' } }
+                active: { id: 'testudo', name: 'Form Testudo', cooldown: 5,
+                          desc: 'All Legionnaires gain +3 defense and +2 attack this turn.' } }
     },
     viking: {
         id: 'viking', name: 'Viking Raiders', emoji: '\u2694\uFE0F',

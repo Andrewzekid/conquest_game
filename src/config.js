@@ -73,7 +73,7 @@ export const UNIT_TYPE = {
     CHARIOT:     { name: 'Chariot',      hp: 11, attack: 4, defense: 2, moveRange: 3, upkeep: { food: 3, gold: 4, wood: 1, iron: 1 }, ranged: false, attackRange: 1, canCharge: true },
     MEDIC:       { name: 'Medic',        hp: 7,  attack: 1, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 3 }, heal: 2, ranged: false, attackRange: 1 },
     SIEGE_TOWER: { name: 'Siege Tower',  hp: 20, attack: 4, defense: 4, moveRange: 1, upkeep: { food: 3, gold: 4, wood: 2, iron: 2 }, besiege: true, besiegePower: 3, canAssault: true, ranged: false, attackRange: 1 },
-    LEGIONNAIRE: { name: 'Legionnaire',  hp: 14, attack: 4, defense: 5, moveRange: 1, upkeep: { food: 4, gold: 3 }, ranged: false, attackRange: 1, canBuildStructure: true },
+    LEGIONNAIRE: { name: 'Legionnaire',  hp: 14, attack: 4, defense: 5, moveRange: 1, upkeep: { food: 4, gold: 3 }, ranged: false, attackRange: 1, canBuildStructure: true, canBuildSiegeTower: true },
     BERSERKER:   { name: 'Berserker',    hp: 12, attack: 9, defense: 1, moveRange: 2, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1, frenzy: true, noMedic: true },
     VARANGIAN_GUARD: { name: 'Varangian Guard', hp: 16, attack: 6, defense: 6, moveRange: 2, upkeep: { food: 4, gold: 5, iron: 1 }, ranged: false, attackRange: 1, lordGuard: true },
     CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 4, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
@@ -308,7 +308,7 @@ export const BRIDGE_COST = { gold: 40, wood: 3 };
 
 // Cost for an Engineer to start constructing a Siege Tower (paid up front; the
 // tower is built over SIEGE_TOWER_BUILD_TURNS turns, then spawns on completion).
-export const SIEGE_TOWER_COST = { gold: 3, wood: 1, iron: 0, production: 1 };
+export const SIEGE_TOWER_COST = { gold: 2, wood: 1, iron: 0, production: 0 };
 export const SIEGE_TOWER_BUILD_TURNS = 2;
 export const SIEGE_TOWER_BUILD_RADIUS = 3; // Engineer must be within this Chebyshev radius of an enemy city
 

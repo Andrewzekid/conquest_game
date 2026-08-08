@@ -1841,21 +1841,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             continue;
         }
 
-        // a2) Engineers. Offense: build a Siege Tower when within range of a
-        //     valid target city — at-war enemies AND unclaimed (neutral) cities
-        //     alike (a conquest force should crack neutral cities too). Siege
-        //     towers are obsolete once gunpowder (ARTILLERY) is unlocked — the
-        //     army can bombard walls from range instead of rolling a tower up.
-        //     Defense: when an own city is threatened (enemy units closing in),
-        //     build traps/fortifications on owned tiles around it.
-        // Engineer-types: ENGINEER, DEMOLITION_SQUAD, COMBAT_ENGINEER (all
-        // carry canBuildStructure + canBuildBridge). LEGIONNAIRE has
-        // canBuildStructure but NOT canBuildBridge, so it only joins the
-        // defensive-structure branch below — not the siege-tower/bridge/field-
-        // siege branches that need the full engineer kit.
+        // a2) Engineers / siege-tower builders. Offense: build a Siege Tower
+        //     when within range of a valid target city — at-war enemies AND
+        //     unclaimed (neutral) cities alike. Siege towers are obsolete once
+        //     gunpowder (ARTILLERY) is unlocked. Defense: when an own city is
+        //     threatened, build traps/fortifications on owned tiles around it.
+        //     Engineer-types carry canBuildStructure + canBuildBridge; Roman
+        //     Legionnaires also carry canBuildSiegeTower and can man the tower
+        //     branch, but not bridges/field-siege.
         const udef = UNIT_TYPE[unit.type];
         const isEngineerType = !!(udef && udef.canBuildBridge && udef.canBuildStructure);
-        if (isEngineerType && !unit.hasAttackedThisTurn) {
+        const isSiegeTowerBuilder = !!(udef && udef.canBuildSiegeTower);
+        if ((isEngineerType || isSiegeTowerBuilder) && !unit.hasAttackedThisTurn) {
             const towerTarget = (!hasModernSiegeTech) ? findTargetCityWithin(unit, tiles, owner, isAtWar, SIEGE_TOWER_BUILD_RADIUS) : null;
             if (towerTarget && canAffordCost(res, SIEGE_TOWER_COST)) {
                 actions.push({ type: 'buildSiegeTower', unitId: unit.id, tileKey: `${towerTarget.city.x},${towerTarget.city.z}` });
@@ -4100,7 +4097,7 @@ export function factionComposition(def, roster, hasSiegeWorkshop = false) {
         case 'frost':    t = { melee: 0.45, ranged: 0.30, cavalry: 0.00, antiCavalry: 0.05, siege: 0.05, support: 0.15, naval: 0.00 }; break;
         case 'storm':    t = { melee: 0.20, ranged: 0.15, cavalry: 0.15, antiCavalry: 0.00, siege: 0.10, support: 0.05, naval: 0.35 }; break;
         // --- New European factions (Phase G) ---
-        case 'roman':    t = { melee: 0.40, ranged: 0.00, cavalry: 0.00, antiCavalry: 0.00, siege: 0.25, support: 0.10, naval: 0.00 }; break;
+        case 'roman':    t = { melee: 0.50, ranged: 0.00, cavalry: 0.00, antiCavalry: 0.00, siege: 0.20, support: 0.10, naval: 0.00 }; break;
         case 'viking':   t = { melee: 0.40, ranged: 0.00, cavalry: 0.40, antiCavalry: 0.00, siege: 0.10, support: 0.10, naval: 0.00 }; break;
         case 'byzantine':t = { melee: 0.35, ranged: 0.25, cavalry: 0.25, antiCavalry: 0.00, siege: 0.10, support: 0.05, naval: 0.00 }; break;
         case 'spanish':  t = { melee: 0.30, ranged: 0.20, cavalry: 0.40, antiCavalry: 0.00, siege: 0.05, support: 0.05, naval: 0.00 }; break;
@@ -6243,6 +6240,34 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
     };
     members.filter(u => isScreener(u)).forEach(advance);
     members.filter(u => !isScreener(u)).forEach(advance);
+
+    // 7b) Roman legion cohesion: idle Legionnaires with no adjacent friendly
+    //     Legionnaire shuffle toward the nearest friendly Legionnaire so they
+    //     benefit from the legion adjacency combat bonus.
+    const isRoman = members.some(u => u.factionId === 'roman');
+    if (isRoman) {
+        for (const u of members) {
+            if (acted.has(u.id) || u.hasMovedThisTurn || u.type !== 'LEGIONNAIRE') continue;
+            const hasAdjacent = members.some(other =>
+                other !== u && other.type === 'LEGIONNAIRE' &&
+                Math.abs(other.x - u.x) + Math.abs(other.z - u.z) <= 1);
+            if (hasAdjacent) continue;
+            let nearest = null, nearestDist = Infinity;
+            for (const other of units.values()) {
+                if (other.owner !== owner || other.type !== 'LEGIONNAIRE' || other.id === u.id) continue;
+                const d = Math.abs(other.x - u.x) + Math.abs(other.z - u.z);
+                if (d < nearestDist) { nearestDist = d; nearest = other; }
+            }
+            if (nearest && nearestDist <= 6) {
+                const step = nextStepToward(tiles, units, u, nearest, 200, owner);
+                if (step && !moved.has(`${step.x},${step.z}`)) {
+                    out.push({ type: 'move', unitId: u.id, tx: step.x, tz: step.z });
+                    acted.add(u.id);
+                    moved.add(`${step.x},${step.z}`);
+                }
+            }
+        }
+    }
 
     // 8) Unrest garrison: idle military units move to garrison the nearest
     //    high-unrest (>50) owned city. This ensures the AI actively manages

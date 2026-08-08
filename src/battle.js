@@ -157,6 +157,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     if (atkStats.ranged && atkTemp.rangedAttack) {
         effectiveAttack += atkTemp.rangedAttack;
     }
+    // Legionnaire-specific temp bonus: Form Testudo boosts Legionnaire attack.
+    if (attackerUnit.type === 'LEGIONNAIRE' && atkTemp.legionnaireAttack) {
+        effectiveAttack += atkTemp.legionnaireAttack;
+        messages.push(`${combatName(attackerUnit)} testudo charge: +${atkTemp.legionnaireAttack} atk`);
+    }
 
     // --- New European-faction/unit attacker bonuses (Phase G) ---
     const atkDef = getFactionDef(attackerUnit.factionId);
@@ -179,6 +184,19 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         if (adjacentMusketters > 0) {
             effectiveAttack += adjacentMusketters;
             messages.push(`${combatName(attackerUnit)} volley fire: +${adjacentMusketters} atk (${adjacentMusketters} adjacent)`);
+        }
+    }
+    // Roman Legion: Legionnaire legion bonus (+2 attack per adjacent friendly Legionnaire, max +4).
+    if (attackerUnit.type === 'LEGIONNAIRE' && units) {
+        let adjacentLegionnaires = 0;
+        for (const other of units.values()) {
+            if (other.owner !== attackerUnit.owner || other.type !== 'LEGIONNAIRE' || other.id === attackerUnit.id) continue;
+            if (Math.abs(other.x - attackerUnit.x) + Math.abs(other.z - attackerUnit.z) === 1) adjacentLegionnaires++;
+        }
+        if (adjacentLegionnaires > 0) {
+            const bonus = Math.min(4, adjacentLegionnaires * 2);
+            effectiveAttack += bonus;
+            messages.push(`${combatName(attackerUnit)} legion discipline: +${bonus} atk (${adjacentLegionnaires} adjacent)`);
         }
     }
     // LINE_INFANTRY formation: +2 defense when 2+ friendly infantry adjacent.
@@ -294,6 +312,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     let effectiveDefense = defPower + defTerrainBonus.defense + buildingDef + structureDef
         + defLordBonus.defense + defAdj.defense + defTemp.defense + cityTechDef
         - (defenderUnit.moraleDebuffAmount || 0);
+    // Legionnaire-specific temp bonus: Form Testudo boosts Legionnaire defense.
+    if (defenderUnit.type === 'LEGIONNAIRE' && defTemp.legionnaireDefense) {
+        effectiveDefense += defTemp.legionnaireDefense;
+        messages.push(`${combatName(defenderUnit)} testudo wall: +${defTemp.legionnaireDefense} def`);
+    }
     if (cityTechDef > 0) {
         messages.push(`City fortifications from tech: +${cityTechDef} def`);
     }
@@ -353,6 +376,19 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         if (adjacentInfantry >= 2) {
             effectiveDefense += 2;
             messages.push(`${combatName(defenderUnit)} formation discipline: +2 def (${adjacentInfantry} adjacent)`);
+        }
+    }
+    // Roman Legion: Legionnaire legion bonus (+1 defense per adjacent friendly Legionnaire, max +2).
+    if (defenderUnit.type === 'LEGIONNAIRE' && units) {
+        let adjacentLegionnaires = 0;
+        for (const other of units.values()) {
+            if (other.owner !== defenderUnit.owner || other.type !== 'LEGIONNAIRE' || other.id === defenderUnit.id) continue;
+            if (Math.abs(other.x - defenderUnit.x) + Math.abs(other.z - defenderUnit.z) === 1) adjacentLegionnaires++;
+        }
+        if (adjacentLegionnaires > 0) {
+            const bonus = Math.min(2, adjacentLegionnaires);
+            effectiveDefense += bonus;
+            messages.push(`${combatName(defenderUnit)} testudo wall: +${bonus} def (${adjacentLegionnaires} adjacent)`);
         }
     }
     // IRONCLAD armored: reduces ranged damage taken by 50%.
