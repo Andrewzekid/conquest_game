@@ -3,7 +3,7 @@
 import { FACTION_DEFS, FACTION_IDS } from './faction.js';
 import { MAP_SIZES, FACTIONS, MAX_FACTIONS, setFactionSlots } from './config.js';
 import { sfx, unlockAudio } from './sound.js';
-import { loadSavedExists, listSaves, DEFAULT_SAVE_NAME } from './save.js';
+import { loadSavedExists, listSaves } from './save.js';
 
 let _selectedFaction = 'crimson';
 let _playerCount = 4;
@@ -170,13 +170,13 @@ export function bindPauseButtons(handlers) {
     wire('pause-resume', () => { sfx.click(); handlers.onResume && handlers.onResume(); });
     wire('pause-save', () => {
         sfx.click();
-        const name = window.prompt('Save game as:', DEFAULT_SAVE_NAME);
+        const name = window.prompt('Save game as:', 'quicksave');
         if (name !== null) handlers.onSave && handlers.onSave(name);
     });
     wire('pause-load', () => {
         sfx.click();
         listSaves().then(saves => {
-            const defaultName = saves.includes(DEFAULT_SAVE_NAME) ? DEFAULT_SAVE_NAME : (saves[0] || DEFAULT_SAVE_NAME);
+            const defaultName = saves.includes('quicksave') ? 'quicksave' : (saves[0] || 'quicksave');
             const list = saves.length ? saves.join('\n') : '(no saves found)';
             const name = window.prompt(`Available saves:\n${list}`, defaultName);
             if (name) handlers.onLoad && handlers.onLoad(name);
