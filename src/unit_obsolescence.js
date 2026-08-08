@@ -27,7 +27,7 @@ export const OBSOLESCENCE = {
     // Ranged line: ARCHER/LONGBOWMAN → CROSSBOWMAN → MUSKETEER → RIFLEMAN/SHARPSHOOTER
     CROSSBOWMAN:  { obsoletes: ['ARCHER', 'LONGBOWMAN'],          tech: 'FORTIFICATION' },
     MUSKETEER:    { obsoletes: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN'], tech: 'MATCHLOCK' },
-    RIFLEMAN:     { obsoletes: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER'], tech: 'RIFLED_MUSKET' },
+    RIFLEMAN:     { obsoletes: ['ARCHER', 'LONGBOWMAN', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'INFANTRY', 'PIKEMAN', 'LEGIONNAIRE'], tech: 'RIFLED_MUSKET' },
     SHARPSHOOTER: { obsoletes: [],                                  tech: 'RIFLED_MUSKET' }, // peer, no extra obsoletes
 
     // Melee line: INFANTRY/PIKEMAN/LEGIONNAIRE → LINE_INFANTRY

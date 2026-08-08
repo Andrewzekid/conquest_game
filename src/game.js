@@ -2755,20 +2755,32 @@ export class Game {
             if (prod.turnsLeft <= 0) {
                 const tile = this.tiles.get(cityKey);
                 if (tile) {
-                    const spawn = NAVAL_UNITS.includes(prod.unitType)
-                        ? this._findNavalSpawnTile(tile, PLAYER_FACTION) : { x: tile.x, z: tile.z };
-                    if (!spawn) {
-                        this.log(`${UNIT_TYPE[prod.unitType].name} production at [${tile.x}, ${tile.z}] failed: no water tile available! Resources refunded.`);
-                        this.gameState.resources[PLAYER_FACTION].gold = (this.gameState.resources[PLAYER_FACTION].gold || 0) + Math.floor((getUnitCostFor(prod.unitType, def).gold || 0) * 0.5);
+                    // Obsolescence: a unit queued before its replacement was
+                    // researched should still complete if production is almost
+                    // done, but if it has become obsolete we refund the cost
+                    // instead of delivering a useless unit.
+                    const pts = this.gameState.techState;
+                    const obsolete = pts && pts.researched && isObsolete(prod.unitType, pts.researched);
+                    if (obsolete) {
+                        const refund = Math.floor((getUnitCostFor(prod.unitType, def).gold || 0) * 0.5);
+                        this.gameState.resources[PLAYER_FACTION].gold = (this.gameState.resources[PLAYER_FACTION].gold || 0) + refund;
+                        this.log(`${UNIT_TYPE[prod.unitType].name} production at [${tile.x}, ${tile.z}] canceled: unit is now obsolete. ${refund} gold refunded.`);
                     } else {
-                        const unit = createUnit(prod.unitType, PLAYER_FACTION, spawn.x, spawn.z,
-                            { veteran: prod.veteran, factionDef: def });
-                        this.gameState.units.set(unit.id, unit);
-                        const lordHere = this.gameState.lords.find(l =>
-                            l.owner === PLAYER_FACTION && l.x === tile.x && l.z === tile.z && canCommand(l));
-                        if (lordHere) { assignArmy(lordHere, unit.id); unit.lordId = lordHere.id; }
-                        this.log(`${UNIT_TYPE[prod.unitType].name} completed at [${tile.x}, ${tile.z}]!`);
-                        sfx.levelUp();
+                        const spawn = NAVAL_UNITS.includes(prod.unitType)
+                            ? this._findNavalSpawnTile(tile, PLAYER_FACTION) : { x: tile.x, z: tile.z };
+                        if (!spawn) {
+                            this.log(`${UNIT_TYPE[prod.unitType].name} production at [${tile.x}, ${tile.z}] failed: no water tile available! Resources refunded.`);
+                            this.gameState.resources[PLAYER_FACTION].gold = (this.gameState.resources[PLAYER_FACTION].gold || 0) + Math.floor((getUnitCostFor(prod.unitType, def).gold || 0) * 0.5);
+                        } else {
+                            const unit = createUnit(prod.unitType, PLAYER_FACTION, spawn.x, spawn.z,
+                                { veteran: prod.veteran, factionDef: def });
+                            this.gameState.units.set(unit.id, unit);
+                            const lordHere = this.gameState.lords.find(l =>
+                                l.owner === PLAYER_FACTION && l.x === tile.x && l.z === tile.z && canCommand(l));
+                            if (lordHere) { assignArmy(lordHere, unit.id); unit.lordId = lordHere.id; }
+                            this.log(`${UNIT_TYPE[prod.unitType].name} completed at [${tile.x}, ${tile.z}]!`);
+                            sfx.levelUp();
+                        }
                     }
                 }
                 this.gameState.production.delete(cityKey);
