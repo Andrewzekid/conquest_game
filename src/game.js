@@ -3671,17 +3671,26 @@ export class Game {
             case 'manifest_destiny': {
                 this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
                 // If fewer than 3 cities, each city spawns a free Conquistador.
+                // If fewer than 4 cities, each city also spawns a free Settler.
                 // Spawned directly via createUnit, so no tech-tree requirement.
                 const ownedCities = getOwnedCities(this.tiles, faction);
-                let spawned = 0;
+                let spawnedConq = 0;
+                let spawnedSettlers = 0;
                 if (ownedCities.length < 3) {
                     for (const city of ownedCities) {
                         const conquistador = createUnit('CONQUISTADOR', faction, city.x, city.z, { factionDef: def });
                         this.gameState.units.set(conquistador.id, conquistador);
-                        spawned++;
+                        spawnedConq++;
                     }
                 }
-                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${spawned ? ` ${spawned} Conquistador${spawned > 1 ? 's' : ''} spawned!` : ''}`);
+                if (ownedCities.length < 4) {
+                    for (const city of ownedCities) {
+                        const settler = createUnit('SETTLER', faction, city.x, city.z, { factionDef: def });
+                        this.gameState.units.set(settler.id, settler);
+                        spawnedSettlers++;
+                    }
+                }
+                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${spawnedConq ? ` ${spawnedConq} Conquistador${spawnedConq > 1 ? 's' : ''} spawned!` : ''}${spawnedSettlers ? ` ${spawnedSettlers} Settler${spawnedSettlers > 1 ? 's' : ''} spawned!` : ''}`);
                 break;
             }
             case 'winged_charge':

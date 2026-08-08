@@ -1185,7 +1185,9 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     //     while the invasion fleet is being built).
     const conquestCampaigning = goalKind === 'conquest' || goalKind === 'take-key-city' || goalKind === 'attack-king';
     const navalConquest = goalKind === 'conquest' && topGoal && topGoal.meta && topGoal.meta.requiresNaval;
-    const conquestSettlerScale = conquestCampaigning && !navalConquest ? 0.5 : 1.0;
+    // Spanish are expansion-driven conquerors: their settler production is not
+    // suppressed by land conquest goals so Manifest Destiny can fuel new cities.
+    const conquestSettlerScale = conquestCampaigning && !navalConquest && !(factionDef && factionDef.id === 'spanish') ? 0.5 : 1.0;
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
     // Early-game army gating: the AI used to prioritize settlers so heavily
