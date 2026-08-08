@@ -286,7 +286,7 @@ export const FACTION_DEFS = {
                    desc: 'Units start with 1 concealment turn done. +1 move in forest.' },
         king: { name: 'Lotus Master Kage', class: 'WARLORD',
                 active: { id: 'shadow_strike', name: 'Shadow Strike', cooldown: 4,
-                          desc: 'All concealed units gain +4 attack and may immediately make a free ambush attack on an adjacent enemy.' } }
+                          desc: 'All Shinobi gain +4 attack this turn; concealed Shinobi may immediately make a free ambush attack on an adjacent enemy.' } }
     },
     sun: {
         id: 'sun', name: 'Sun Empire', emoji: '\u{2600}\uFE0F',
@@ -301,7 +301,7 @@ export const FACTION_DEFS = {
                    desc: 'Units heal 2 HP on kill. +1 move in forest.' },
         king: { name: 'Sun King Itzcoatl', class: 'WARLORD',
                 active: { id: 'sacrifice', name: 'Sacrifice to the Sun', cooldown: 5,
-                          desc: 'Deal 4 damage to all enemy units within 3 tiles of the king and heal all friendly units within 3 tiles for 5 HP.' } }
+                          desc: 'Deal 4 damage to all enemy units within 1 tile of the king and heal all friendly units within 1 tile for 5 HP.' } }
     }
 };
 

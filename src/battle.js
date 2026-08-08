@@ -162,6 +162,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         effectiveAttack += atkTemp.legionnaireAttack;
         messages.push(`${combatName(attackerUnit)} testudo charge: +${atkTemp.legionnaireAttack} atk`);
     }
+    // Shadow Lotus Shadow Strike: +4 attack for Shinobi only.
+    if (attackerUnit.type === 'SHINOBI' && atkTemp.shinobiAttack) {
+        effectiveAttack += atkTemp.shinobiAttack;
+        messages.push(`${combatName(attackerUnit)} shadow strike: +${atkTemp.shinobiAttack} atk`);
+    }
 
     // --- New European-faction/unit attacker bonuses (Phase G) ---
     const atkDef = getFactionDef(attackerUnit.factionId);

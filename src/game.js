@@ -3738,29 +3738,32 @@ export class Game {
                 break;
             }
             case 'shadow_strike':
-                this.gameState.tempBonuses[faction] = { attack: 4, defense: 0 };
-                this.log(`${name}: King ${king.name} calls a Shadow Strike! All units +4 attack this turn; concealed units may ambush.`);
+                // Shadow Strike now only empowers Shinobi assassins.
+                this.gameState.tempBonuses[faction] = { shinobiAttack: 4, defense: 0 };
+                this.log(`${name}: King ${king.name} calls a Shadow Strike! Shinobi +4 attack this turn; concealed shinobi may ambush.`);
                 break;
             case 'sacrifice': {
                 let struck = 0;
                 let healed = 0;
+                const SACRIFICE_RANGE = 1;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner === faction) continue;
                     if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
-                    if (Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 3) {
+                    if (Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= SACRIFICE_RANGE) {
                         u.hp = Math.max(0, (u.hp || 0) - 4);
                         struck++;
                     }
                 }
                 for (const u of this.gameState.units.values()) {
                     if (u.owner !== faction) continue;
-                    if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
+                    if (u.hp > 0 && u.hp < (u.maxHp || 10) &&
+                        Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= SACRIFICE_RANGE) {
                         u.hp = Math.min(u.maxHp || 10, u.hp + 5);
                         healed++;
                     }
                 }
                 this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
-                this.log(`${name}: King ${king.name} offers a Sacrifice to the Sun! ${struck} enemy unit(s) burned, ${healed} friendly unit(s) healed.`);
+                this.log(`${name}: King ${king.name} offers a Sacrifice to the Sun! ${struck} enemy unit(s) burned, ${healed} friendly unit(s) healed within 1 tile.`);
                 break;
             }
         }
