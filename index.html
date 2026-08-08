@@ -357,8 +357,12 @@
                 Spectate Mode (AI vs AI)
             </label>
         </div>
+        <div id="start-load-wrap" class="row" style="display:none; flex-wrap:wrap; gap:8px;">
+            <label style="color:var(--muted);">Load save:</label>
+            <select id="start-load-select" style="min-width:140px;"></select>
+            <button id="start-load" class="btn btn-ghost">Load Selected</button>
+        </div>
         <div class="row">
-            <button id="start-continue" class="btn btn-ghost" style="display:none;">Continue Last Save</button>
             <button id="start-go" class="btn btn-primary">Start Game</button>
         </div>
     </div>
@@ -367,8 +371,8 @@
     <div id="pause-menu" class="overlay">
         <h1>PAUSED</h1>
         <button id="pause-resume" class="btn btn-primary">Resume</button>
-        <button id="pause-save" class="btn btn-ghost">Save Game</button>
-        <button id="pause-load" class="btn btn-ghost">Load Game</button>
+        <button id="pause-save" class="btn btn-ghost">Save As...</button>
+        <button id="pause-load" class="btn btn-ghost">Load From...</button>
         <button id="pause-mute" class="btn btn-ghost">Mute</button>
         <button id="pause-menu-btn" class="btn btn-ghost">Main Menu</button>
     </div>

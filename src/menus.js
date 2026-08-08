@@ -3,7 +3,7 @@
 import { FACTION_DEFS, FACTION_IDS } from './faction.js';
 import { MAP_SIZES, FACTIONS, MAX_FACTIONS, setFactionSlots } from './config.js';
 import { sfx, unlockAudio } from './sound.js';
-import { loadSavedExists } from './save.js';
+import { loadSavedExists, listSaves, DEFAULT_SAVE_NAME } from './save.js';
 
 let _selectedFaction = 'crimson';
 let _playerCount = 4;
@@ -85,13 +85,32 @@ export function showStartMenu(onStart) {
         };
     }
 
-    // Filesystem save presence is checked async (the server API or
-    // localStorage fallback). Show the Continue button once the check resolves.
-    const cont = el('start-continue');
-    if (cont) cont.style.display = 'none';
-    loadSavedExists().then(hasSave => {
-        if (cont) cont.style.display = hasSave ? 'inline-block' : 'none';
-    });
+    // Filesystem save history: populate the load-game selector and wire the
+    // load button. Falls back to localStorage when the server is unavailable.
+    const loadSel = el('start-load-select');
+    const loadBtn = el('start-load');
+    const loadWrap = el('start-load-wrap');
+    if (loadSel) {
+        listSaves().then(saves => {
+            loadSel.innerHTML = '';
+            for (const name of saves) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                loadSel.appendChild(opt);
+            }
+            if (loadWrap) loadWrap.style.display = saves.length ? 'flex' : 'none';
+        });
+    }
+    if (loadBtn) {
+        loadBtn.onclick = () => {
+            sfx.click();
+            const name = loadSel && loadSel.value;
+            if (!name) return;
+            menu.style.display = 'none';
+            if (_onStart) _onStart({ load: true, saveName: name });
+        };
+    }
 
     renderFactionCards();
     menu.style.display = 'flex';
@@ -149,8 +168,20 @@ export function hidePauseMenu() {
 export function bindPauseButtons(handlers) {
     const wire = (id, fn) => { const b = el(id); if (b) b.onclick = fn; };
     wire('pause-resume', () => { sfx.click(); handlers.onResume && handlers.onResume(); });
-    wire('pause-save', () => { sfx.click(); handlers.onSave && handlers.onSave(); });
-    wire('pause-load', () => { sfx.click(); handlers.onLoad && handlers.onLoad(); });
+    wire('pause-save', () => {
+        sfx.click();
+        const name = window.prompt('Save game as:', DEFAULT_SAVE_NAME);
+        if (name !== null) handlers.onSave && handlers.onSave(name);
+    });
+    wire('pause-load', () => {
+        sfx.click();
+        listSaves().then(saves => {
+            const defaultName = saves.includes(DEFAULT_SAVE_NAME) ? DEFAULT_SAVE_NAME : (saves[0] || DEFAULT_SAVE_NAME);
+            const list = saves.length ? saves.join('\n') : '(no saves found)';
+            const name = window.prompt(`Available saves:\n${list}`, defaultName);
+            if (name) handlers.onLoad && handlers.onLoad(name);
+        });
+    });
     wire('pause-menu-btn', () => { sfx.click(); handlers.onMenu && handlers.onMenu(); });
     wire('pause-mute', () => {
         handlers.onToggleMute && handlers.onToggleMute();

@@ -61,7 +61,7 @@ import { getDifficulty, applyDifficultyYield, applyDifficultyUpkeep, aiAggressio
 import { resolveSpyAction, isSpyUnit, spyDetectionBonus } from './spy.js';
 import { buildMinimapData, getCityJumpList, getArmyComposition } from './ui_data.js';
 import { sfx, unlockAudio, isMuted, setMuted } from './sound.js';
-import { saveGame, loadGame, loadSavedExists, clearSave } from './save.js';
+import { saveGame, loadGame, loadSavedExists, clearSave, listSaves, DEFAULT_SAVE_NAME } from './save.js';
 import { showStartMenu, showPauseMenu, hidePauseMenu } from './menus.js';
 import { nextStepToward, goalValid } from './path.js';
 import { createTechState, serializeTechState, deserializeTechState,
@@ -90,7 +90,7 @@ export class Game {
             // start once the state is ready; the constructor returns a Game
             // instance whose renderer will spin up when the load resolves.
             this._pendingLoad = true;
-            loadGame().then(state => {
+            loadGame(options.saveName).then(state => {
                 this._pendingLoad = false;
                 if (!state) {
                     // No save to load — fall back to a fresh medium game.
@@ -6380,17 +6380,19 @@ export class Game {
         }
     }
     resume() { if (this.gameState.paused) this.togglePause(); }
-    async save() {
-        const ok = await saveGame(this.gameState);
-        if (ok) this.log('Game saved.');
+    async save(name) {
+        const saveName = (name || '').trim() || DEFAULT_SAVE_NAME;
+        const ok = await saveGame(this.gameState, saveName);
+        if (ok) this.log(`Game saved as "${saveName}".`);
         else this.log('Save failed.');
     }
-    async load() {
-        const state = await loadGame();
-        if (!state) { this.log('No save found.'); return; }
+    async load(name) {
+        const loadName = (name || '').trim() || DEFAULT_SAVE_NAME;
+        const state = await loadGame(loadName);
+        if (!state) { this.log(`No save found for "${loadName}".`); return; }
         hidePauseMenu();
         this.loadFromState(state);
-        this.log('Game loaded.');
+        this.log(`Game "${loadName}" loaded.`);
     }
     toMenu() {
         hidePauseMenu();

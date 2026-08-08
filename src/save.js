@@ -12,16 +12,14 @@ import { serializeAIState, deserializeAIState } from './ai_goals.js';
 import { serializeTechState, deserializeTechState } from './tech.js';
 
 const SAVE_KEY = 'conquest_save';
-// Bumped 6 -> 7 for the atomic-era tech tree + faction-unique unit fix +
-// new units. Older saves are rejected (their tech/unit state predates the
-// expanded tree and the faction-unique gate).
-const SAVE_VERSION = 7;
+// Bumped 7 -> 8 for named saves + filesystem save history.
+const SAVE_VERSION = 8;
 
 const API_BASE = '/api/save';
 
 /** True if the filesystem save API is available (i.e. the Python server is
  *  serving the game). Probed once on first use; cached so we don't re-probe
- *  every save. localStorage is the fallback when this is false. */
+ *  every save. */
 let _fsMode = null;
 async function detectFsMode() {
     if (_fsMode !== null) return _fsMode;
@@ -37,6 +35,13 @@ async function detectFsMode() {
 // Allow tests to force the storage mode (so they don't hit the network).
 export function _setStorageMode(mode) { _fsMode = mode; }
 
+/** Default save name used for the legacy quick-save slot. */
+export const DEFAULT_SAVE_NAME = 'quicksave';
+
+function fsName(name) { return name || DEFAULT_SAVE_NAME; }
+
+function localStorageKey(name) { return name ? `${SAVE_KEY}_${name}` : SAVE_KEY; }
+
 function serializeState(gameState) {
     return {
         version: SAVE_VERSION,
@@ -50,6 +55,7 @@ function serializeState(gameState) {
         resources: gameState.resources,
         diplomacy: gameState.diplomacy,
         explored: [...(gameState.explored || [])],
+        visible: [...(gameState.visible || [])],
         scryRevealed: [...(gameState.scryRevealed || [])],
         trainedThisTurn: [...(gameState.trainedThisTurn || [])],
         production: [...(gameState.production || []).entries()],
@@ -83,12 +89,13 @@ function serializeState(gameState) {
     };
 }
 
-export async function saveGame(gameState) {
+export async function saveGame(gameState, name = DEFAULT_SAVE_NAME) {
     const data = serializeState(gameState);
     const json = JSON.stringify(data);
+    const safeName = fsName(name);
     try {
         if (await detectFsMode()) {
-            const r = await fetch(API_BASE, {
+            const r = await fetch(`${API_BASE}?name=${encodeURIComponent(safeName)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: json
@@ -97,27 +104,54 @@ export async function saveGame(gameState) {
             // Server returned an error — fall back to localStorage.
         }
         // Fallback (no server or server error): localStorage.
-        localStorage.setItem(SAVE_KEY, json);
+        localStorage.setItem(localStorageKey(safeName), json);
         return true;
     } catch (e) {
         // Last-resort fallback: localStorage even if we intended FS mode.
-        try { localStorage.setItem(SAVE_KEY, json); return true; }
+        try { localStorage.setItem(localStorageKey(safeName), json); return true; }
         catch (e2) { console.warn('save failed', e, e2); return false; }
     }
 }
 
-export async function loadSavedExists() {
+/** List all named saves available. Returns an array of save names. */
+export async function listSaves() {
     try {
         if (await detectFsMode()) {
-            const r = await fetch(API_BASE, { method: 'GET' });
+            const r = await fetch(`${API_BASE}?name=__list__`, { method: 'GET' });
+            if (r.ok) {
+                const obj = await r.json();
+                return Array.isArray(obj.saves) ? obj.saves : [];
+            }
+        }
+        // localStorage fallback: scan keys matching the save prefix.
+        const saves = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(SAVE_KEY)) {
+                const name = key === SAVE_KEY ? DEFAULT_SAVE_NAME : key.slice(SAVE_KEY.length + 1);
+                if (name) saves.push(name);
+            }
+        }
+        return saves.sort();
+    } catch (e) {
+        console.warn('list saves failed', e);
+        return [];
+    }
+}
+
+export async function loadSavedExists(name = DEFAULT_SAVE_NAME) {
+    const safeName = fsName(name);
+    try {
+        if (await detectFsMode()) {
+            const r = await fetch(`${API_BASE}?name=${encodeURIComponent(safeName)}`, { method: 'GET' });
             if (r.ok) {
                 const obj = await r.json();
                 return !!obj.exists;
             }
         }
-        return !!localStorage.getItem(SAVE_KEY);
+        return !!localStorage.getItem(localStorageKey(safeName));
     } catch (e) {
-        try { return !!localStorage.getItem(SAVE_KEY); } catch (e2) { return false; }
+        try { return !!localStorage.getItem(localStorageKey(safeName)); } catch (e2) { return false; }
     }
 }
 
@@ -160,7 +194,7 @@ function parseSaveData(data) {
         resources: data.resources,
         diplomacy,
         explored: new Set(data.explored || []),
-        visible: new Set(),
+        visible: new Set(data.visible || []),
         scryRevealed: new Set(data.scryRevealed || []),
         trainedThisTurn: new Set(data.trainedThisTurn || []),
         production: new Map(data.production || []),
@@ -190,18 +224,19 @@ function parseSaveData(data) {
     };
 }
 
-export async function loadGame() {
+export async function loadGame(name = DEFAULT_SAVE_NAME) {
+    const safeName = fsName(name);
     let raw = null;
     try {
         if (await detectFsMode()) {
-            const r = await fetch(API_BASE, { method: 'GET' });
+            const r = await fetch(`${API_BASE}?name=${encodeURIComponent(safeName)}`, { method: 'GET' });
             if (r.ok) {
                 const obj = await r.json();
                 if (obj.exists && obj.data) raw = obj.data;
             }
         }
         if (raw === null) {
-            raw = localStorage.getItem(SAVE_KEY);
+            raw = localStorage.getItem(localStorageKey(safeName));
         }
         if (!raw) return null;
         const data = JSON.parse(raw);
@@ -219,13 +254,14 @@ export async function loadGame() {
     }
 }
 
-export async function clearSave() {
+export async function clearSave(name = DEFAULT_SAVE_NAME) {
+    const safeName = fsName(name);
     try {
         if (await detectFsMode()) {
-            await fetch(API_BASE, { method: 'DELETE' });
+            await fetch(`${API_BASE}?name=${encodeURIComponent(safeName)}`, { method: 'DELETE' });
         }
     } catch (e) { /* ignore — fall through to localStorage */ }
-    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(localStorageKey(safeName)); } catch (e) { /* ignore */ }
 }
 
 /** Verify a loaded save has all required fields. Returns an array of issues. */

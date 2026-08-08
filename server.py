@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Static file server with a filesystem-backed save-game API.
 
-Serves the game (index.html, src/, ...) over HTTP and exposes three endpoints
-that persist saves to the filesystem instead of the browser's localStorage:
+Serves the game (index.html, src/, ...) over HTTP and exposes endpoints that
+persist named saves to the filesystem instead of the browser's localStorage:
 
-    GET  /api/save        -> {"exists": true, "data": <save json>} or {"exists": false}
-    POST /api/save        (body: save json) -> {"ok": true}
-    DELETE /api/save      -> {"ok": true}
+    GET    /api/save              -> {"saves": ["name1", "name2", ...]}
+    GET    /api/save?name=foo     -> {"exists": true, "data": <save json>} or {"exists": false}
+    POST   /api/save?name=foo     (body: save json) -> {"ok": true}
+    DELETE /api/save?name=foo     -> {"ok": true}
 
-Saves are written to ./saves/conquest_save.json (created on first save). The
-directory is .gitignored. Run with:
+Saves are written to ./saves/{name}.json (created on first save). The directory
+is .gitignored. Run with:
 
     python3 server.py [port]
 """
@@ -19,11 +20,20 @@ import json
 import os
 import socketserver
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SAVE_DIR = ROOT / "saves"
-SAVE_FILE = SAVE_DIR / "conquest_save.json"
+DEFAULT_SAVE = "conquest_save"
+
+
+def _save_path(name):
+    # Sanitize name so it can't escape the saves directory.
+    safe = "".join(c for c in name if c.isalnum() or c in "-_.")
+    if not safe:
+        safe = DEFAULT_SAVE
+    return SAVE_DIR / f"{safe}.json"
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -41,6 +51,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _parse_name(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        return params.get("name", [DEFAULT_SAVE])[0]
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -49,10 +64,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/api/save":
-            if SAVE_FILE.exists():
+        if self.path.startswith("/api/save"):
+            name = self._parse_name()
+            if name == "__list__":
+                # Special sentinel: list all save files.
+                saves = []
+                if SAVE_DIR.exists():
+                    for f in sorted(SAVE_DIR.glob("*.json")):
+                        saves.append(f.stem)
+                self._send_json(200, {"saves": saves})
+                return
+            save_file = _save_path(name)
+            if save_file.exists():
                 try:
-                    raw = SAVE_FILE.read_text(encoding="utf-8")
+                    raw = save_file.read_text(encoding="utf-8")
                     # Validate it parses before returning.
                     json.loads(raw)
                     self._send_json(200, {"exists": True, "data": raw})
@@ -64,10 +89,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET(self)
 
     def do_DELETE(self):
-        if self.path == "/api/save":
+        if self.path.startswith("/api/save"):
+            name = self._parse_name()
+            save_file = _save_path(name)
             try:
-                if SAVE_FILE.exists():
-                    SAVE_FILE.unlink()
+                if save_file.exists():
+                    save_file.unlink()
                 self._send_json(200, {"ok": True})
             except Exception as e:
                 self._send_json(500, {"ok": False, "error": str(e)})
@@ -75,14 +102,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_DELETE(self)
 
     def do_POST(self):
-        if self.path == "/api/save":
+        if self.path.startswith("/api/save"):
             try:
+                name = self._parse_name()
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length).decode("utf-8") if length else ""
                 # Validate JSON before persisting.
                 json.loads(body)
                 SAVE_DIR.mkdir(parents=True, exist_ok=True)
-                SAVE_FILE.write_text(body, encoding="utf-8")
+                save_file = _save_path(name)
+                save_file.write_text(body, encoding="utf-8")
                 self._send_json(200, {"ok": True})
             except Exception as e:
                 self._send_json(500, {"ok": False, "error": str(e)})
@@ -100,7 +129,7 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     SAVE_DIR.mkdir(parents=True, exist_ok=True)
     with socketserver.TCPServer(("", port), Handler) as httpd:
-        print(f"Conquest server on http://localhost:{port}  (saves -> {SAVE_FILE})")
+        print(f"Conquest server on http://localhost:{port}  (saves -> {SAVE_DIR})")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
