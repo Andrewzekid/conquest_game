@@ -971,11 +971,12 @@ export const AI_SETTLER_TARGET = 8; // base; scaled by map size
 // Per-city cap: AI limits settlers to (cityCount * factor + base).
 export const AI_SETTLER_CAP_FACTOR = 0.8;
 export const AI_SETTLER_CAP_BASE = 2;
-// Max settlers the AI will produce in a single turn.
-export const AI_SETTLERS_PER_TURN = 1;
+// Max settlers the AI will produce in a single turn during the early expansion
+// boost (turns 1-50 with good land). Outside that window the base is 1/turn.
+export const AI_SETTLERS_PER_TURN = 2;
 // Hard cap on the total number of live + queued settlers the AI will ever keep
 // (prevents a faction from spamming settlers and sprawling endlessly).
-export const AI_SETTLER_HARD_CAP = 4;
+export const AI_SETTLER_HARD_CAP = 6;
 // Frontier bonus values (distance from nearest owned city).
 export const AI_FRONTIER_BONUS_CLOSE = 120;   // within 3 tiles
 export const AI_FRONTIER_BONUS_MID = 60;      // within 6 tiles
@@ -990,7 +991,7 @@ export const AI_WEAK_CITY_RATIO = 0.4;
 export const WEAK_CITY_GARRISON_THRESHOLD = 2;
 // Global multiplier on AI settler ambition (target/cap/per-turn). >1 = more
 // aggressive expansion; data-driven so it can be tuned without touching ai.js.
-export const SETTLER_AGGRESSION = 1.0;
+export const SETTLER_AGGRESSION = 1.25;
 // Bonus weight added when targeting a neutral (unowned) city, so the AI races
 // to grab free cities early (first-expander advantage).
 export const AI_NEUTRAL_RUSH_BONUS = 150;

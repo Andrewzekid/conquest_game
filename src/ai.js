@@ -352,7 +352,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const boostActive = currentTurn > 0 && currentTurn <= 50 && settleDesirability.score > 0.25;
     const boostStrength = boostActive ? Math.max(0, (50 - currentTurn) / 50) * settleDesirability.score : 0;
     // Settler urgency multiplier from the long-term land-grab boost.
-    const settlerBoostMult = 1 + boostStrength * 1.5;
+    const settlerBoostMult = 1 + boostStrength * 2.5;
 
     // Goal-sequence selection (see src/ai_goals.js). Runs before the spending
     // blocks so they can weight themselves on the chosen goals. Goals persist
@@ -1190,14 +1190,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
     // Early-game army gating: the AI used to prioritize settlers so heavily
     // that it fielded almost no military for the first ~15 turns, then got
-    // rolled by neighbors. Now, until the faction has a small standing army
-    // (≥3 military units per city), settler production is suppressed so the
-    // first wave of production goes into defense. The boost is preserved for
-    // the very first settler (a 1-city faction MUST expand), but additional
-    // settlers wait until the army floor is met. Scarcity overrides this —
-    // expansion is the durable fix for a bleeding economy.
+    // rolled by neighbors. A lighter floor still protects a young faction
+    // while letting it expand faster when the map is wide open. The boost is
+    // preserved for the very first settler (a 1-city faction MUST expand), but
+    // additional settlers wait until the army floor is met. Scarcity overrides
+    // this — expansion is the durable fix for a bleeding economy.
     const militaryForGating = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u)).length;
-    const armyFloor = Math.max(2, myCityCount * 2);
+    const armyFloor = Math.max(2, Math.ceil(myCityCount * 1.5));
     const armyMet = militaryForGating >= armyFloor;
     const earlyGameArmyGate = (!scarcityTriggered && !armyMet && myCityCount >= 1);
     // The turns-1-50 long-term boost scales settler target/cap/per-turn with the
@@ -1225,12 +1224,13 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const settleBoostExtras = boostActive ? Math.min(4, Math.round(settleDesirability.openSpots / 5)) : 0;
     const hardCapBonusExtra = hardCapBonus + expandIslandsExtras + settleBoostExtras;
     // Settlers-per-turn is halved under a (non-naval) conquest goal so the AI
-    // doesn't sprawl while campaigning. Scarcity overrides this. The long-term
-    // boost (turns 1-50, quality-adjusted) can push production to 2/turn early
-    // when there's good land available.
-    const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION *
+    // doesn't sprawl while campaigning. Scarcity overrides this. During the
+    // early expansion boost (turns 1-50 with good land) the AI can train up to
+    // AI_SETTLERS_PER_TURN settlers per turn; outside the boost it falls back
+    // to a baseline of 1/turn so late-game sprawl is controlled.
+    const settlersPerTurn = Math.max(1, Math.round((boostActive ? AI_SETTLERS_PER_TURN : 1) * SETTLER_AGGRESSION *
         (scarcityTriggered ? 2 : (settlerUrgency > 1 ? 1.5 : 1)) *
-        (boostActive ? Math.max(1, 1 + boostStrength * 2) : 1) *
+        (boostActive ? Math.max(1, 1 + boostStrength * 3) : 1) *
         (conquestCampaigning && !navalConquest && !scarcityTriggered ? 0.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
@@ -1279,7 +1279,7 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
             if (scarcityTriggered) {
                 if (meleeCount < AI_SETTLER_SCARCE_FLOOR_RELAX) break;
             } else {
-                const floor = settlerUrgency > 1 ? 2 : 3;
+                const floor = (settlerUrgency > 1 || boostActive) ? 2 : 3;
                 if (militaryCount < floor || meleeCount < 1) break;
             }
         }
