@@ -113,9 +113,7 @@ export class Game {
         const maxAi = Math.max(0, FACTIONS.length - 1);
         const others = (options.aiFactionIds && options.aiFactionIds.length)
             ? options.aiFactionIds.slice(0, maxAi)
-            : ['crimson', 'roman', 'viking', 'azure', 'byzantine', 'verdant', 'spanish', 'polish', 'violet', 'obsidian', 'golden', 'iron', 'shadow', 'storm']
-                  .filter(id => id !== (playerFactionId || '_none_'))
-                  .slice(0, maxAi);
+            : FACTION_IDS.filter(id => id !== (playerFactionId || '_none_')).slice(0, maxAi);
         this._buildFactionBindings(playerFactionId, others);
 
         // Spectate UI controls.

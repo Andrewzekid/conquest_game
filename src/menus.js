@@ -12,6 +12,16 @@ let _onStart = null;
 
 function el(id) { return document.getElementById(id); }
 
+/** In-place Fisher-Yates shuffle. Used so each game's AI factions are drawn
+ *  randomly from the full candidate pool instead of always in definition order. */
+function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
 function renderFactionCards() {
     const wrap = el('start-factions');
     if (!wrap) return;
@@ -101,9 +111,11 @@ export function showStartMenu(onStart) {
         // lands in slot 0 and is guaranteed to be in the game (previously the
         // selection was discarded and slots were filled in FACTION_IDS order —
         // the picked faction often wasn't playing at all).
+        // Shuffle the full candidate pool so each game gets a random mix of the
+        // 20 available factions instead of the same definition-order subset.
         const others = _spectateMode
-            ? [_selectedFaction, ...FACTION_IDS.filter(id => id !== _selectedFaction)]
-            : FACTION_IDS.filter(id => id !== _selectedFaction);
+            ? [_selectedFaction, ...shuffle(FACTION_IDS.filter(id => id !== _selectedFaction))]
+            : shuffle(FACTION_IDS.filter(id => id !== _selectedFaction));
         const aiFactionIds = others.slice(0, aiCount);
         // Configure the global FACTIONS array before the game initializes.
         setFactionSlots(_playerCount);
