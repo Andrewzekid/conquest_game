@@ -2630,7 +2630,7 @@ export class Game {
         if (!tdef || !tdef.naval || (transport.type !== 'TRANSPORT' && transport.type !== 'STEAM_TRANSPORT')) { this.log('Only transports can be boarded.'); return; }
         if (unit.boarded) { this.log('This unit is already aboard a transport.'); return; }
         const cap = tdef.capacity || 2;
-        if ((transport.cargo && transport.cargo.length) || 0 >= cap) { this.log('That transport is full.'); return; }
+        if (((transport.cargo && transport.cargo.length) || 0) >= cap) { this.log('That transport is full.'); return; }
         const adj = Math.abs(unit.x - transport.x) + Math.abs(unit.z - transport.z);
         if (adj !== 1) { this.log('Move next to the transport to board it.'); return; }
         if (!transport.cargo) transport.cargo = [];
