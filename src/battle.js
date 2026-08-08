@@ -227,6 +227,13 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
             messages.push(`${combatName(attackerUnit)} precision shot: +3 vs high-value target`);
         }
     }
+    // SHINOBI assassin: +6 vs lords and kings (lords are units with lordId; kings are lords with isKing).
+    if (attackerUnit.type === 'SHINOBI' && defenderUnit) {
+        if (defenderUnit._isLord || defenderUnit.lordId) {
+            effectiveAttack += 6;
+            messages.push(`${combatName(attackerUnit)} assassinate: +6 vs lord`);
+        }
+    }
     // DEMOLITION_SQUAD demolish: +5 vs cities and buildings.
     if (attackerUnit.type === 'DEMOLITION_SQUAD' && (isCity || (buildings && buildings.get(tileKey)?.length > 0))) {
         effectiveAttack += 5;

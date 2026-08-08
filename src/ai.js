@@ -4447,8 +4447,8 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         // affordable, train one. The AI previously NEVER trained these units
         // because they're classified as 'melee' and buried deep in the
         // ROLE_ORDER — the deficit-based pick always chose INFANTRY or
-        // LINE_INFANTRY instead. This check fires when enemy cavalry >= 3 and
-        // the faction's anti-cav count is below ~20% of enemy cavalry.
+        // LINE_INFANTRY instead. This check fires when enemy cavalry >= 2 and
+        // the faction's anti-cav count is below ~50% of enemy cavalry.
         if (isAtWar) {
             let enemyCav = 0;
             let myAntiCav = 0;
@@ -4461,7 +4461,7 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
                 const r = unitRole(u.type);
                 if (r === 'cavalry') enemyCav++;
             }
-            if (enemyCav >= 3 && myAntiCav < Math.ceil(enemyCav * 0.3)) {
+            if (enemyCav >= 2 && myAntiCav < Math.ceil(enemyCav * 0.5)) {
                 const antiCavOrder = ['RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER'];
                 for (const t of antiCavOrder) {
                     if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) {
@@ -5971,6 +5971,10 @@ function planGroup(group, objective, stance, units, tiles, owner, lords, buildin
                     if (e._isLord || e.lordId) score += 8;
                     else if (e.type === 'SETTLER' || e.type === 'ENGINEER') score += 6;
                     else if (e.type === 'MEDIC') score += 4;
+                }
+                // SHINOBI: +20 vs lords/kings (assassin bonus)
+                if (u.type === 'SHINOBI') {
+                    if (e._isLord || e.lordId) score += 20;
                 }
                 // TORPEDO_BOAT: +10 vs naval units (torpedo bonus)
                 if (u.type === 'TORPEDO_BOAT') {
