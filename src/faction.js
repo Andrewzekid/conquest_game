@@ -55,7 +55,7 @@ export const FACTION_DEFS = {
         unitMods: {
             INFANTRY: { defense: 2, hp: 4 }
         },
-        passive: { defenseBonus: 1, kingRegen: 3, desc: '+1 defense to all your units. King regenerates +3 HP/turn in any own city (instead of +5 only in capital).' },
+        passive: { defenseBonus: 1, kingRegen: 3, navalAttackBonus: 2, navalCitySiegeBonus: 1, desc: '+1 defense to all your units. King regenerates +3 HP/turn in any own city. Naval units +2 attack and +100% extra siege damage vs cities.' },
         king: { name: 'Marshal Edmund', class: 'GUARDIAN',
                 active: { id: 'bulwark', name: 'Bulwark', cooldown: 4,
                           desc: '+2 defense to all your units for the rest of this turn.' } }
@@ -468,4 +468,10 @@ export function getOpenTerrainMoveBonus(def) {
 export function getCityCaptureBonus(def) {
     if (!def || !def.passive) return 0;
     return def.passive.cityCaptureBonus || 0;
+}
+
+/** Azure Dominion: extra multiplier (as additive factor) for naval shore bombardment vs cities. */
+export function getNavalCitySiegeBonus(def) {
+    if (!def || !def.passive) return 0;
+    return def.passive.navalCitySiegeBonus || 0;
 }

@@ -4,7 +4,7 @@ import { getLordCombatBonus, getLordSiegeBonus, getLordClassBonus, getAdjacentLo
 import { getBuildingDefenseBonus } from './building.js';
 import { awardUnitXP } from './unit.js';
 import { isPassable } from './map.js';
-import { getFactionDef, getCityCaptureBonus, getFortifiedDefenseBonus, getHealOnKill } from './faction.js';
+import { getFactionDef, getCityCaptureBonus, getFortifiedDefenseBonus, getHealOnKill, getNavalAttackBonus, getNavalCitySiegeBonus } from './faction.js';
 
 /** Fallback stats for combatants with no UNIT_TYPE entry (lords/kings, which
  *  fight as unit-like combatants). They are melee, non-naval, no siege bonus. */
@@ -165,6 +165,12 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
 
     // --- New European-faction/unit attacker bonuses (Phase G) ---
     const atkDef = getFactionDef(attackerUnit.factionId);
+    // Azure Dominion: naval units gain bonus attack.
+    const azureNavalBonus = atkStats.naval ? getNavalAttackBonus(atkDef) : 0;
+    if (azureNavalBonus > 0) {
+        effectiveAttack += azureNavalBonus;
+        messages.push(`${combatName(attackerUnit)} Azure fleet: +${azureNavalBonus} atk`);
+    }
     // BERSERKER frenzy: +3 attack when below 50% HP (glass cannon bites back).
     if (attackerUnit.type === 'BERSERKER' && attackerUnit.hp < (attackerUnit.maxHp || atkStats.hp) * 0.5) {
         effectiveAttack += 3;
@@ -285,8 +291,11 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
         // Naval shore bombardment: ships shell land targets from the water.
         if (atkStats.naval && !defStats.naval) {
             if (isCity) {
-                effectiveAttack += atkPower * 2;
-                messages.push(`${combatName(attackerUnit)} naval bombardment: ×3 vs city`);
+                // Azure Dominion: extra siege multiplier for naval city bombardment.
+                const azureSiegeBonus = getNavalCitySiegeBonus(atkDef);
+                effectiveAttack += atkPower * (2 + azureSiegeBonus);
+                const totalMult = 3 + azureSiegeBonus;
+                messages.push(`${combatName(attackerUnit)} naval bombardment: ×${totalMult} vs city`);
             } else {
                 effectiveAttack += atkPower * 0.5;
                 messages.push(`${combatName(attackerUnit)} shore bombardment: ×1.5 vs land unit`);
