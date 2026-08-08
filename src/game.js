@@ -412,6 +412,17 @@ export class Game {
         this.factions = FACTIONS;
         this.gameState = state;
         this.tiles = state.tiles;
+        // Restore grid dimensions from the saved tiles. Fresh games call
+        // setGridDimensions from the chosen map size, but loaded games skip
+        // _initFresh, leaving GRID_SIZE at its default. computeVisibility uses
+        // GRID_SIZE as its bounds check, so a loaded map larger than 40x40
+        // would have no visible tiles and fog could never clear.
+        let maxX = 0, maxZ = 0;
+        for (const t of this.tiles.values()) {
+            if (t.x > maxX) maxX = t.x;
+            if (t.z > maxZ) maxZ = t.z;
+        }
+        if (maxX > 0 || maxZ > 0) setGridDimensions(maxX + 1, maxZ + 1);
         // Backfill city-unrest fields for saves made before the unrest system.
         // calculateUnrest already tolerates undefined, but normalizing here keeps
         // tile.unrest a stable number for the UI right after load.
