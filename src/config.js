@@ -243,7 +243,7 @@ export const UNIT_COST = {
     CATAPULT:    { gold: 55,  food: 0,  wood: 10, iron: 0,  production: 18 },
     TREBUCHET:   { gold: 65,  food: 0,  wood: 15, iron: 5,  production: 20 },
     GALLEY:      { gold: 30, food: 8,  wood: 15, iron: 0,  production: 12 },
-    TRANSPORT:   { gold: 25, food: 5,  wood: 15, iron: 0,  production: 15 },
+    TRANSPORT:   { gold: 18, food: 5,  wood: 10, iron: 0,  production: 10 },
     FRIGATE:     { gold: 45, food: 12, wood: 22, iron: 8,  production: 18 },
     GALLEON:     { gold: 65, food: 15, wood: 30, iron: 15, production: 22 },
     // === RENAISSANCE ERA UNIT COSTS ===
@@ -259,7 +259,7 @@ export const UNIT_COST = {
     MORTAR:      { gold: 75, food: 8,  wood: 12, iron: 18, production: 24 },
     CORVETTE:    { gold: 55, food: 10, wood: 25, iron: 8,  production: 18 },
     FROLIC:      { gold: 75, food: 14, wood: 32, iron: 12, production: 24 },
-    MERCHANTMAN: { gold: 60, food: 12, wood: 25, iron: 5,  production: 20 },
+    MERCHANTMAN: { gold: 45, food: 12, wood: 18, iron: 5,  production: 15 },
     // === MODERN ERA UNIT COSTS ===
     RIFLEMAN:    { gold: 100, food: 18, wood: 8,  iron: 22, production: 28 },
     SHARPSHOOTER: { gold: 110, food: 15, wood: 8,  iron: 18, production: 30 },
@@ -271,7 +271,7 @@ export const UNIT_COST = {
     COMBAT_ENGINEER: { gold: 90, food: 10, wood: 10, iron: 12, production: 26 },
     SIEGE_CANNON: { gold: 110, food: 8,  wood: 12, iron: 28, production: 30 },
     IRONCLAD:    { gold: 130, food: 18, wood: 15, iron: 35, production: 35 },
-    STEAM_TRANSPORT: { gold: 90, food: 12, wood: 18, iron: 22, production: 28 },
+    STEAM_TRANSPORT: { gold: 65, food: 12, wood: 12, iron: 16, production: 20 },
     GUNBOAT:     { gold: 60, food: 8,  wood: 15, iron: 12, production: 18 },
     IRONCLAD_FRIGATE: { gold: 140, food: 22, wood: 15, iron: 42, production: 38 },
     MONITOR:     { gold: 135, food: 18, wood: 12, iron: 38, production: 36 },
@@ -299,7 +299,7 @@ export const UNIT_COST = {
     DESTROYER:   { gold: 170, food: 20, wood: 12, iron: 42, production: 40 },
     BATTLESHIP:  { gold: 240, food: 26, wood: 14, iron: 60, production: 52 },
     AIRCRAFT_CARRIER: { gold: 280, food: 30, wood: 16, iron: 56, production: 56 },
-    TRANSPORT_SHIP: { gold: 130, food: 16, wood: 22, iron: 26, production: 34 },
+    TRANSPORT_SHIP: { gold: 95, food: 16, wood: 16, iron: 20, production: 24 },
     SUBMARINE_II: { gold: 160, food: 14, wood: 8,  iron: 42, production: 36 }
 };
 
