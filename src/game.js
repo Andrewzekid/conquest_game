@@ -3688,6 +3688,72 @@ export class Game {
                 this.gameState.tempBonuses[faction] = { cavalryCharge: 3 };
                 this.log(`${name}: King ${king.name} leads a Winged Charge! Cavalry free charge attacks +3 bonus damage.`);
                 break;
+            case 'heavenly_mandate':
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0, rangedAttack: 3, siegeAttack: 3 };
+                this.log(`${name}: King ${king.name} proclaims the Heavenly Mandate! Ranged and siege units +3 attack this turn.`);
+                break;
+            case 'earthquake': {
+                let struck = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner === faction) continue;
+                    if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
+                    if (Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 3) {
+                        u.hp = Math.max(0, (u.hp || 0) - 6);
+                        struck++;
+                    }
+                }
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 2 };
+                this.log(`${name}: King ${king.name} triggers an Earthquake! ${struck} enemy unit(s) shaken for 6 damage.`);
+                break;
+            }
+            case 'arcane_barrage': {
+                let struck = 0;
+                let healed = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner === faction) continue;
+                    if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
+                    if (Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 2) {
+                        u.hp = Math.max(0, (u.hp || 0) - 5);
+                        struck++;
+                    }
+                }
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner !== faction) continue;
+                    if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
+                        u.hp = Math.min(u.maxHp || 10, u.hp + 4);
+                        healed++;
+                    }
+                }
+                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                this.log(`${name}: King ${king.name} casts Arcane Barrage! ${struck} enemy unit(s) damaged, ${healed} friendly unit(s) healed.`);
+                break;
+            }
+            case 'shadow_strike':
+                this.gameState.tempBonuses[faction] = { attack: 4, defense: 0 };
+                this.log(`${name}: King ${king.name} calls a Shadow Strike! All units +4 attack this turn; concealed units may ambush.`);
+                break;
+            case 'sacrifice': {
+                let struck = 0;
+                let healed = 0;
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner === faction) continue;
+                    if (!canAttack(this.gameState.diplomacy, faction, u.owner)) continue;
+                    if (Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 3) {
+                        u.hp = Math.max(0, (u.hp || 0) - 4);
+                        struck++;
+                    }
+                }
+                for (const u of this.gameState.units.values()) {
+                    if (u.owner !== faction) continue;
+                    if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
+                        u.hp = Math.min(u.maxHp || 10, u.hp + 5);
+                        healed++;
+                    }
+                }
+                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                this.log(`${name}: King ${king.name} offers a Sacrifice to the Sun! ${struck} enemy unit(s) burned, ${healed} friendly unit(s) healed.`);
+                break;
+            }
         }
         this.gameState.kingCooldowns[faction] = cd;
         if (faction === PLAYER_FACTION) {
@@ -5064,6 +5130,16 @@ export class Game {
                 return enemyCityNear || ownCities.length < 3;
             case 'winged_charge':
                 return enemyNearKing || enemyUnits.length >= 2;
+            case 'heavenly_mandate':
+                return enemyCityNear || enemyUnits.length >= 3;
+            case 'earthquake':
+                return enemyUnits.some(u => Math.max(Math.abs(u.x - king.x), Math.abs(u.z - king.z)) <= 3);
+            case 'arcane_barrage':
+                return enemyNearKing || threatened;
+            case 'shadow_strike':
+                return enemyNearKing || enemyUnits.length >= 3;
+            case 'sacrifice':
+                return enemyNearKing || threatened;
         }
         return false;
     }

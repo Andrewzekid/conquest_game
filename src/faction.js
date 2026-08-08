@@ -225,6 +225,82 @@ export const FACTION_DEFS = {
         king: { name: 'King Jan Sobieski', class: 'WARLORD',
                 active: { id: 'winged_charge', name: 'Winged Charge', cooldown: 3,
                           desc: 'All cavalry and WINGED_HUSSAR units charge this turn (free charge attacks on adjacent enemies, +3 bonus damage).' } }
+    },
+    // --- Phase H: Cultural factions ---
+    ming: {
+        id: 'ming', name: 'Ming Dynasty', emoji: '\u{1F409}',
+        color: { tile: 0x8a1c1c, unit: 0xd4af37, name: 'Ming Dynasty' },
+        aiPersonality: 'DEFENSIVE',
+        roster: ['INFANTRY', 'ARCHER', 'PIKEMAN', 'TIGER_CANNON'],
+        unitMods: {
+            TIGER_CANNON: { attack: 1, hp: 2, costGoldMult: 0.8 },
+            INFANTRY: { defense: 1 }
+        },
+        passive: { siegePowerBonus: 2, defenseBonus: 1,
+                   desc: '+2 siege power for all siege units. +1 defense to all units.' },
+        king: { name: 'Emperor Yongle', class: 'CONQUEROR',
+                active: { id: 'heavenly_mandate', name: 'Heavenly Mandate', cooldown: 5,
+                          desc: 'All ranged and siege units gain +3 attack and +1 range this turn.' } }
+    },
+    stone: {
+        id: 'stone', name: 'Stone Titans', emoji: '\u{1F5FF}',
+        color: { tile: 0x5a5a55, unit: 0x8a8a80, name: 'Stone Titans' },
+        aiPersonality: 'DEFENSIVE',
+        roster: ['INFANTRY', 'PIKEMAN', 'SIEGE', 'STONE_GUARD'],
+        unitMods: {
+            STONE_GUARD: { defense: 1, hp: 2, costGoldMult: 0.8 },
+            INFANTRY: { defense: 1 }
+        },
+        passive: { terrainDefenseBonus: { HILLS: 2, MOUNTAIN: 2 }, fortifiedDefenseBonus: 2,
+                   desc: '+2 defense on hills and mountains. Fortified units +2 defense.' },
+        king: { name: 'Titan-King Granite', class: 'GUARDIAN',
+                active: { id: 'earthquake', name: 'Earthquake', cooldown: 5,
+                          desc: 'The ground shatters around the king, dealing 6 damage to all enemy units within 3 tiles.' } }
+    },
+    arcane: {
+        id: 'arcane', name: 'Arcane College', emoji: '\u{1F52E}',
+        color: { tile: 0x4a2080, unit: 0xa855f7, name: 'Arcane College' },
+        aiPersonality: 'ECONOMIC',
+        roster: ['INFANTRY', 'ARCHER', 'SCOUT', 'BATTLE_MAGE'],
+        unitMods: {
+            BATTLE_MAGE: { attack: 1, hp: 1, costGoldMult: 0.8 },
+            ARCHER: { attack: 1 }
+        },
+        passive: { visionBonus: 1, attackBonus: 1,
+                   desc: '+1 vision radius. +1 attack to all units.' },
+        king: { name: 'Arch-Sorcerer Elara', class: 'CONQUEROR',
+                active: { id: 'arcane_barrage', name: 'Arcane Barrage', cooldown: 5,
+                          desc: 'Unleash a magical storm: deal 5 damage to all enemies within 2 tiles of the king and heal all friendly units within 2 tiles for 4 HP.' } }
+    },
+    lotus: {
+        id: 'lotus', name: 'Shadow Lotus', emoji: '\u{1F338}',
+        color: { tile: 0x1a1a20, unit: 0xd946ef, name: 'Shadow Lotus' },
+        aiPersonality: 'AGGRESSIVE',
+        roster: ['INFANTRY', 'ARCHER', 'SCOUT', 'SHINOBI'],
+        unitMods: {
+            SHINOBI: { attack: 1, moveRange: 1, costGoldMult: 0.8 },
+            SCOUT: { attack: 1 }
+        },
+        passive: { freeConcealTurns: 1, forestMoveBonus: 1,
+                   desc: 'Units start with 1 concealment turn done. +1 move in forest.' },
+        king: { name: 'Lotus Master Kage', class: 'WARLORD',
+                active: { id: 'shadow_strike', name: 'Shadow Strike', cooldown: 4,
+                          desc: 'All concealed units gain +4 attack and may immediately make a free ambush attack on an adjacent enemy.' } }
+    },
+    sun: {
+        id: 'sun', name: 'Sun Empire', emoji: '\u{2600}\uFE0F',
+        color: { tile: 0xd4581f, unit: 0xffd700, name: 'Sun Empire' },
+        aiPersonality: 'AGGRESSIVE',
+        roster: ['INFANTRY', 'ARCHER', 'CAVALRY', 'JAGUAR_WARRIOR'],
+        unitMods: {
+            JAGUAR_WARRIOR: { attack: 1, hp: 2, costGoldMult: 0.8 },
+            CAVALRY: { attack: 1 }
+        },
+        passive: { healOnKill: 2, forestMoveBonus: 1,
+                   desc: 'Units heal 2 HP on kill. +1 move in forest.' },
+        king: { name: 'Sun King Itzcoatl', class: 'WARLORD',
+                active: { id: 'sacrifice', name: 'Sacrifice to the Sun', cooldown: 5,
+                          desc: 'Deal 4 damage to all enemy units within 3 tiles of the king and heal all friendly units within 3 tiles for 5 HP.' } }
     }
 };
 
@@ -233,7 +309,7 @@ export const FACTION_IDS = Object.keys(FACTION_DEFS);
 // Map faction slot (ai1, ai2, etc.) to faction def id
 // Cycles through available factions based on slot index. Includes frost
 // (previously omitted) and the 5 new European factions.
-const FACTION_SLOT_MAP = ['crimson', 'verdant', 'violet', 'azure', 'obsidian', 'golden', 'iron', 'shadow', 'storm', 'frost', 'roman', 'viking', 'byzantine', 'spanish', 'polish'];
+const FACTION_SLOT_MAP = ['crimson', 'verdant', 'violet', 'azure', 'obsidian', 'golden', 'iron', 'shadow', 'storm', 'frost', 'roman', 'viking', 'byzantine', 'spanish', 'polish', 'ming', 'stone', 'arcane', 'lotus', 'sun'];
 
 export function getFactionForSlot(slotIndex) {
     return FACTION_SLOT_MAP[slotIndex % FACTION_SLOT_MAP.length];

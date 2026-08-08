@@ -153,6 +153,10 @@ export function resolveCombat(attackerUnit, defenderUnit, terrain, attackerLord 
     if (SIEGE_TEMP_BONUS_TYPES.has(attackerUnit.type) && atkTemp.siegeAttack) {
         effectiveAttack += atkTemp.siegeAttack;
     }
+    // Ranged-specific temp bonus: Heavenly Mandate and Arcane Surge boost ranged units.
+    if (atkStats.ranged && atkTemp.rangedAttack) {
+        effectiveAttack += atkTemp.rangedAttack;
+    }
 
     // --- New European-faction/unit attacker bonuses (Phase G) ---
     const atkDef = getFactionDef(attackerUnit.factionId);

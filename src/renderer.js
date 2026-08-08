@@ -2403,6 +2403,41 @@ export class GameRenderer {
                 this._addCavalry(g, P, { armored: true, weapon: 'lance', wings: true, riderArmor: true });
                 break;
             }
+            case 'STONE_GUARD': {
+                // Heavily armored statue-like warrior with a tower shield.
+                const t = this._addHumanoid(g, P, { armor: true, helmet: true, shield: true });                const towerShield = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.32), P.metal);
+                towerShield.position.set(-0.18, 0.4 * t, 0.04); g.add(towerShield);
+                break;
+            }
+            case 'BATTLE_MAGE': {
+                // Robed spellcaster holding a glowing staff.
+                const t = this._addHumanoid(g, P, { helmet: false });
+                const robe = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.14), P.cloth);
+                robe.position.set(0, 0.34 * t, -0.06); g.add(robe);
+                const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), P.white);
+                staff.position.set(0.16, 0.45 * t, 0.04); g.add(staff);
+                const orb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), P.cloth);
+                orb.position.set(0.16, 0.82 * t, 0.04); g.add(orb);
+                break;
+            }
+            case 'SHINOBI': {
+                // Hooded assassin with a short blade.
+                const t = this._addHumanoid(g, P, { helmet: true });
+                const cloak = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.28, 0.05), P.dark);
+                cloak.position.set(0, 0.36 * t, -0.1); g.add(cloak);
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.22, 0.012), P.metal);
+                blade.position.set(0.16, 0.42 * t, 0.04); blade.rotation.z = -0.2; g.add(blade);
+                break;
+            }
+            case 'JAGUAR_WARRIOR': {
+                // Feathered warrior with a macuahuitl-style club.
+                const t = this._addHumanoid(g, P, { helmet: false });
+                const headdress = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.1, 0.18), P.cloth);
+                headdress.position.set(0, 0.72 * t, -0.04); g.add(headdress);
+                const macahuitl = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.28, 0.02), P.wood);
+                macahuitl.position.set(0.16, 0.4 * t, 0.04); macahuitl.rotation.z = -0.15; g.add(macahuitl);
+                break;
+            }
             case 'CONQUISTADOR': {
                 this._addCavalry(g, P, { weapon: 'arquebus', morion: true });
                 break;
@@ -2547,6 +2582,21 @@ export class GameRenderer {
                 cross.position.set(0, 0.28, -0.06); g.add(cross);
                 for (const sx of [-0.16, 0.16]) {
                     for (const sz of [-0.14, 0.14]) {
+                        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 10), P.dark);
+                        wheel.rotation.z = Math.PI / 2;
+                        wheel.position.set(sx, 0.1, sz); g.add(wheel);
+                    }
+                }
+                break;
+            }
+            case 'TIGER_CANNON': {
+                // Ornate Chinese cannon: longer barrel, tiger-striped carriage.
+                const carriage = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.5), P.darkWood);
+                carriage.position.y = 0.16; g.add(carriage);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.6, 12), P.metal);
+                barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.26, 0.08); g.add(barrel);
+                for (const sx of [-0.14, 0.14]) {
+                    for (const sz of [-0.18, 0.18]) {
                         const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 10), P.dark);
                         wheel.rotation.z = Math.PI / 2;
                         wheel.position.set(sx, 0.1, sz); g.add(wheel);

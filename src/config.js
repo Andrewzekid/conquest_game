@@ -79,6 +79,12 @@ export const UNIT_TYPE = {
     CONQUISTADOR: { name: 'Conquistador', hp: 10, attack: 7, defense: 4, moveRange: 3, upkeep: { food: 3, gold: 6, iron: 1 }, ranged: true, attackRange: 2, cityBonus: 2 },
     WINGED_HUSSAR: { name: 'Winged Hussar', hp: 18, attack: 8, defense: 4, moveRange: 3, upkeep: { food: 5, gold: 6, iron: 2 }, ranged: false, attackRange: 1, chargeMultiplier: 2, openTerrainMoveBonus: 1 },
     CROSSBOWMAN: { name: 'Crossbowman',  hp: 10, attack: 8, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 5, wood: 2 }, ranged: true, attackRange: 3 },
+    // --- Phase H: Cultural factions (Ming, Stone, Arcane, Shadow Lotus, Sun) ---
+    TIGER_CANNON:  { name: 'Tiger Cannon', hp: 14, attack: 6, defense: 3, moveRange: 2, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, aoeRadius: 2, canSetFire: true, buildTurns: 2 },
+    STONE_GUARD:   { name: 'Stone Guard', hp: 18, attack: 4, defense: 6, moveRange: 1, upkeep: { food: 3, gold: 3, iron: 1 }, ranged: false, attackRange: 1, antiCavalry: true },
+    BATTLE_MAGE:   { name: 'Battle Mage', hp: 10, attack: 6, defense: 2, moveRange: 2, upkeep: { food: 2, gold: 5 }, ranged: true, attackRange: 3, aoe: true, aoeRadius: 1 },
+    SHINOBI:       { name: 'Shinobi', hp: 10, attack: 7, defense: 2, moveRange: 3, upkeep: { food: 2, gold: 4 }, ranged: false, attackRange: 1 },
+    JAGUAR_WARRIOR:{ name: 'Jaguar Warrior', hp: 14, attack: 8, defense: 3, moveRange: 3, upkeep: { food: 3, gold: 4 }, ranged: false, attackRange: 1 },
     CATAPULT:    { name: 'Catapult',     hp: 12, attack: 5, defense: 2, moveRange: 1, upkeep: { food: 3, gold: 6, wood: 2, iron: 2 }, besiege: true, besiegePower: 2, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
     TREBUCHET:   { name: 'Trebuchet',    hp: 10, attack: 7, defense: 1, moveRange: 1, upkeep: { food: 3, gold: 7, wood: 3, iron: 3 }, besiege: true, besiegePower: 3, ranged: true, attackRange: 3, aoe: true, canSetFire: true, buildTurns: 2 },
 
@@ -168,7 +174,7 @@ export const UNIT_TYPE = {
 // ARTILLERY/CANNON/MORTAR are also shared (tech-gated by GUNPOWDER/METALLURGY)
 // so every faction's siege line stays upgradeable; factions with them in their
 // roster (e.g. Iron Empire) get them WITHOUT the tech as their signature perk.
-export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'COMBAT_ENGINEER', 'SIEGE_CANNON', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'];
+export const EXTRA_UNITS = ['SETTLER', 'ENGINEER', 'WORKER', 'CAVALRY', 'CHARIOT', 'LONGBOWMAN', 'CATAPHRACT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER', 'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'TIGER_CANNON', 'STONE_GUARD', 'BATTLE_MAGE', 'SHINOBI', 'JAGUAR_WARRIOR', 'CROSSBOWMAN', 'MUSKETEER', 'ARQUEBUSIER', 'LINE_INFANTRY', 'DRAGOON', 'RIFLEMAN', 'SHARPSHOOTER', 'RAILGUN', 'ARMORED_TRAIN', 'ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'DEMOLITION_SQUAD', 'COMBAT_ENGINEER', 'SIEGE_CANNON', 'HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM', 'MOBILIZED_INFANTRY', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'TANK', 'HEAVY_TANK', 'ARMORED_CAR', 'MERCENARY_KNIGHT', 'HOUSEHOLD_GUARD', 'FRONTIERSMAN', 'RAIDER'];
 export const NAVAL_UNITS = ['GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON', 'MAN_OF_WAR', 'GALLEASS', 'PINNACE', 'CORVETTE', 'FROLIC', 'MERCHANTMAN', 'IRONCLAD', 'STEAM_TRANSPORT', 'GUNBOAT', 'IRONCLAD_FRIGATE', 'MONITOR', 'FRIGATE_2', 'SUBMARINE', 'TORPEDO_BOAT', 'DESTROYER', 'BATTLESHIP', 'AIRCRAFT_CARRIER', 'TRANSPORT_SHIP', 'SUBMARINE_II'];
 // Long-range siege engines, unlocked per-city by a Siege Workshop (mirrors the
 // Harbor→ships gating). Not part of any faction roster by default.
@@ -185,7 +191,12 @@ export const FACTION_UNIQUE_UNITS = {
     BERSERKER:       'viking',
     VARANGIAN_GUARD: 'byzantine',
     CONQUISTADOR:    'spanish',
-    WINGED_HUSSAR:   'polish'
+    WINGED_HUSSAR:   'polish',
+    TIGER_CANNON:    'ming',
+    STONE_GUARD:     'stone',
+    BATTLE_MAGE:     'arcane',
+    SHINOBI:         'lotus',
+    JAGUAR_WARRIOR:  'sun'
 };
 
 // Terrain bonuses: bonus_defense or bonus_attack added in combat
@@ -223,6 +234,11 @@ export const UNIT_COST = {
     VARANGIAN_GUARD:{ gold: 60, food: 8,  wood: 0,  iron: 12, production: 18 },
     CONQUISTADOR:   { gold: 45, food: 10, wood: 5,  iron: 8,  production: 14 },
     WINGED_HUSSAR:  { gold: 70, food: 15, wood: 0,  iron: 12, production: 20 },
+    TIGER_CANNON:   { gold: 60, food: 5,  wood: 12, iron: 5,  production: 18 },
+    STONE_GUARD:    { gold: 35, food: 8,  wood: 0,  iron: 6,  production: 12 },
+    BATTLE_MAGE:    { gold: 45, food: 5,  wood: 5,  iron: 0,  production: 12 },
+    SHINOBI:        { gold: 35, food: 5,  wood: 5,  iron: 2,  production: 10 },
+    JAGUAR_WARRIOR: { gold: 40, food: 8,  wood: 0,  iron: 4,  production: 12 },
     CROSSBOWMAN:    { gold: 50, food: 0,  wood: 18, iron: 0,  production: 14 },
     CATAPULT:    { gold: 55,  food: 0,  wood: 10, iron: 0,  production: 18 },
     TREBUCHET:   { gold: 65,  food: 0,  wood: 15, iron: 5,  production: 20 },
@@ -405,7 +421,8 @@ export const LAND_NAVAL_TYPES = new Set(['INFANTRY', 'CAVALRY', 'PIKEMAN', 'CATA
 export const MEDIEVAL_UNIT_TYPES = new Set([
     'INFANTRY', 'ARCHER', 'ARTILLERY', 'CAVALRY', 'PIKEMAN', 'SCOUT', 'SIEGE', 'LONGBOWMAN',
     'CATAPHRACT', 'CHARIOT', 'MEDIC', 'SIEGE_TOWER', 'LEGIONNAIRE', 'BERSERKER',
-    'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'CROSSBOWMAN', 'CATAPULT', 'TREBUCHET',
+    'VARANGIAN_GUARD', 'CONQUISTADOR', 'WINGED_HUSSAR', 'TIGER_CANNON', 'STONE_GUARD',
+    'BATTLE_MAGE', 'SHINOBI', 'JAGUAR_WARRIOR', 'CROSSBOWMAN', 'CATAPULT', 'TREBUCHET',
     'GALLEY', 'TRANSPORT', 'FRIGATE', 'GALLEON'
 ]);
 
@@ -420,7 +437,7 @@ export const MODERN_UNIT_TYPES = new Set([
 ]);
 
 /** Siege/artillery unit types used for special combat and city-besiege rules. */
-export const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'CANNON', 'MORTAR',
+export const SIEGE_TYPES = new Set(['SIEGE', 'ARTILLERY', 'CATAPULT', 'TREBUCHET', 'TIGER_CANNON', 'CANNON', 'MORTAR',
     'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN']);
 
 export const CAPTURE_COST = 20; // Gold to capture an unowned tile
@@ -499,7 +516,7 @@ export const CHARIOT_CHARGE_UNITS = ['CHARIOT'];
 export const CHARIOT_CHARGE_RANGE = 3;            // max tiles a charge travels (orthogonal)
 export const CHARIOT_CHARGE_STUN_TURNS = 2;       // chariot is stunned this many turns after charging
 export const CHARIOT_CHARGE_ATTACK_BONUS = 4;     // flat attack bonus applied to every hit in the lane
-export const CHARIOT_CHARGE_VULN_TYPES = ['INFANTRY', 'ARTILLERY', 'ARCHER', 'LONGBOWMAN', 'CATAPULT', 'TREBUCHET'];
+export const CHARIOT_CHARGE_VULN_TYPES = ['INFANTRY', 'ARTILLERY', 'ARCHER', 'LONGBOWMAN', 'CATAPULT', 'TREBUCHET', 'TIGER_CANNON', 'BATTLE_MAGE'];
 export const CHARIOT_CHARGE_VULN_MULT = 2.0;      // extra damage multiplier vs vulnerable types
 
 // --- Freeze (Frost Clan Winter's Grasp) ---
@@ -539,7 +556,7 @@ export const SIEGE_PRESSURE_MAX = 4;
 // the city's fortification is chipped as well as damaging the defender: heavy
 // siege artillery chips by its besiegePower, all other ranged units (archers
 // and the like) chip by RANGED_BOMBARD_FORT_DAMAGE.
-export const HEAVY_SIEGE_FORT_CHIP_TYPES = ['ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'CATAPULT', 'TREBUCHET', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'BATTLESHIP'];
+export const HEAVY_SIEGE_FORT_CHIP_TYPES = ['ARTILLERY', 'CANNON', 'MORTAR', 'FIELD_GUN', 'HORSE_ARTILLERY', 'SIEGE_CANNON', 'RAILGUN', 'CATAPULT', 'TREBUCHET', 'TIGER_CANNON', 'MOBILIZED_ARTILLERY', 'MOTOR_ARTILLERY', 'BATTLESHIP'];
 
 // --- Siege Tower assault support ---
 // A friendly SIEGE_TOWER adjacent to an unbreached city undermines its
