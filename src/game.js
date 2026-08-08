@@ -576,6 +576,13 @@ export class Game {
     }
 
     initRenderer() {
+        // Loading a game re-initializes the renderer, which creates a new
+        // WebGL canvas. Remove the old canvas so the new one is the only
+        // interactive surface and event listeners don't get split across
+        // overlapping canvases.
+        if (this.renderer && this.renderer.renderer && this.renderer.renderer.domElement) {
+            this.renderer.renderer.domElement.remove();
+        }
         this.renderer = new GameRenderer();
         const tilesArray = [...this.tiles.values()];
         this.renderer.createMapMesh(tilesArray);
