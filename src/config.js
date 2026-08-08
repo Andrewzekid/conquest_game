@@ -744,9 +744,9 @@ export const NATURAL_WONDERS = [
 ];
 
 // --- Factions ---
-// Dynamic faction slots - supports 2-15 players
+// Dynamic faction slots - supports 2-20 players
 // 'player' is human-controlled; all others are AI
-export const MAX_FACTIONS = 15;
+export const MAX_FACTIONS = 20;
 export const PLAYER_FACTION = 'player';
 
 // Generate faction slots dynamically based on player count
@@ -768,7 +768,7 @@ export function setFactionSlots(playerCount) {
 
 // Per-faction colors. `tile` is the emissive tint shown on owned tiles;
 // `unit` is the marker color for that faction's units.
-// Extended to support up to 15 factions
+// Extended to support up to 20 factions
 export const FACTION_COLORS = {
     player: { tile: 0x2e5dc4, unit: 0x4488ff, name: 'You' },
     ai1:    { tile: 0xb33333, unit: 0xff5544, name: 'Crimson' },
@@ -784,7 +784,12 @@ export const FACTION_COLORS = {
     ai11:   { tile: 0x4a6a8a, unit: 0x88bbdd, name: 'Viking Raiders' },
     ai12:   { tile: 0x7b2d8b, unit: 0xaa55cc, name: 'Byzantine Empire' },
     ai13:   { tile: 0xd4581f, unit: 0xff7722, name: 'Spanish Conquistadors' },
-    ai14:   { tile: 0x909098, unit: 0xc8c8d0, name: 'Polish Winged Hussars' }
+    ai14:   { tile: 0x909098, unit: 0xc8c8d0, name: 'Polish Winged Hussars' },
+    ai15:   { tile: 0x8a1c1c, unit: 0xd4af37, name: 'Ming Dynasty' },
+    ai16:   { tile: 0x5a5a55, unit: 0x8a8a80, name: 'Stone Titans' },
+    ai17:   { tile: 0x4a2080, unit: 0xa855f7, name: 'Arcane College' },
+    ai18:   { tile: 0x1a1a20, unit: 0xd946ef, name: 'Shadow Lotus' },
+    ai19:   { tile: 0xd4581f, unit: 0xffd700, name: 'Sun Empire' }
 };
 
 // Per-faction city names - each faction has thematic naming
