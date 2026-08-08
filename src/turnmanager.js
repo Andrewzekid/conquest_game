@@ -405,6 +405,21 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
         // Medics heal adjacent friendly units (once per round, all factions).
         processMedicHeal(gameState.units);
 
+        // Faction terrain-heal passives (Verdant: healInForest). Units of a
+        // faction with this passive heal the specified amount when standing
+        // on the matching terrain (FOREST for Verdant).
+        if (gameState.factionDefs) {
+            for (const u of gameState.units.values()) {
+                if (!u.owner || u.hp <= 0 || u.hp >= u.maxHp) continue;
+                const fdef = gameState.factionDefs[u.owner];
+                if (!fdef || !fdef.passive || !fdef.passive.healInForest) continue;
+                const tile = gameState.tiles && gameState.tiles.get(`${u.x},${u.z}`);
+                if (tile && tile.terrain === 'FOREST') {
+                    u.hp = Math.min(u.maxHp, u.hp + fdef.passive.healInForest);
+                }
+            }
+        }
+
         gameState.turn++;
 
         // Reset all unit per-turn flags
@@ -464,7 +479,16 @@ export function createTurnManager(gameState, factions, onPhaseChange, runAI, ren
                         }
                     }
                     const heal = cityUnderAssault ? 0 : (lord.isKing ? (inOwnCity ? 5 : 0) : 2);
-                    lord.hp = Math.min(lord.maxHp, lord.hp + heal);
+                    // Faction kingRegen passive (Azure, Frost): king regenerates
+                    // extra HP per turn in any own city.
+                    let bonusHeal = 0;
+                    if (heal > 0 && lord.isKing && inOwnCity && gameState.factionDefs) {
+                        const fdef = gameState.factionDefs[lord.owner];
+                        if (fdef && fdef.passive && fdef.passive.kingRegen) {
+                            bonusHeal = fdef.passive.kingRegen;
+                        }
+                    }
+                    lord.hp = Math.min(lord.maxHp, lord.hp + heal + bonusHeal);
                 }
             }
         }

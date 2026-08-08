@@ -123,3 +123,57 @@ describe('spectate-ui', () => {
       expect(gameSrc).not.toContain('bestTechs');
     });
   });
+
+  // Barracks bonus must be read from ANY influence tile (not just the city
+  // tile), and must reflect the building's upgrade level via
+  // MILITARY_BUILDING_LEVELS.BARRACKS. The old code checked only
+  // `buildings.get(cityKey)` and hardcoded Lv.2 / 25% — so a Barracks on an
+  // influence tile appeared to grant nothing (reported as "barracks doesn't
+  // give XP or discount").
+  describe('barracks influence + level display', () => {
+    it('ui.js has bestBarracksInInfluence scanning the city influence', () => {
+      expect(uiSrc).toMatch(/export function bestBarracksInInfluence/);
+      expect(uiSrc).toMatch(/getBuildingState\(gameState\.buildingState, k, 'BARRACKS'\)/);
+      expect(uiSrc).toMatch(/MILITARY_BUILDING_LEVELS\.BARRACKS/);
+    });
+
+    it('train menu uses barracksInfo.goldMult (not hardcoded 0.75)', () => {
+      expect(uiSrc).not.toContain("effCost.gold || 0) * 0.75");
+      expect(uiSrc).toMatch(/effCost\.gold \|\| 0\) \* barracksInfo\.goldMult/);
+    });
+
+    it('train menu shows the actual veteran level (not hardcoded Lv.2)', () => {
+      expect(uiSrc).toMatch(/label \+= ` ★Lv\.\$\{bLvl\}`/);
+      expect(uiSrc).not.toContain("★'");
+    });
+
+    it('train menu no longer checks only the city tile', () => {
+      expect(uiSrc).not.toContain("buildings.get(cityKey) || []).includes('BARRACKS')");
+    });
+  });
+
+  // The tech-tree panel must render the atomic era (TANK/BATTLESHIP/
+  // AIRCRAFT_CARRIER/RPG_TEAM live there). Previously ui.js had its own
+  // hardcoded eraOrder that ended at 'modern', so the 7 atomic techs never
+  // showed up in the panel — reported as "battleship / aircraft carrier /
+  // RPG team not in the tech tree". It now imports the canonical
+  // ERA_ORDER/ERA_NAMES from tech.js.
+  describe('tech tree shows the atomic era', () => {
+    it('ui.js imports ERA_ORDER and ERA_NAMES from tech.js', () => {
+      expect(uiSrc).toMatch(/import \{[^}]*ERA_ORDER[^}]*\} from '\.\/tech\.js'/);
+      expect(uiSrc).toMatch(/import \{[^}]*ERA_NAMES[^}]*\} from '\.\/tech\.js'/);
+    });
+
+    it('ui.js does not carry its own hardcoded eraOrder missing atomic', () => {
+      expect(uiSrc).not.toContain("const eraOrder = ['ancient'");
+    });
+
+    it('ui.js has an atomic era color', () => {
+      expect(uiSrc).toMatch(/atomic: '#[0-9a-f]{6}'/);
+    });
+
+    it('tech.js ERA_ORDER includes atomic as the final era', () => {
+      const techSrc = readFileSync(resolve(import.meta.dirname, '..', 'src', 'tech.js'), 'utf-8');
+      expect(techSrc).toMatch(/ERA_ORDER = \[[^\]]*'atomic'\]/);
+    });
+  });

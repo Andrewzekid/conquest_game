@@ -2960,7 +2960,7 @@ export class Game {
                         const t = this.tiles.get(k);
                         if (!t) continue;
                         if (t.terrain !== 'WATER' && t.terrain !== 'RIVER') continue;
-                        if (!isWaterConnectedToOpenWater(this.tiles, k, 100,100)) continue;
+                        if (!isWaterConnectedToOpenWater(this.tiles, k, 4)) continue;
                         if (occupied.has(k)) continue;
                         return { x: nx, z: nz };
                     }
@@ -2975,7 +2975,7 @@ export class Game {
                     const nx = origin.x + dx, nz = origin.z + dz;
                     const t = this.tiles.get(`${nx},${nz}`);
                     if (t && (t.terrain === 'WATER' || t.terrain === 'RIVER') &&
-                        isWaterConnectedToOpenWater(this.tiles, `${nx},${nz}`, 100, 100)) {
+                        isWaterConnectedToOpenWater(this.tiles, `${nx},${nz}`, 4)) {
                         return { x: nx, z: nz };
                     }
                 }
@@ -3505,7 +3505,6 @@ export class Game {
         this.gameState.resources.player.gold -= LORD_RECRUIT_COST.gold;
         this.gameState.resources.player.food -= LORD_RECRUIT_COST.food;
         const lord = createLord(PLAYER_FACTION, city.x, city.z);
-        applyLordTechBonuses(lord, this.gameState.techState);
         const unit = createUnit('INFANTRY', PLAYER_FACTION, city.x, city.z, { factionDef: this.factionDefs[PLAYER_FACTION] });
         this.gameState.units.set(unit.id, unit);
         assignArmy(lord, unit.id);
@@ -3556,8 +3555,8 @@ export class Game {
 
         switch (id) {
             case 'bloodlust':
-                this.gameState.tempBonuses[faction] = { attack: 3, defense: 0 };
-                this.log(`${name}: King ${king.name} unleashes Bloodlust! +3 attack this turn.`);
+                this.gameState.tempBonuses[faction] = { attack: 5, defense: 0 };
+                this.log(`${name}: King ${king.name} unleashes Bloodlust! +5 attack this turn.`);
                 break;
             case 'bulwark':
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 3 };
@@ -3565,9 +3564,9 @@ export class Game {
                 break;
             case 'harvest': {
                 const r = this.gameState.resources[faction];
-                r.food = (r.food || 0) + 80;
-                r.gold = (r.gold || 0) + 40;
-                this.log(`${name}: King ${king.name} calls a Harvest! +80 food, +40 gold.`);
+                r.food = (r.food || 0) + 40;
+                r.gold = (r.gold || 0) + 20;
+                this.log(`${name}: King ${king.name} calls a Harvest! +40 food, +20 gold.`);
                 break;
             }
             case 'scry':
@@ -3582,7 +3581,8 @@ export class Game {
                     }
                     this.updateFog(); // union scryRevealed into visible for the render
                 }
-                this.log(`${name}: King ${king.name} Scries enemy cities �?revealed for this turn!`);
+                this.gameState.tempBonuses[faction] = { attack: 0, defense: 0, rangedAttack: 2, siegeAttack: 2 };
+                this.log(`${name}: King ${king.name} unleashes an Arcane Surge! Ranged/siege +2 attack.`);
                 break;
             case 'raise': {
                 const fallen = this.gameState.graveyard.filter(g => g.owner === faction);
@@ -3617,7 +3617,7 @@ export class Game {
                 this.log(`${name}: King ${king.name} Vanishes into shadow! +2 defense this turn.`);
                 break;
             case 'tempest': {
-                this.gameState.tempBonuses[faction] = { attack: 2, defense: 0 };
+                this.gameState.tempBonuses[faction] = { attack: 1, defense: 0 };
                 let struck = 0;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner === faction) continue;
@@ -3646,39 +3646,42 @@ export class Game {
                 break;
             case 'golden_gate': {
                 this.gameState.tempBonuses[faction] = { attack: 0, defense: 0 };
-                // +5 fortification to all owned cities.
+                // +3 fortification to all owned cities (was +5).
                 let citiesUpgraded = 0;
                 for (const t of this.tiles.values()) {
                     if (t.terrain === 'CITY' && t.owner === faction) {
-                        const max = t.fortMax || (t.fortification || 0) + 5;
-                        t.fortification = Math.min(max, (t.fortification || 0) + 5);
+                        const max = t.fortMax || (t.fortification || 0) + 3;
+                        t.fortification = Math.min(max, (t.fortification || 0) + 3);
                         citiesUpgraded++;
                     }
                 }
-                // Heal all friendly units to full HP (the dead stay dead — no resurrection).
+                // Heal all friendly units 50% of missing HP (was full heal).
                 let healed = 0;
                 for (const u of this.gameState.units.values()) {
                     if (u.owner !== faction) continue;
                     if (u.hp > 0 && u.hp < (u.maxHp || 10)) {
-                        u.hp = u.maxHp || 10;
+                        const missing = (u.maxHp || 10) - u.hp;
+                        u.hp = Math.min(u.maxHp || 10, u.hp + Math.ceil(missing * 0.5));
                         healed++;
                     }
                 }
-                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +5 fort, ${healed} units healed to full.`);
+                this.log(`${name}: King ${king.name} opens the Golden Gate! ${citiesUpgraded} cities +3 fort, ${healed} units healed 50%.`);
                 break;
             }
             case 'manifest_destiny': {
                 this.gameState.tempBonuses[faction] = { attack: 3, defense: 1 };
-                // Free Settler if fewer than 3 cities.
+                // If fewer than 3 cities, each city spawns a free Conquistador.
+                // Spawned directly via createUnit, so no tech-tree requirement.
                 const ownedCities = getOwnedCities(this.tiles, faction);
-                let settlerMsg = '';
-                if (ownedCities.length < 3 && ownedCities.length > 0) {
-                    const cap = ownedCities[0];
-                    const settler = createUnit('SETTLER', faction, cap.x, cap.z, { factionDef: def });
-                    this.gameState.units.set(settler.id, settler);
-                    settlerMsg = ' Free Settler spawned!';
+                let spawned = 0;
+                if (ownedCities.length < 3) {
+                    for (const city of ownedCities) {
+                        const conquistador = createUnit('CONQUISTADOR', faction, city.x, city.z, { factionDef: def });
+                        this.gameState.units.set(conquistador.id, conquistador);
+                        spawned++;
+                    }
                 }
-                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${settlerMsg}`);
+                this.log(`${name}: King ${king.name} declares Manifest Destiny! +3 attack, +1 defense.${spawned ? ` ${spawned} Conquistador${spawned > 1 ? 's' : ''} spawned!` : ''}`);
                 break;
             }
             case 'winged_charge':
@@ -4907,54 +4910,6 @@ export class Game {
                 const size = (l.army || []).length;
                 if (size >= 2 && size > bestSize) { bestSize = size; bestArmy = l; }
             }
-            if (bestArmy) {
-                anchor = bestArmy;
-            } else {
-                let sx = 0, sz = 0;
-                for (const u of military) { sx += u.x; sz += u.z; }
-                anchor = { x: Math.round(sx / military.length), z: Math.round(sz / military.length) };
-            }
-            if (anchor && Math.max(Math.abs(lord.x - anchor.x), Math.abs(lord.z - anchor.z)) > 2) {
-                this._aiStepLord(lord, anchor.x, anchor.z, faction, pool, factionName);
-                return;
-            }
-        }
-
-        // 5) Anti-camp: if the king is stuck beside an enemy city it cannot take,
-        //    count turns and move away before it creates a stalemate.
-        const adjacentEnemyCity = [...this.tiles.values()].find(t =>
-            t.terrain === 'CITY' && t.owner && t.owner !== faction && atWar(t.owner) &&
-            Math.max(Math.abs(t.x - lord.x), Math.abs(t.z - lord.z)) <= 1);
-        if (adjacentEnemyCity && !canCaptureTile(faction, adjacentEnemyCity, pool, null, this.gameState.turn || 0) && !this.siegeTowerAdjacentTo(adjacentEnemyCity, faction)) {
-            lord.campTurns = (lord.campTurns || 0) + 1;
-            if (lord.campTurns >= 2) {
-                const home = nearestOwnCity();
-                if (home) {
-                    this._aiStepLord(lord, home.x, home.z, faction, pool, factionName);
-                    lord.campTurns = 0;
-                    return;
-                }
-            }
-        } else {
-            lord.campTurns = 0;
-        }
-
-        // 5b) Early-game exploration: push the king outward to scout and claim
-        //     unowned territory. Only tiny armies explore; mobilized kings must
-        //     still keep their guard with them once a real army exists.
-        if (!hasEnemy && military.length < 5) {
-            let explore = null, bestD = Infinity;
-            const maxDist = 6;
-            for (const t of this.tiles.values()) {
-                if (t.owner === faction) continue;
-                if (t.terrain === 'WATER' || t.terrain === 'RIVER' || t.terrain === 'MOUNTAIN') continue;
-                const d = Math.abs(t.x - lord.x) + Math.abs(t.z - lord.z);
-                if (d > 2 && d < maxDist && d < bestD) { bestD = d; explore = t; }
-            }
-            if (explore) {
-                this._aiStepLord(lord, explore.x, explore.z, faction, pool, factionName);
-                return;
-            }
         }
 
         // 6) No objective / tiny army: stay within a few tiles of the nearest
@@ -5097,7 +5052,9 @@ export class Game {
             case 'raise':
                 return this.gameState.graveyard.some(g => g.owner === faction);
             case 'scry':
-                return false; // AI already has full map knowledge; don't pollute player fog
+                // Arcane Surge now grants +2 ranged/siege attack, so the AI
+                // should fire it when pushing a city (siege/ranged units benefit).
+                return enemyCityNear || enemyUnits.length >= 3;
             case 'discipline':
             case 'berserker_rage':
                 return enemyCityNear || enemyUnits.length >= 3;
@@ -5241,8 +5198,6 @@ export class Game {
                     pool.gold -= LORD_RECRUIT_COST.gold;
                     pool.food -= LORD_RECRUIT_COST.food;
                     const lord = createLord(faction, city.x, city.z);
-                    const aiTs = (this.gameState.aiTechStates || {})[faction] || null;
-                    applyLordTechBonuses(lord, aiTs || this.gameState.techState);
                     const unit = createUnit('INFANTRY', faction, city.x, city.z, { factionDef: def });
                     this.gameState.units.set(unit.id, unit);
                     assignArmy(lord, unit.id);

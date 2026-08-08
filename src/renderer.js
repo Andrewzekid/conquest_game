@@ -15,7 +15,7 @@ const BREACH_COLOR = 0xff3322;
 const TILE_COLUMN_BOTTOM = -0.1;
 
 // Top-surface Y for a terrain type. Shared by createMapMesh and updateTileTerrain
-// (the old inline ladder in updateTileTerrain drifted from this one — the bug).
+// (the old inline ladder in updateTileTerrain drifted from this one —the bug).
 export function heightFor(terrain) {
     if (terrain === 'MOUNTAIN') return 0.5;
     if (terrain === 'CITY') return 0.55;
@@ -96,6 +96,58 @@ export class GameRenderer {
         this.cityProps = new Map(); // `${x},${z}` -> keep mesh (for breach tint)
 
         window.addEventListener('resize', () => this.onWindowResize());
+    }
+
+    /** True if a material is a shared cached sprite material (icon/text) that
+     *  must NOT be disposed when its sprite is removed —it's reused across
+     *  renders. Disposing it would corrupt every subsequent icon/label. */
+    _isCachedMaterial(mat) {
+        if (!mat) return false;
+        if (this._iconMatCache) { for (const k in this._iconMatCache) if (this._iconMatCache[k] === mat) return true; }
+        if (this._textMatCache) { for (const k in this._textMatCache) if (this._textMatCache[k] === mat) return true; }
+        return false;
+    }
+
+    /** Dispose geometries and non-cached materials of all children of a Group,
+     *  then clear it. group.clear() alone detaches children but leaves their
+     *  GPU resources alive —over ~200 turns this leaked enough WebGL memory
+     *  to crash the context (white screen, vanished icons/city names). Cached
+     *  sprite materials (_iconMatCache / _textMatCache) are shared across
+     *  renders and are intentionally preserved. */
+    _disposeGroupChildren(group) {
+        if (!group) return;
+        group.traverse(obj => {
+            if (obj.isMesh) {
+                if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
+                if (obj.material) {
+                    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                    for (const m of mats) {
+                        if (!this._isCachedMaterial(m) && typeof m.dispose === 'function') m.dispose();
+                    }
+                }
+            }
+        });
+        group.clear();
+    }
+
+    /** Remove a single object from its parent, disposing its geometry and
+     *  non-cached materials. Used for transient VFX in effectsGroup (which is
+     *  NOT bulk-cleared each render, so its children must be cleaned up
+     *  individually when their lifetime ends). */
+    _disposeAndRemove(obj) {
+        if (!obj) return;
+        if (obj.parent) obj.parent.remove(obj);
+        obj.traverse(child => {
+            if (child.isMesh) {
+                if (child.geometry && typeof child.geometry.dispose === 'function') child.geometry.dispose();
+                if (child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    for (const m of mats) {
+                        if (!this._isCachedMaterial(m) && typeof m.dispose === 'function') m.dispose();
+                    }
+                }
+            }
+        });
     }
 
     onWindowResize() {
@@ -235,7 +287,7 @@ export class GameRenderer {
             } else if (style === 4) {
                 // Industrial town: a squat main building with two chimneys
                 // belching smoke (a faint dark cone). Reads as a 19th-c factory
-                // town — distinct from the medieval castles.
+                // town —distinct from the medieval castles.
                 keep = new THREE.Mesh(new THREE.BoxGeometry(0.46, keepH * 0.55, 0.36), stone);
                 keep.position.y = keepH * 0.275 + 0.1;
                 group.add(keep);
@@ -331,7 +383,7 @@ export class GameRenderer {
                 wall.position.y = 0.12;
                 group.add(wall);
             }
-            // Level-6+ cities get a third outer ring + corner markers — they
+            // Level-6+ cities get a third outer ring + corner markers —they
             // read as major capitals at a glance.
             if (level >= 6) {
                 const outer = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.04, 6, 20),
@@ -386,7 +438,7 @@ export class GameRenderer {
                 new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.6 }));
             top.position.set(sx, 0.64, 0); g.add(top);
         }
-        const emoji = (wonder && wonder.emoji) || '✨';
+        const emoji = (wonder && wonder.emoji) || '\u2728';
         g.add(this.makeIconSprite(emoji, 0.6, 1.25));
         return g;
     }
@@ -503,11 +555,7 @@ export class GameRenderer {
             const alive = [];
             for (const fx of this._effects) {
                 const t = (now - fx.born) / fx.life; // 0..1
-                if (t >= 1) {
-                    this.effectsGroup.remove(fx.obj);
-                    this._disposeObject(fx.obj);
-                    continue;
-                }
+                if (t >= 1) { this._disposeAndRemove(fx.obj); continue; }
                 if (fx.kind === 'ring') {
                     const s = 0.4 + t * 1.6;
                     fx.obj.scale.set(s, s, s);
@@ -585,7 +633,7 @@ export class GameRenderer {
         const life = 320;
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
-            if (t >= 1 || !arrow.parent) { if (arrow.parent) this.effectsGroup.remove(arrow); return; }
+            if (t >= 1 || !arrow.parent) { if (arrow.parent) this._disposeAndRemove(arrow); return; }
             arrow.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
             requestAnimationFrame(step);
         };
@@ -644,7 +692,7 @@ export class GameRenderer {
         this.effectsGroup.add(rock);
         const step = () => {
             const tt = (performance.now() - t0) / rockLife;
-            if (tt >= 1 || !rock.parent) { if (rock.parent) this.effectsGroup.remove(rock); return; }
+            if (tt >= 1 || !rock.parent) { if (rock.parent) this._disposeAndRemove(rock); return; }
             rock.position.x = fx0 + (cx - fx0) * tt;
             rock.position.z = fz0 + (cz - fz0) * tt;
             rock.position.y = y + 1.0 + Math.sin(tt * Math.PI) * 1.2;
@@ -688,7 +736,7 @@ export class GameRenderer {
     }
 
     // ===================================================================
-    //  NEW ATTACK ANIMATIONS — added for all unit ages and types
+    //  NEW ATTACK ANIMATIONS —added for all unit ages and types
     // ===================================================================
 
     /** Gunfire: small fast bullet + muzzle flash + smoke (MUSKETEER, RIFLEMAN, etc.) */
@@ -717,9 +765,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !bullet.parent) {
-                if (bullet.parent) this.effectsGroup.remove(bullet);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (smoke.parent) this.effectsGroup.remove(smoke);
+                if (bullet.parent) this._disposeAndRemove(bullet);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (smoke.parent) this._disposeAndRemove(smoke);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcccccc, 300);
                 return;
             }
@@ -758,8 +806,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !ball.parent) {
-                if (ball.parent) this.effectsGroup.remove(ball);
-                if (flash.parent) this.effectsGroup.remove(flash);
+                if (ball.parent) this._disposeAndRemove(ball);
+                if (flash.parent) this._disposeAndRemove(flash);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 500);
                 return;
             }
@@ -793,7 +841,7 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !shell.parent) {
-                if (shell.parent) this.effectsGroup.remove(shell);
+                if (shell.parent) this._disposeAndRemove(shell);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
                 return;
             }
@@ -824,8 +872,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !bolt.parent) {
-                if (bolt.parent) this.effectsGroup.remove(bolt);
-                if (glow.parent) this.effectsGroup.remove(glow);
+                if (bolt.parent) this._disposeAndRemove(bolt);
+                if (glow.parent) this._disposeAndRemove(glow);
                 if (t >= 1) {
                     const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8),
                         new THREE.MeshBasicMaterial({ color: 0xaaddff, transparent: true, opacity: 0.8 }));
@@ -869,8 +917,8 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !torp.parent) {
-                if (torp.parent) this.effectsGroup.remove(torp);
-                for (const b of bubbles) if (b.parent) this.effectsGroup.remove(b);
+                if (torp.parent) this._disposeAndRemove(torp);
+                for (const b of bubbles) if (b.parent) this._disposeAndRemove(b);
                 if (t >= 1) {
                     const burst = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8),
                         new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6 }));
@@ -911,7 +959,7 @@ export class GameRenderer {
             const bStep = () => {
                 const t = Math.min(1, (performance.now() - bStart) / 350);
                 if (t >= 1 || !ball.parent) {
-                    if (ball.parent) this.effectsGroup.remove(ball);
+                    if (ball.parent) this._disposeAndRemove(ball);
                     if (t >= 1) this._addImpactBurst(bx1, y1, bz1, 0xff8844, 300);
                     return;
                 }
@@ -964,7 +1012,7 @@ export class GameRenderer {
         const cx = x - GRID_SIZE / 2, cz = z - GRID_SIZE / 2;
         const y = (this.tileHeights.get(`${x},${z}`) || 0) + 0.1;
         if (type === 'SPIKES') {
-            // Wooden-splinter burst — brown debris rising from the tile.
+            // Wooden-splinter burst —brown debris rising from the tile.
             const colors = [0x8b5e3c, 0xa0724b, 0x6b4226];
             for (let i = 0; i < 6; i++) {
                 const d = new THREE.Mesh(
@@ -977,7 +1025,7 @@ export class GameRenderer {
             }
             this._addImpactBurst(cx, y, cz, 0xc8a06e, 400);
         } else if (type === 'FALL_TRAP') {
-            // Dust cloud — gray particles rising + ground ring.
+            // Dust cloud —gray particles rising + ground ring.
             const dust = new THREE.Mesh(
                 new THREE.SphereGeometry(0.15, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0x888877, transparent: true, opacity: 0.6 }));
@@ -1008,7 +1056,7 @@ export class GameRenderer {
                 this._effects.push({ obj: d, born: performance.now(), life: 600, kind: 'debris' });
             }
         } else if (type === 'AT_MINE') {
-            // Shaped charge — bright white flash + large fireball + sparks.
+            // Shaped charge —bright white flash + large fireball + sparks.
             const flash = new THREE.Mesh(
                 new THREE.SphereGeometry(0.22, 8, 8),
                 new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }));
@@ -1046,7 +1094,7 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !fire.parent) {
-                if (fire.parent) this.effectsGroup.remove(fire);
+                if (fire.parent) this._disposeAndRemove(fire);
                 return;
             }
             const dx = targetX - cx, dz = targetZ - cz;
@@ -1090,9 +1138,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !shell.parent) {
-                if (shell.parent) this.effectsGroup.remove(shell);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (smokeTrail.parent) this.effectsGroup.remove(smokeTrail);
+                if (shell.parent) this._disposeAndRemove(shell);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (smokeTrail.parent) this._disposeAndRemove(smokeTrail);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff6633, 550);
                 return;
             }
@@ -1140,9 +1188,9 @@ export class GameRenderer {
         const step = () => {
             const t = Math.min(1, (performance.now() - start) / life);
             if (t >= 1 || !rocket.parent) {
-                if (rocket.parent) this.effectsGroup.remove(rocket);
-                if (flash.parent) this.effectsGroup.remove(flash);
-                if (trail.parent) this.effectsGroup.remove(trail);
+                if (rocket.parent) this._disposeAndRemove(rocket);
+                if (flash.parent) this._disposeAndRemove(flash);
+                if (trail.parent) this._disposeAndRemove(trail);
                 if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xff8844, 450);
                 return;
             }
@@ -1170,7 +1218,7 @@ export class GameRenderer {
         this._animateModel(attackerId, (m, t, p, r) => {
             const dx = toX - fromX, dz = toZ - fromZ;
             const len = Math.sqrt(dx * dx + dz * dz) || 1;
-            // Long forward thrust, no rotation — the pike stays level
+            // Long forward thrust, no rotation —the pike stays level
             const forward = Math.sin(t * Math.PI) * 0.6;
             m.position.set(p.x + (dx / len) * forward, p.y, p.z + (dz / len) * forward);
         }, 280);
@@ -1217,8 +1265,8 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / l0);
                 if (t >= 1 || !bolt.parent) {
-                    if (bolt.parent) this.effectsGroup.remove(bolt);
-                    if (glow.parent) this.effectsGroup.remove(glow);
+                    if (bolt.parent) this._disposeAndRemove(bolt);
+                    if (glow.parent) this._disposeAndRemove(glow);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0x88ddff, 300);
                     return;
                 }
@@ -1240,7 +1288,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / l0);
                 if (t >= 1 || !shard.parent) {
-                    if (shard.parent) this.effectsGroup.remove(shard);
+                    if (shard.parent) this._disposeAndRemove(shard);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xaaddff, 350);
                     return;
                 }
@@ -1250,11 +1298,11 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'iron') {
-            // Heavy hammer smash — big impact ring at target, no projectile
+            // Heavy hammer smash —big impact ring at target, no projectile
             const t0 = performance.now();
             setTimeout(() => this._addImpactBurst(x1, y1, z1, 0x888899, 500), 200);
         } else if (fid === 'shadow') {
-            // Dagger toss — small fast projectile
+            // Dagger toss —small fast projectile
             const dagger = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.015, 0.1),
                 new THREE.MeshBasicMaterial({ color: 0x6633aa }));
             dagger.position.set(x0, y0, z0);
@@ -1264,7 +1312,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 200);
                 if (t >= 1 || !dagger.parent) {
-                    if (dagger.parent) this.effectsGroup.remove(dagger);
+                    if (dagger.parent) this._disposeAndRemove(dagger);
                     return;
                 }
                 dagger.position.set(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, z0 + (z1 - z0) * t);
@@ -1272,7 +1320,7 @@ export class GameRenderer {
             };
             step();
         } else if (fid === 'crimson' || fid === 'obsidian' || fid === 'roman') {
-            // Melee slash/stab — colored blade arc model animation only
+            // Melee slash/stab —colored blade arc model animation only
             // (no projectile, just the lunge)
         } else if (fid === 'violet') {
             // Magic orb
@@ -1284,7 +1332,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 280);
                 if (t >= 1 || !orb.parent) {
-                    if (orb.parent) this.effectsGroup.remove(orb);
+                    if (orb.parent) this._disposeAndRemove(orb);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, 0xcc66ff, 350);
                     return;
                 }
@@ -1303,7 +1351,7 @@ export class GameRenderer {
             const step = () => {
                 const t = Math.min(1, (performance.now() - t0) / 250);
                 if (t >= 1 || !bolt.parent) {
-                    if (bolt.parent) this.effectsGroup.remove(bolt);
+                    if (bolt.parent) this._disposeAndRemove(bolt);
                     if (t >= 1) this._addImpactBurst(x1, y1, z1, color, 300);
                     return;
                 }
@@ -1386,7 +1434,7 @@ export class GameRenderer {
     }
 
     clearInfluence() {
-        if (this.influenceGroup) this._disposeGroup(this.influenceGroup);
+        if (this.influenceGroup) this._disposeGroupChildren(this.influenceGroup);
     }
 
     highlightMoveTargets(keys) {
@@ -1787,27 +1835,64 @@ export class GameRenderer {
             const plane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.03, 0.18), P.white);
             plane.position.set(0.05, 0.25, 0.18); g.add(plane);
         } else if (isIronclad) {
-            const funnelCount = (type === 'BATTLESHIP' || type === 'DESTROYER') ? 2 : 1;
-            for (let i = 0; i < funnelCount; i++) {
-                const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.22, 8), P.dark);
-                funnel.position.set(0, 0.32, -0.15 + i * 0.3); g.add(funnel);
-            }
-            if (type === 'MONITOR') {
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.18, 10), P.dark);
+            // Ironclads share a hull but get distinct tall superstructures so
+            // each steamship reads at a glance:
+            //  - IRONCLAD / IRONCLAD_FRIGATE: low casemate + tumblehome hull,
+            //    single funnel, broadside gunports.
+            //  - MONITOR: flat low profile, single rotating turret, no masts.
+            //  - BATTLESHIP: tall two-funnel silhouette, two big turrets with
+            //    long barrels, raised bridge.
+            //  - DESTROYER: long slim hull, raked twin funnels, small guns fwd/aft.
+            const isBattle = type === 'BATTLESHIP';
+            const isDestroyer = type === 'DESTROYER';
+            const isMonitor = type === 'MONITOR';
+            if (isMonitor) {
+                const casemate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.34), P.metal);
+                casemate.position.y = 0.24; g.add(casemate);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.16, 12), P.dark);
                 turret.rotation.x = Math.PI / 2;
-                turret.position.set(0, 0.24, 0.08); g.add(turret);
-                const shield = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.3), P.metal);
-                shield.position.y = 0.24; g.add(shield);
+                turret.position.set(0, 0.3, 0.02); g.add(turret);
+                const gb = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.026, 0.34, 8), P.dark);
+                gb.rotation.x = Math.PI / 2.1; gb.position.set(0, 0.3, 0.18); g.add(gb);
+                const smokebox = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.035, 0.14, 8), P.dark);
+                smokebox.position.set(-0.1, 0.3, -0.12); g.add(smokebox);
             } else {
-                const barbette = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.2), P.metal);
-                barbette.position.set(0, 0.25, -0.08); g.add(barbette);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
-                turret.rotation.x = Math.PI / 2;
-                turret.position.set(0, 0.25, 0.12); g.add(turret);
-                if (type === 'BATTLESHIP' || type === 'DESTROYER') {
-                    const turret2 = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), P.dark);
-                    turret2.rotation.x = Math.PI / 2;
-                    turret2.position.set(0, 0.25, -0.28); g.add(turret2);
+                // Funnels: raked for destroyers, straight for battleships.
+                const funnelCount = isBattle || isDestroyer ? 2 : 1;
+                for (let i = 0; i < funnelCount; i++) {
+                    const fr = i === 0 ? -0.08 : 0.02;
+                    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.04, isDestroyer ? 0.3 : 0.26, 8), P.dark);
+                    funnel.position.set(fr, 0.36, -0.12 - i * 0.22);
+                    if (isDestroyer) funnel.rotation.z = 0.35 - i * 0.18;
+                    g.add(funnel);
+                }
+                // Raised bridge superstructure amidships.
+                const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.1, isDestroyer ? 0.16 : 0.2), P.metal);
+                bridge.position.set(0, 0.3, -0.02); g.add(bridge);
+                if (isDestroyer) {
+                    for (const sz of [0.2, -0.24]) {
+                        const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.2, 8), P.dark);
+                        gun.rotation.x = Math.PI / 2; gun.position.set(0, 0.32, sz); g.add(gun);
+                    }
+                } else {
+                    // Turrets with barrels forward and aft.
+                    for (const sz of [0.22, -0.28]) {
+                        const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 0.13, 12), P.dark);
+                        turret.rotation.x = Math.PI / 2;
+                        turret.position.set(0, 0.27, sz); g.add(turret);
+                        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.3, 8), P.dark);
+                        barrel.rotation.x = Math.PI / 2;
+                        barrel.position.set(0, 0.27, sz + 0.2); g.add(barrel);
+                    }
+                    if (isBattle) {
+                        // Extra main turret amidships for the big-gun silhouette.
+                        const mt = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.16, 12), P.dark);
+                        mt.rotation.x = Math.PI / 2;
+                        mt.position.set(0, 0.28, 0.12); g.add(mt);
+                        const mb = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.028, 0.36, 8), P.dark);
+                        mb.rotation.x = Math.PI / 2;
+                        mb.position.set(0, 0.28, 0.32); g.add(mb);
+                    }
                 }
             }
         } else if (isTorpedo) {
@@ -2670,44 +2755,79 @@ export class GameRenderer {
                 break;
             }
             case 'MOTOR_ARTILLERY': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.32), P.dark);
-                hull.position.y = 0.16; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.16, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.26, 0.02); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.52, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.28, 0.18); g.add(barrel);
-                for (const sx of [-0.2, 0.2]) {
+                // Self-propelled howitzer: boxy fighting compartment with a
+                // heavy short howitzer, shelter door, and big truck wheels.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.34), P.dark);
+                hull.position.y = 0.18; g.add(hull);
+                const battery = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.26), P.metal);
+                battery.position.y = 0.3; g.add(battery);
+                const howitzer = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.062, 0.46, 12), P.dark);
+                howitzer.rotation.x = Math.PI / 2.15; howitzer.position.set(0, 0.32, 0.2); g.add(howitzer);
+                // Open ammunition tray on the back.
+                const tray = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.05, 0.12), P.metal);
+                tray.position.set(0, 0.28, -0.14); g.add(tray);
+                for (const sx of [-0.21, 0.21]) {
                     for (const sz of [-0.12, 0.12]) {
-                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.05, 8), P.dark);
+                        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 8), P.dark);
                         w.rotation.z = Math.PI / 2;
-                        w.position.set(sx, 0.08, sz); g.add(w);
+                        w.position.set(sx, 0.09, sz); g.add(w);
                     }
                 }
                 break;
             }
             case 'TANK': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.6), P.dark);
+                // Medium tank: sloped front hull, road wheels + track skirt, a
+                // compact turret with a short high-velocity gun and antenna.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.56), P.dark);
                 hull.position.y = 0.18; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.2, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.3, 0.04); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.55, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.32, 0.24); g.add(barrel);
-                for (const sx of [-0.22, 0.22]) {
-                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.56), P.dark);
-                    track.position.set(sx, 0.1, 0); g.add(track);
+                const glacis = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.06, 0.12), P.dark);
+                glacis.rotation.x = 0.5; glacis.position.set(0, 0.22, 0.24); g.add(glacis);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.18, 10), P.metal);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.28, 0.04); g.add(turret);
+                const hatch = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.08), P.dark);
+                hatch.position.set(-0.04, 0.3, 0); g.add(hatch);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.022, 0.5, 8), P.dark);
+                barrel.rotation.x = Math.PI / 2.1; barrel.position.set(0, 0.28, 0.22); g.add(barrel);
+                const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.05, 8), P.metal);
+                muzzle.rotation.x = Math.PI / 2.1; muzzle.position.set(0, 0.28, 0.44); g.add(muzzle);
+                for (const sx of [-0.16, 0.16]) {
+                    // Track skirt + 3 road wheels for that recognizable tank look.
+                    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.54), P.dark);
+                    skirt.position.set(sx, 0.09, 0); g.add(skirt);
+                    for (let i = -1; i <= 1; i++) {
+                        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 10), P.metal);
+                        wheel.rotation.x = Math.PI / 2;
+                        wheel.position.set(sx, 0.085, i * 0.17); g.add(wheel);
+                    }
                 }
+                const whip = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.14, 5), P.metal);
+                whip.position.set(0.14, 0.34, -0.2); g.add(whip);
                 break;
             }
             case 'HEAVY_TANK': {
-                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.22, 0.7), P.dark);
+                // Heavy tank: noticeably larger and taller with a slab front,
+                // big rounded turret, thick-barreled main gun and dual road wheels.
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.68), P.dark);
                 hull.position.y = 0.2; g.add(hull);
-                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.24, 12), P.metal);
-                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.36, 0.04); g.add(turret);
-                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.65, 10), P.dark);
-                barrel.rotation.x = Math.PI / 2.2; barrel.position.set(0, 0.38, 0.28); g.add(barrel);
-                for (const sx of [-0.26, 0.26]) {
-                    const track = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.12, 0.66), P.dark);
-                    track.position.set(sx, 0.11, 0); g.add(track);
+                const pike = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.14), P.dark);
+                pike.rotation.x = 0.5; pike.position.set(0, 0.25, 0.26); g.add(pike);
+                const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.2, 12), P.dark);
+                turret.rotation.x = Math.PI / 2; turret.position.set(0, 0.34, 0.03); g.add(turret);
+                const turretdome = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.06, 10), P.metal);
+                turretdome.position.set(0, 0.4, -0.02); g.add(turretdome);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.038, 0.62, 10), P.dark);
+                barrel.rotation.x = Math.PI / 2.1; barrel.position.set(0, 0.34, 0.28); g.add(barrel);
+                const muzzleBrake = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.08, 8), P.metal);
+                muzzleBrake.rotation.x = Math.PI / 2.1; muzzleBrake.position.set(0, 0.34, 0.44); g.add(muzzleBrake);
+                for (const sx of [-0.22, 0.22]) {
+                    for (let i = -1; i <= 1; i++) {
+                        // Dual road wheels under a wide track skirt.
+                        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.06, 10), P.metal);
+                        wheel.rotation.x = Math.PI / 2;
+                        wheel.position.set(sx, 0.09, -0.15 + i * 0.15); g.add(wheel);
+                    }
+                    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.09, 0.52), P.dark);
+                    skirt.position.set(sx, 0.12, 0.02); g.add(skirt);
                 }
                 break;
             }
@@ -2932,7 +3052,7 @@ export class GameRenderer {
     }
 
     renderBuildings(gameState) {
-        this._disposeGroup(this.buildingGroup);
+        this._disposeGroupChildren(this.buildingGroup);
         const visible = gameState.visible || null;
         const bState = gameState.buildingState || null;
         for (const [tileKey, list] of gameState.buildings) {
@@ -2981,7 +3101,7 @@ export class GameRenderer {
 
     // --- Goal markers for player units with an auto-navigation goal ---
     renderGoalMarkers(gameState) {
-        this._disposeGroup(this.markerGroup);
+        this._disposeGroupChildren(this.markerGroup);
         for (const unit of gameState.units.values()) {
             if (unit.owner !== PLAYER_FACTION || !unit.goal) continue;
             const sprite = this.makeIconSprite('target', 0.7, 0.8);
@@ -3019,7 +3139,7 @@ export class GameRenderer {
     // --- Bridges across river tiles (built by Siege/Engineer units). ---
     renderBridges(gameState) {
         if (!this.bridgeGroup) return;
-        this._disposeGroup(this.bridgeGroup);
+        this._disposeGroupChildren(this.bridgeGroup);
         const explored = gameState.explored || null;
         for (const [key, tile] of gameState.tiles) {
             if (!tile.bridge || tile.terrain !== 'RIVER') continue;
@@ -3140,7 +3260,7 @@ export class GameRenderer {
     // in spectate mode everything is shown.
     renderStructures(gameState) {
         if (!this.structureGroup) return;
-        this._disposeGroup(this.structureGroup);
+        this._disposeGroupChildren(this.structureGroup);
         const structures = gameState.structures;
         if (!structures || !structures.size) return;
         const visible = gameState.visible || null;
@@ -3148,7 +3268,7 @@ export class GameRenderer {
             const tile = gameState.tiles.get(key);
             if (!tile) continue;
             // Trap-type structures (FALL_TRAP/MINEFIELD/AT_MINE) are hidden
-            // from other factions — a mine you can see is useless. BUNKER and
+            // from other factions —a mine you can see is useless. BUNKER and
             // FORTIFICATION are visible to everyone (they're fortifications,
             // not concealed). In spectate mode everything is shown.
             const isTrap = s.type === 'FALL_TRAP' || s.type === 'MINEFIELD' || s.type === 'AT_MINE';
@@ -3162,7 +3282,7 @@ export class GameRenderer {
         }
     }
     renderAuras(gameState) {
-        this._disposeGroup(this.auraGroup);
+        this._disposeGroupChildren(this.auraGroup);
         this._auraRings = [];
         const visible = gameState.visible || null;
         for (const lord of gameState.lords) {
@@ -3264,10 +3384,10 @@ export class GameRenderer {
         this.highlightAttackTargets(gameState.attackTargets || []);
 
         // City name labels: one floating text sprite per visible/explored city.
-        // Rebuilt each render (cheap — sprites reuse cached materials). The
+        // Rebuilt each render (cheap —sprites reuse cached materials). The
         // label sits above the keep and is tinted by the owner's faction color
         // so ownership is readable at a glance.
-        this._disposeGroup(this.labelGroup);
+        this._disposeGroupChildren(this.labelGroup);
         for (const [key, tile] of gameState.tiles) {
             if (tile.terrain !== 'CITY') continue;
             const isExp = !!(explored && explored.has(key));
@@ -3290,9 +3410,9 @@ export class GameRenderer {
             this.labelGroup.add(label);
         }
 
-        // Rebuild unit markers (distinct shape per unit type) — enemy units
+        // Rebuild unit markers (distinct shape per unit type) —enemy units
         // only render on tiles the player can currently see.
-        this._disposeGroup(this.unitGroup);
+        this._disposeGroupChildren(this.unitGroup);
         this._flames = []; // repopulated below with live flame meshes for flicker
         for (const unit of gameState.units.values()) {
             // Units embarked aboard a Transport are hidden (rendered as cargo pips on the ship).
@@ -3346,10 +3466,10 @@ export class GameRenderer {
             this.unitGroup.add(mesh);
         }
 
-        // Rebuild lord markers — each lord is a humanoid figure with
+        // Rebuild lord markers —each lord is a humanoid figure with
         // faction-specific weapons, mounts, and decorations. Kings get a crown
         // sprite, gold base ring, cape, and 1.25× scale.
-        this._disposeGroup(this.lordGroup);
+        this._disposeGroupChildren(this.lordGroup);
         for (const lord of gameState.lords) {
             const isPlayer = lord.owner === PLAYER_FACTION;
             if (!isPlayer && visible && !visible.has(`${lord.x},${lord.z}`)) continue;

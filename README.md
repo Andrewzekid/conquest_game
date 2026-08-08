@@ -1,11 +1,11 @@
 <div align="center">
 
 ```
- ██████  ██████  ███    ██  ██████  ██    ██ ███████ ███████ ████████
-██      ██    ██ ████   ██ ██       ██  ██  ██         ██       ██
-██      ██    ██ ██ ██  ██ ██        ████   █████      ██       ██
-██      ██    ██ ██  ██ ██ ██         ██    ██         ██       ██
- ██████  ██████  ██   ████  ██████    ██    ███████    ██       ██
+ ██████   ██████  ███    ██  ██████  ██    ██ ███████   ██████  ████████
+██       ██    ██ ████   ██ ██    ██ ██    ██ ██       ██          ██
+██       ██    ██ ██ ██  ██ ██    ██ ██    ██ █████     ██████     ██
+██       ██    ██ ██  ██ ██ ██    ██ ██    ██ ██            ███    ██
+ ██████   ██████  ██   ████  ███████  ██████  ███████   ██████     ██
 ```
 
 # ⚔ Conquest
@@ -17,9 +17,9 @@
 <br>
 
 [![Factions](https://img.shields.io/badge/factions-15-8a2be2?style=flat-square)](src/config.js)
-[![Tests](https://img.shields.io/badge/tests-1274-2ea44f?style=flat-square)](tests/)
-[![Coverage](https://img.shields.io/badge/source-25.7k_lines-0366d6?style=flat-square)](src/)
-[![Commits](https://img.shields.io/badge/commits-109-ff6f00?style=flat-square)](https://github.com/Andrewzekid/conquest_game/commits/master)
+[![Tests](https://img.shields.io/badge/tests-1369-2ea44f?style=flat-square)](tests/)
+[![Coverage](https://img.shields.io/badge/source-29.1k_lines-0366d6?style=flat-square)](src/)
+[![Commits](https://img.shields.io/badge/commits-138-ff6f00?style=flat-square)](https://github.com/Andrewzekid/conquest_game/commits/master)
 [![Engine](https://img.shields.io/badge/engine-Three.js-8e44ad?style=flat-square)](https://threejs.org)
 [![Test Runner](https://img.shields.io/badge/test-vitest-fcc72b?style=flat-square)](https://vitest.dev)
 
@@ -54,7 +54,7 @@ The **Spectate** checkbox lets you watch AI-only games with a live multi-panel d
 <td width="50%">
 
 ### 🏛 Lead a Faction
-Choose from **15 thematic factions**, each with a unique unit roster, passive economic/military bonuses, a king ability, and an AI personality. From the Crimson Legion and Golden Horde to the Roman Legion, Viking Raiders, and Polish Winged Hussars.
+Choose from **15 thematic factions**, each with a unique unit roster, passive bonuses, and a king active ability. Every faction has been tuned for balance — from the Crimson Legion's devastating Bloodlust (+5 attack) to the Verdant Realm's forest healing, the Spanish Conquistadors' early expansion (free Conquistador in each city while under 3 cities, Conquistador unlocked at Chivalry), and the Polish Winged Hussars' devastating cavalry charges.
 
 </td>
 <td width="50%">
@@ -95,8 +95,8 @@ Every game generates **2–4 irregular continents** with meandering rivers, moun
 | Feature | Detail |
 |---------|--------|
 | Citizens | Civ-style tile working — cities grow and level up when well-fed |
-| Buildings | FARMs, LUMBERMILLs, MINEs, MARKETs, Barracks, Siege Workshops, Harbors, Walls, Libraries, Research Institutes |
-| Improvements | Workers build roads, bridges, forts, and terrain improvements |
+| Buildings | FARMs, LUMBERMILLs, MINEs, MARKETs, Barracks, Siege Workshops, Harbors, Walls, Libraries, Research Institutes — per-city building caps with a Barracks upgrade path |
+| Improvements | Workers build roads, bridges, forts, and terrain improvements; mines favor iron-rich hills |
 | Trade Routes | Connect cities for income — enemy units can raid and disrupt them |
 | Resource System | Gold, food, wood, iron, production with scarcity-aware AI spending |
 
@@ -119,8 +119,10 @@ Every game generates **2–4 irregular continents** with meandering rivers, moun
 |---------|--------|
 | Hero lords | Recruitable units with 4 classes, stats, abilities, and skill trees |
 | Skill trees | Warlord / Guardian / Conqueror / Grand Commander — 2 branches, 5 tiers each |
-| King mechanics | Your king leads from the front; losing them is catastrophic |
+| King mechanics | Your king leads from the front; losing them is catastrophic. Some factions (Azure, Frost, Byzantine) have king regen passives |
 | Army command | Lords lead army groups; their bonuses apply to nearby troops |
+| King actives | 15 unique abilities — Bloodlust, Arcane Surge, Iron Will, Tempest, Winged Charge, Manifest Destiny, and more |
+| King tech scaling | Kings gain bonus stats from researched techs (sqrt-scaled, capped) — level-10 king with all techs: ~132 HP, +5 atk/def |
 
 ### 🕵️ Espionage
 | Feature | Detail |
@@ -140,7 +142,7 @@ Every game generates **2–4 irregular continents** with meandering rivers, moun
 ### 🏛 Technology
 | Feature | Detail |
 |---------|--------|
-| Tech tree | Single-track research from Ancient → Atomic era |
+| Tech tree | Single-track research from Ancient → Atomic era (tanks, battleships, aircraft carriers, RPG teams) |
 | Unlocks | New units, buildings, structures, and abilities |
 | Obsolescence | Older units auto-upgrade when their replacement is researched |
 | Science victory | Build space program components after researching rocketry |
@@ -181,11 +183,12 @@ Geographic command that prevents the AI from idling troops on one continent whil
 
 High-level military coordination:
 
-- **Strategic target selection** — scores enemy cities by reachable power, weakness, distance, capital status, and goal alignment
+- **Strategic target selection** — scores enemy cities by reachable power, weakness, distance, capital status, and goal alignment; massed enemy stacks are penalized so the AI strikes where the enemy is NOT
+- **Relative-strength power** — group power is weighted by unit-type advantage over the defenders, so a pike/anti-tank-heavy stack rates stronger against cavalry/tank rosters
 - **Beachhead landing engine** — scans coastal terrain for safe disembarkation tiles with minimal enemy proximity
 - **Staging area coordination** — groups form up 2–4 tiles behind the beachhead before committing
 - **Siege/screen role split** — when 2+ groups target the same city, the strongest sieges while others guard the perimeter
-- **Flanking detection** — groups approaching from opposite angles (>90°) get complementary assault/flank assignments
+- **Flanking detection** — groups approaching from opposite angles (>90°) get complementary assault/flank assignments, with the counter-comp leading the assault
 - **Inter-group reinforcement** — troubled groups receive help from nearby healthy groups; retreat when outmatched
 
 ### 🚢 Naval Groups (`src/ai.js`)
@@ -212,6 +215,8 @@ Individual units execute the group plan with tactical awareness:
 - **Retreat logic** — groups pull back to the nearest friendly city when locally outmatched
 - **Defensive structures** — engineers build forts, bunkers, minefields, and anti-tank mines
 - **Siege tower construction** — engineers build mobile towers to breach city walls
+- **Specialty unit prioritization** — AI preferentially trains faction-unique units (Legionnaire, Berserker, Conquistador, Winged Hussar, Varangian Guard) by boosting them to the front of the role pick order
+- **Anti-cavalry reaction** — when the enemy fields 3+ cavalry, the AI trains anti-cav specialists (Halberdier, Pike Master, Bayonet Rifle, Anti-Tank Gun, RPG Team) to counter
 
 ### 📊 Debug Panels
 
@@ -229,7 +234,7 @@ Spectate mode includes HTML-based debug panels:
 ## 🧪 Testing
 
 ```bash
-npm test              # vitest run (one-shot, 1274 tests)
+npm test              # vitest run (one-shot, 1369 tests)
 npm run test:watch    # watch mode
 ```
 
@@ -277,7 +282,7 @@ src/
 ├── unit_obsolescence.js # Tech-driven unit upgrades
 └── faction.js           # Faction definitions
 
-tests/                   # 64 Vitest suites (1274 tests)
+tests/                   # 69 Vitest suites (1369 tests)
 index.html               # Entry point + inline styles
 ```
 
@@ -302,10 +307,10 @@ Save format is versioned (currently v7). Incompatible older saves are rejected w
 | **Modules** | Native ES modules (`"type": "module"`) |
 | **Architecture** | `class Game` integrator backed by pure-logic modules that never import the DOM |
 | **Testing** | Vitest — runs in Node, no DOM/WebGL required |
-| **Distribution** | 31 source files, 25,654 lines, zero dependencies beyond Three.js |
+| **Distribution** | 32 source files, 29,121 lines, zero dependencies beyond Three.js |
 
 ---
 
 <div align="center">
-<sub><strong>Conquest</strong> · Browser-based 4X strategy · 15 factions · 64 test suites · 109 commits</sub>
+<sub><strong>Conquest</strong> · Browser-based 4X strategy · 15 factions · 69 test suites · 138 commits</sub>
 </div>

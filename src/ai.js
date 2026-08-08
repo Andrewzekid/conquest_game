@@ -23,7 +23,7 @@ import { sellAtMarket, getUnitCap, grossYields } from './economy.js';
 import { cityRadius, findParentCity } from './map.js';
 import { isWaterConnectedToOpenWater } from './map_util.js';
 import { getBuildingState, upgradeBuilding } from './building.js';
-import { canAttack } from './diplomacy.js';
+import { canAttack, isAllied } from './diplomacy.js';
 import { simulateCombat, isEncircled } from './battle.js';
 import { nextStepToward } from './path.js';
 import { findCommandingLord, assignGovernance, canCommand, assignArmy, lordCombatant } from './lords.js';
@@ -341,6 +341,18 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         : scarce >= 1 ? 1.5
         : 1.0;
     const settlerTarget = Math.round(Math.max(AI_SETTLER_TARGET, Math.round(GRID_SIZE / 3)) * SETTLER_AGGRESSION * settlerUrgency);
+
+    // Long-term expansion drive: evaluate how desirable the surrounding land is
+    // for founding new cities (available open spots, scarce resources, allied
+    // proximity, weak enemy presence). Drives a turns-1-50 settler boost that
+    // is stronger when there is good land to grab and fades as the map fills.
+    const settleDesirability = evaluateSettleDesirability(tiles, owner, land, homeMass, resources, diploState, units, factionDef, drainingResource);
+    // Turn-window boost strength: strongest early (also 50), decays linearly to
+    // zero by turn 51, scaled by how good the surrounding spots actually are.
+    const boostActive = currentTurn > 0 && currentTurn <= 50 && settleDesirability.score > 0.25;
+    const boostStrength = boostActive ? Math.max(0, (50 - currentTurn) / 50) * settleDesirability.score : 0;
+    // Settler urgency multiplier from the long-term land-grab boost.
+    const settlerBoostMult = 1 + boostStrength * 1.5;
 
     // Goal-sequence selection (see src/ai_goals.js). Runs before the spending
     // blocks so they can weight themselves on the chosen goals. Goals persist
@@ -1176,8 +1188,25 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     const conquestSettlerScale = conquestCampaigning && !navalConquest ? 0.5 : 1.0;
     const settleGoalBoost = hasGoal('settle') ? 1 : 0;
     const hardCapBonus = scarcityTriggered ? AI_SETTLER_SCARCE_CAP_RELAX : 0;
-    let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale));
-    let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale))) + hardCapBonus + settleGoalBoost;
+    // Early-game army gating: the AI used to prioritize settlers so heavily
+    // that it fielded almost no military for the first ~15 turns, then got
+    // rolled by neighbors. Now, until the faction has a small standing army
+    // (≥3 military units per city), settler production is suppressed so the
+    // first wave of production goes into defense. The boost is preserved for
+    // the very first settler (a 1-city faction MUST expand), but additional
+    // settlers wait until the army floor is met. Scarcity overrides this —
+    // expansion is the durable fix for a bleeding economy.
+    const militaryForGating = myUnits.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' && u.type !== 'SCOUT' && !isNaval(u)).length;
+    const armyFloor = Math.max(2, myCityCount * 2);
+    const armyMet = militaryForGating >= armyFloor;
+    const earlyGameArmyGate = (!scarcityTriggered && !armyMet && myCityCount >= 1);
+    // The turns-1-50 long-term boost scales settler target/cap/per-turn with the
+    // quality of the land available (see evaluateSettleDesirability above).
+    let settlerTargetEff = Math.round(settlerTarget * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1));
+    let settlerCapEff = Math.max(1, Math.round((Math.ceil(myCityCount * AI_SETTLER_CAP_FACTOR) + AI_SETTLER_CAP_BASE) * SETTLER_AGGRESSION * settlerUrgency * (scarcityTriggered ? 1 : conquestSettlerScale) * (boostActive ? settlerBoostMult : 1))) + hardCapBonus + settleGoalBoost;
+    // When the army is below floor, collapse the cap to 1 (the first settler
+    // only) so production flows to military instead of sprawl.
+    if (earlyGameArmyGate) settlerCapEff = 1;
     const settlerCap = settlerCapEff;
     // Stop training settlers entirely when no valid found spot exists on our
     // home landmass — the AI cannot found a city, so training more settlers
@@ -1190,18 +1219,49 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
         ? myUnits.filter(u => u.type === 'TRANSPORT' || u.type === 'STEAM_TRANSPORT').length
         : 0;
     const expandIslandsExtras = expandIslandsMode && liveTransports > 0 ? Math.min(3, liveTransports + 1) : 0;
-    const hardCapBonusExtra = hardCapBonus + expandIslandsExtras;
+    // Long-term boost extras: an early-game land grab (many open spots, good
+    // desirability) lifts the hard cap above the default 4 settlers, scaled to
+    // how much land is actually there to claim.
+    const settleBoostExtras = boostActive ? Math.min(4, Math.round(settleDesirability.openSpots / 5)) : 0;
+    const hardCapBonusExtra = hardCapBonus + expandIslandsExtras + settleBoostExtras;
     // Settlers-per-turn is halved under a (non-naval) conquest goal so the AI
-    // doesn't sprawl while campaigning. Scarcity overrides this.
+    // doesn't sprawl while campaigning. Scarcity overrides this. The long-term
+    // boost (turns 1-50, quality-adjusted) can push production to 2/turn early
+    // when there's good land available.
     const settlersPerTurn = Math.max(1, Math.round(AI_SETTLERS_PER_TURN * SETTLER_AGGRESSION *
         (scarcityTriggered ? 2 : (settlerUrgency > 1 ? 1.5 : 1)) *
+        (boostActive ? Math.max(1, 1 + boostStrength * 2) : 1) *
         (conquestCampaigning && !navalConquest && !scarcityTriggered ? 0.5 : 1)));
     let queuedSettlers = 0;
     const liveSettlersTotal = myUnits.filter(u => u.type === 'SETTLER').length;
+    // Stuck-settler check: count live settlers that have no reachable found
+    // spot on their own landmass AND no adjacent transport to board. If any are
+    // already stuck, training more just wastes resources — they'll mill about
+    // indefinitely (the mid-game settler-spam bug: 70-100 turns in, the AI
+    // keeps pumping settlers even though every accessible spot is taken).
+    // Settlers waiting at shore for a ferry are NOT counted as stuck (the
+    // transport just hasn't arrived yet); only truly stranded ones block
+    // further production. Scarcity overrides — expansion is still the fix.
+    let stuckSettlers = 0;
+    if (!scarcityTriggered) {
+        for (const u of myUnits) {
+            if (u.type !== 'SETTLER' || u.boarded) continue;
+            const uMass = land.idOf.get(`${u.x},${u.z}`);
+            if (homeMassHasFoundSpot(tiles, owner, land, uMass)) continue;
+            const hasTransport = adjacentTransport(u, units, owner) ||
+                myUnits.some(t => (t.type === 'TRANSPORT' || t.type === 'STEAM_TRANSPORT') &&
+                    t.owner === owner && !t.boarded &&
+                    Math.abs(t.x - u.x) + Math.abs(t.z - u.z) <= 6);
+            if (!hasTransport) stuckSettlers++;
+        }
+    }
     while (queuedSettlers < settlersPerTurn && myCityCount < (settlerTargetEff + settleGoalBoost * 2) && capRoom() && fullRoster.includes('SETTLER')) {
         // If there's no valid found spot on our landmass and we have no
         // transport-based expansion opportunity, stop immediately.
         if (!hasFoundSpot && !expandIslandsExtras) break;
+        // If settlers are already stranded (no spot, no transport), stop
+        // spamming — train military/economy instead.
+        if (stuckSettlers > 0 && !scarcityTriggered) break;
         const liveSettlers = myUnits.filter(u => u.type === 'SETTLER').length;
         // Cap settlers: allow extra slots when transports are available for
         // expand-islands — those settlers will board transports and found overseas.
@@ -1373,7 +1433,8 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
                 // was researched, so no warships were ever built past
                 // CARTOGRAPHY. Now it takes the strongest modern warship the
                 // faction can afford, falling back down the era ladder.
-                const WARSHIP_ORDER = ['MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE',
+                const WARSHIP_ORDER = ['AIRCRAFT_CARRIER', 'BATTLESHIP', 'SUBMARINE_II',
+                    'DESTROYER', 'MONITOR', 'IRONCLAD_FRIGATE', 'IRONCLAD', 'SUBMARINE',
                     'TORPEDO_BOAT', 'MAN_OF_WAR', 'GALLEON', 'FRIGATE_2', 'FRIGATE',
                     'CORVETTE', 'FROLIC', 'PINNACE', 'GUNBOAT', 'GALLEY'];
                 const warshipOptions = applyObsolescence(
@@ -2548,12 +2609,33 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     // rest of the army is freed for offense.
     const king = (lords || []).find(l => l.owner === owner && l.isKing);
     let kingGuardGroup = null;
+    // The king's own group (if it leads one) — eligible to join conquest when
+    // the king is healthy, well-guarded, and the faction is at war. Previously
+    // the king was ALWAYS kept at home, so the strongest combatant on the map
+    // (high HP, big attack/defense, army bonuses) sat idle while the army
+    // campaigned without its bonuses. Now the king rides out when it's safe.
+    let kingGroup = null;
+    if (king) {
+        for (const g of groups) {
+            if (g.lords && g.lords.some(l => l.isKing && l.owner === owner)) { kingGroup = g; break; }
+        }
+    }
+    // King campaign eligibility: at war, king healthy, enough bodyguards in the
+    // king's group, and the home front isn't under immediate threat (the king
+    // defends home first). Mid-to-late game (turn > 25 or 3+ cities) — early
+    // game the king stays put since one bad engagement loses the game.
+    const kingHpRatio = king ? (king.hp || 0) / (king.maxHp || 1) : 0;
+    const kingArmySize = kingGroup ? kingGroup.units.length : 0;
+    const homeUnderThreat = king ? hasNearbyThreats(owner, tiles, units, isAtWar, 8) : false;
+    const kingCampaignEligible = !!(king && kingGroup && atWar && !homeUnderThreat &&
+        kingHpRatio >= 0.7 && kingArmySize >= 3 &&
+        (currentTurn > 25 || myCityCount >= 3));
     if (king) {
         const nearbyThreat = hasNearbyThreats(owner, tiles, units, isAtWar, 10);
         const guardsNear = militaryPool.filter(u => u.type !== 'SETTLER' && u.type !== 'WORKER' &&
             Math.abs(u.x - king.x) + Math.abs(u.z - king.z) <= 2).length;
         const guardNeed = nearbyThreat ? 3 : 2;
-        if (guardsNear < guardNeed) {
+        if (guardsNear < guardNeed && !kingCampaignEligible) {
             // Find the nearest patrol group to assign as king's guard
             let bestDist = Infinity;
             for (const g of groups) {
@@ -2566,6 +2648,27 @@ export function computeAIActions(units, tiles, resources, owner, buildings, infl
     }
 
     const assignedFronts = new Set();
+    // King campaigns: when the king is healthy, well-guarded, and at war with
+    // no immediate home threat, the king's own group joins the conquest force.
+    // The king's combat bonuses (army attack/defense aura, high HP, strong
+    // personal attack) make it the most effective army leader, and keeping it
+    // idle wastes that power. Added BEFORE the front round-robin so the king's
+    // group takes a front slot like any other conquest group.
+    if (kingCampaignEligible && kingGroup && !conquest.has(kingGroup) && hasConquestTargets) {
+        conquest.add(kingGroup);
+        // Assign the king's group to the nearest front so it has a target.
+        if (fronts.length > 0) {
+            const kc = groupCentroid(kingGroup);
+            let bestFi = -1, bestFd = Infinity;
+            for (let fi = 0; fi < fronts.length; fi++) {
+                if (assignedFronts.has(fi)) continue;
+                const rep = fronts[fi].cities[0];
+                const d = Math.abs(rep.x - kc.x) + Math.abs(rep.z - kc.z);
+                if (d < bestFd) { bestFd = d; bestFi = fi; }
+            }
+            if (bestFi >= 0) assignedFronts.add(bestFi);
+        }
+    }
     // Pass 1: assign one group to each front (round-robin by power) so every
     // front is covered before any front gets a second group. The old power-
     // based fallback could stack 2 groups on front A while front B stayed empty.
@@ -3447,6 +3550,90 @@ function canFoundOn(tile, owner, tiles) {
     return true;
 }
 
+/** Evaluate how desirable it is to train settlers right now, on a 0..1 scale.
+ *  Used to drive the long-term (turns 1-50) settler production boost. The score
+ *  combines:
+ *  - Open land: fraction of home-landmass tiles that are valid found spots
+ *    (more open space = more to grab, worth a stronger push).
+ *  - Scarcity: current stock/flow shortages of iron/wood/food/gold push the
+ *    score up — founding cities is the durable fix for a bleeding economy.
+ *  - Allied proximity: found spots near allied cities are safe to settle and
+ *    form a connected front, so they add to desirability.
+ *  - Weak enemy presence: spots near undefended enemy cities are valuable
+ *    forward outposts, so they add to desirability.
+ *  Returns { score (0..1), openSpots, openRatio, scarcityFactor, alliedFactor,
+ *  weakEnemyFactor }. Exported for tests. */
+export function evaluateSettleDesirability(tiles, owner, land, homeMass, resources = null, diploState = null, units = null, factionDef = null, drainingResource = null) {
+    let homeLandTiles = 0;
+    let openSpots = 0;
+    const spotTiles = [];
+    for (const t of tiles.values()) {
+        if (t.terrain === 'WATER') continue;
+        if (homeMass != null && land) {
+            if (land.idOf.get(`${t.x},${t.z}`) !== homeMass) continue;
+        }
+        homeLandTiles++;
+        if (canFoundOn(t, owner, tiles)) { openSpots++; spotTiles.push(t); }
+    }
+    const openRatio = homeLandTiles > 0 ? openSpots / homeLandTiles : 0;
+
+    // Scarcity: stock lows and a draining resource both count. Base 0.5 so a
+    // balanced economy still yields a neutral scarcity factor.
+    const res = resources || {};
+    let scarcityScore = 0;
+    if ((res.iron || 0) < 30 || drainingResource === 'iron') scarcityScore += 0.15;
+    if ((res.wood || 0) < 40 || drainingResource === 'wood') scarcityScore += 0.15;
+    if ((res.food || 0) < 50 || drainingResource === 'food') scarcityScore += 0.15;
+    if ((res.gold || 0) < 60 || drainingResource === 'gold') scarcityScore += 0.15;
+    const scarcityFactor = Math.min(1, 0.5 + scarcityScore);
+
+    // Allied proximity: fraction of found spots with an allied city within 10
+    // tiles. Allied neighbours mean a safe, connected frontier.
+    let alliedSpots = 0;
+    if (diploState && openSpots > 0) {
+        for (const spot of spotTiles) {
+            let near = false;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || t.owner === owner) continue;
+                if (isAllied(diploState, owner, t.owner) && manhattan(t.x, t.z, spot.x, spot.z) <= 10) { near = true; break; }
+            }
+            if (near) alliedSpots++;
+        }
+    }
+    const alliedFactor = openSpots > 0 ? alliedSpots / openSpots : 0;
+
+    // Weak enemy presence: fraction of found spots whose nearest enemy city
+    // has a garrison below WEAK_CITY_GARRISON_THRESHOLD. Weak neighbours mean
+    // the new city is a low-risk forward outpost.
+    let weakSpots = 0;
+    if (units && openSpots > 0) {
+        for (const spot of spotTiles) {
+            let nearestGarrison = Infinity;
+            for (const t of tiles.values()) {
+                if (t.terrain !== 'CITY' || !t.owner || t.owner === owner) continue;
+                if (diploState && isAllied(diploState, owner, t.owner)) continue;
+                const d = manhattan(t.x, t.z, spot.x, spot.z);
+                if (d <= 8 && d < nearestGarrison) {
+                    let garrison = 0;
+                    for (const u of units.values()) {
+                        if (u.owner === t.owner && !u.boarded && Math.max(Math.abs(u.x - t.x), Math.abs(u.z - t.z)) <= 3) garrison++;
+                    }
+                    nearestGarrison = garrison;
+                }
+            }
+            if (nearestGarrison < WEAK_CITY_GARRISON_THRESHOLD) weakSpots++;
+        }
+    }
+    const weakEnemyFactor = openSpots > 0 ? weakSpots / openSpots : 0;
+
+    // Combine: open land dominates, scarcity amplifies, allied safety and weak
+    // enemies add modest bonuses. Clamped to 0..1.
+    const score = Math.max(0, Math.min(1,
+        openRatio * 1.2 * scarcityFactor + alliedFactor * 0.25 + weakEnemyFactor * 0.2));
+
+    return { score, openSpots, openRatio, scarcityFactor, alliedFactor, weakEnemyFactor };
+}
+
 /** Compute per-terrain settlement weights based on what the faction actually
  *  needs: cavalry/artillery/siege rosters crave iron, archer rosters want wood,
  *  everyone wants food/gold. Low stockpiles amplify the matching terrain. */
@@ -3656,9 +3843,11 @@ function pickEconomyBuilding(tile, existing, resources) {
 }
 
 /** The terrain improvement (FARM/LUMBERMILL/MINE) that fits this terrain, or
- *  null for terrains with no improvement (DESERT/MARSH/TUNDRA/HILLS/WATER/etc). */
-function improvementForTerrain(terrain) {
-    return ({ PLAINS: 'FARM', FOREST: 'LUMBERMILL', MOUNTAIN: 'MINE' })[terrain] || null;
+ *  null for terrains with no improvement (DESERT/MARSH/TUNDRA/WATER/etc).
+ *  MINE works on both MOUNTAIN and HILLS (mirrors BUILDING_TYPE.terrains).
+ *  Exported for tests. */
+export function improvementForTerrain(terrain) {
+    return ({ PLAINS: 'FARM', FOREST: 'LUMBERMILL', MOUNTAIN: 'MINE', HILLS: 'MINE' })[terrain] || null;
 }
 
 /** Does the faction own at least one tile within influence that could still
@@ -3677,8 +3866,12 @@ function hasImprovableTile(tiles, owner, buildings, influence) {
 
 /** Highest-value owned, unimproved, in-influence tile. Uses a scoring system
  *  that prioritises scarce resources so the AI doesn't spam lumbermills alone.
- *  Returns the tile or null. */
-function findImprovementSpot(unit, tiles, owner, buildings, influence, resources) {
+ *  Priority order is MINE > FARM > LUMBERMILL at any stock level (iron is the
+ *  military-critical resource — the user-facing "strong iron" preference),
+ *  with low stockpiles amplifying the matching terrain further. HILLS counts
+ *  as a mine site (mirrors BUILDING_TYPE.terrains). Returns the tile or null.
+ *  Exported for tests. */
+export function findImprovementSpot(unit, tiles, owner, buildings, influence, resources) {
     let best = null, bestScore = -Infinity;
     const wood = (resources && resources.wood) || 0;
     const food = (resources && resources.food) || 0;
@@ -3691,15 +3884,19 @@ function findImprovementSpot(unit, tiles, owner, buildings, influence, resources
         if (influence && !influence.has(`${t.x},${t.z}`)) continue;
         let score = 0;
         if (b === 'MINE') {
-            score = 100 - iron * 1.5;         // high priority when iron is low
-            if (iron < 10) score += 80;
+            // Strong iron preference: always above FARM/LUMBERMILL, huge boost
+            // when iron is low, mild decay when iron is plentiful.
+            score = 100 - iron * 0.6;
+            if (iron < 20) score += 80;
+            if (iron < 40) score += 40;
         } else if (b === 'FARM') {
-            score = 70 - food * 0.8;           // priority when food is low
+            score = 60 - food * 0.6;           // priority when food is low
             if (food < 15) score += 60;
         } else { // LUMBERMILL
-            score = 30 - wood * 0.3;           // low priority unless wood is scarce
-            if (wood < 15) score += 50;
-            if (wood > 40) score = 0;          // don't build more lumbermills when wood is plentiful
+            // Only worth building when wood is scarce; otherwise the AI keeps
+            // mines/farms ahead of lumbermills.
+            if (wood >= 50) score = 0;
+            else { score = 25 - wood * 0.4; if (wood < 15) score += 50; }
         }
         score -= Math.max(Math.abs(t.x - unit.x), Math.abs(t.z - unit.z)) * 3;
         if (score > bestScore) { bestScore = score; best = t; }
@@ -3999,6 +4196,35 @@ const ROLE_ORDER = {
 
 const ANTI_CAVALRY_TYPES = new Set(['HALBERDIER', 'PIKE_MASTER', 'BAYONET_RIFLE', 'ANTI_TANK_GUN', 'RPG_TEAM']);
 
+/** Faction specialty units — each faction's signature/unique unit that the AI
+ *  should prioritize when it's in the roster and affordable. These get boosted
+ *  to the front of the role-order pick so the AI actually fields its unique
+ *  units (LEGIONNAIRE, BERSERKER, CONQUISTADOR, etc.) instead of always
+ *  falling back to generic INFANTRY/CAVALRY. Only faction-unique units are
+ *  listed here — generic units like CAVALRY are already in ROLE_ORDER and
+ *  shouldn't override era-appropriate picks. */
+const FACTION_SPECIALTY_UNITS = {
+    roman:    ['LEGIONNAIRE'],
+    viking:   ['BERSERKER'],
+    byzantine:['VARANGIAN_GUARD'],
+    spanish:  ['CONQUISTADOR'],
+    polish:   ['WINGED_HUSSAR'],
+};
+
+/** Get the specialty unit(s) for a faction that are in the roster and
+ *  currently affordable. Returns an array (possibly empty) in priority order. */
+function affordableSpecialty(factionDef, roster, resources) {
+    if (!factionDef || !factionDef.id) return [];
+    const specs = FACTION_SPECIALTY_UNITS[factionDef.id];
+    if (!specs) return [];
+    const out = [];
+    for (const t of specs) {
+        if (!roster.includes(t)) continue;
+        if (canAfford(t, resources, getUnitCostFor(t, factionDef))) out.push(t);
+    }
+    return out;
+}
+
 /** Adjust composition targets based on what the enemy is fielding.
  *  Cavalry hard-counters infantry and artillery, so increase the cavalry share
  *  when the enemy has many of those and few anti-cavalry specialists. Pull back
@@ -4211,6 +4437,35 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
         }
     }
     if (total >= 4) {
+        // Anti-cavalry reactive training: when the enemy is fielding a lot of
+        // cavalry and this faction has anti-cavalry specialists (HALBERDIER,
+        // PIKE_MASTER, BAYONET_RIFLE, ANTI_TANK_GUN, RPG_TEAM) unlocked and
+        // affordable, train one. The AI previously NEVER trained these units
+        // because they're classified as 'melee' and buried deep in the
+        // ROLE_ORDER — the deficit-based pick always chose INFANTRY or
+        // LINE_INFANTRY instead. This check fires when enemy cavalry >= 3 and
+        // the faction's anti-cav count is below ~20% of enemy cavalry.
+        if (isAtWar) {
+            let enemyCav = 0;
+            let myAntiCav = 0;
+            for (const u of (units.values ? units.values() : units)) {
+                if (u.owner === owner) {
+                    if (ANTI_CAVALRY_TYPES.has(u.type)) myAntiCav++;
+                    continue;
+                }
+                if (!isAtWar(u.owner)) continue;
+                const r = unitRole(u.type);
+                if (r === 'cavalry') enemyCav++;
+            }
+            if (enemyCav >= 3 && myAntiCav < Math.ceil(enemyCav * 0.3)) {
+                const antiCavOrder = ['RPG_TEAM', 'ANTI_TANK_GUN', 'BAYONET_RIFLE', 'PIKE_MASTER', 'HALBERDIER'];
+                for (const t of antiCavOrder) {
+                    if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) {
+                        return t;
+                    }
+                }
+            }
+        }
         // Cavalry floor: factions that can field cavalry should train at least
         // one mounted unit once the initial melee screen is secured, so the army
         // doesn't stay pure infantry. Skip when playing defensively or when the
@@ -4225,7 +4480,13 @@ export function findAffordableUnit(resources, roster, factionDef, units, actions
             }
         }
         const role = roleDeficit(roster, counts, total, target);
-        const order = [...(ROLE_ORDER[role] || [])];
+        // Boost faction specialty units to the front of the role order so they
+        // are picked before generic units of the same role (a Roman with a
+        // melee deficit picks LEGIONNAIRE before INFANTRY, a Spanish with a
+        // cavalry deficit picks CONQUISTADOR before CAVALRY, etc.).
+        const roleSpecs = affordableSpecialty(factionDef, roster, resources)
+            .filter(t => unitRole(t) === role);
+        const order = [...roleSpecs, ...(ROLE_ORDER[role] || []).filter(t => !roleSpecs.includes(t))];
         for (const t of order) {
             if (roster.includes(t) && canAfford(t, resources, getUnitCostFor(t, factionDef))) return t;
         }
@@ -4342,12 +4603,21 @@ function findAdjacentCapturable(unit, tiles, owner, res, isAtWar, units = null, 
     // that breached a city from 2 tiles away capture it on the next turn
     // by moving onto it. The capture action teleports the unit onto the
     // city tile, so we just need to find the capturable city within range.
-    const moveRange = (UNIT_TYPE[unit.type] && UNIT_TYPE[unit.type].moveRange) || 1;
-    if (moveRange > 1) {
-        for (let dx = -moveRange; dx <= moveRange; dx++) {
-            for (let dz = -moveRange; dz <= moveRange; dz++) {
+    const unitDef = UNIT_TYPE[unit.type] || {};
+    const moveRange = unitDef.moveRange || 1;
+    // Ranged siege engines (ARTILLERY moveRange 1 / attackRange 2, CANNON 1/2,
+    // SIEGE_CANNON 1/3, MORTAR 1/3, ...) shell a city from farther than they
+    // can walk in one move. Search up to their attack range so a siege engine
+    // that breached a city from range can claim it — otherwise the artillery
+    // stands at range beside an empty, breached city it can no longer besiege,
+    // and the city sits uncaptured forever (the "breach but never capture"
+    // bug).
+    const searchRange = unitDef.besiege ? Math.max(moveRange, unitDef.attackRange || 1) : moveRange;
+    if (searchRange > 1) {
+        for (let dx = -searchRange; dx <= searchRange; dx++) {
+            for (let dz = -searchRange; dz <= searchRange; dz++) {
                 if (dx === 0 && dz === 0) continue;
-                if (Math.abs(dx) + Math.abs(dz) > moveRange) continue;
+                if (Math.abs(dx) + Math.abs(dz) > searchRange) continue;
                 // Skip tiles already checked in the adjacent pass.
                 if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue;
                 const t = tiles.get(`${unit.x + dx},${unit.z + dz}`);
@@ -4546,11 +4816,24 @@ function isFavorableAttack(attacker, defender, units, tiles, lords, buildings, t
  *  `radius` of (x,z). Used to gauge local strength for stance + retreat. */
 function localPowerBalance(units, x, z, owner, atWar, isAtWar, radius = 2) {
     let friend = 0, foe = 0;
+    // Gather foe types present so friend power is weighted by type advantage
+    // (relative strengths vs opponent). Only foes within the radius count.
+    const foeTypes = new Set();
     for (const u of units.values()) {
         if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
-        const power = (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0));
-        if (u.owner === owner) friend += power;
-        else if (atWar && (!isAtWar || isAtWar(u.owner))) foe += power;
+        if (u.owner === owner) continue;
+        if (atWar && (!isAtWar || isAtWar(u.owner))) foeTypes.add(u.type);
+    }
+    for (const u of units.values()) {
+        if (Math.max(Math.abs(u.x - x), Math.abs(u.z - z)) > radius) continue;
+        const base = (u.hp || 1) + ((UNIT_TYPE[u.type] && UNIT_TYPE[u.type].attack) || (u.attack || 0));
+        if (u.owner === owner) {
+            // Multiply friendly power by the best advantage we hold over the
+            // nearby foe roster — a pike group truly outvalues a cavalry stack.
+            friend += base * bestAdvantageMultiplier(u.type, foeTypes);
+        } else if (atWar && (!isAtWar || isAtWar(u.owner))) {
+            foe += base;
+        }
     }
     return { friend, foe };
 }
@@ -4638,6 +4921,19 @@ function nearestFriendlyCity(unit, tiles, owner, enemyUnits) {
 /** Does `attackerType` have a type advantage vs `defenderType`? */
 function typeMatch(attackerType, defenderType) {
     return !!(TYPE_ADVANTAGE[attackerType] && (Array.isArray(TYPE_ADVANTAGE[attackerType].strongAgainst) ? TYPE_ADVANTAGE[attackerType].strongAgainst.includes(defenderType) : TYPE_ADVANTAGE[attackerType].strongAgainst === defenderType));
+}
+
+/** Best TYPE_ADVANTAGE multiplier a unit type enjoys against ANY of the enemy
+ *  types. Returns 1.0 when it has no advantage. Used to weight power by
+ *  relative strengths so a counter-comp group is rated stronger vs its prey. */
+function bestAdvantageMultiplier(unitType, enemyTypes) {
+    if (!enemyTypes || enemyTypes.size === 0) return 1.0;
+    const adv = TYPE_ADVANTAGE[unitType];
+    if (!adv) return 1.0;
+    const strong = Array.isArray(adv.strongAgainst) ? adv.strongAgainst : [adv.strongAgainst];
+    let best = 1.0;
+    for (const t of strong) if (enemyTypes.has(t) && adv.multiplier > best) best = adv.multiplier;
+    return best;
 }
 
 /** Rough proxy for _isInEnemyVision (ai.js can't call the engine method):
@@ -6033,9 +6329,28 @@ function findNearestEnemyTileForScout(unit, tiles, owner, isAtWar) {
  *  can found a new city. */
 function homeMassHasFoundSpot(tiles, owner, land, massId) {
     if (massId == null) return false;
+    // Collect anchor origins: owned cities plus any live settlers already in
+    // the field. A found spot reachable from ANY of these is "accessible"; a
+    // spot on a reachable sub-continent but cut off by water/mountains is NOT
+    // (settlers would train and then mill about with nowhere to go — the
+    // mid-game settler-spam bug).
+    const origins = [];
+    for (const t of tiles.values()) {
+        if (t.owner === owner && t.terrain === 'CITY') {
+            if (land.idOf.get(`${t.x},${t.z}`) === massId) origins.push([t.x, t.z]);
+        }
+    }
+    if (origins.length === 0) return false;
     for (const t of tiles.values()) {
         if (land.idOf.get(`${t.x},${t.z}`) !== massId) continue;
-        if (canFoundOn(t, owner, tiles)) return true;
+        if (!canFoundOn(t, owner, tiles)) continue;
+        // Reachability check: at least one owned city can path to this tile by
+        // land (rivers are passable — engineers bridge them). This filters out
+        // valid-but-unreachable spots that previously caused the AI to keep
+        // training settlers it could never use.
+        for (const [ox, oz] of origins) {
+            if (isReachableByLand(tiles, ox, oz, t.x, t.z)) return true;
+        }
     }
     return false;
 }
